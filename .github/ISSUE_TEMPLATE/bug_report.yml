@@ -1,0 +1,20 @@
+name: 缺陷报告
+description: 报告可复现的问题。
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: 问题描述
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 复现步骤
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 环境与日志
+      description: 请脱敏，不要提交设备地址、凭据、令牌或证书。
+    validations:
+      required: true

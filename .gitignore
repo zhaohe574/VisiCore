@@ -1,0 +1,28 @@
+# 厂商 SDK 及解压产物只用于本机开发和受控部署，禁止提交。
+*.sdk.zip
+.vendor-sdk/
+.local-sdk/
+.local-dev/
+aqtinstall.log
+*.pem
+*.key
+*.pfx
+*.p12
+*.crt
+$reportPath
+
+# 本机构建、运行密钥和运行态数据禁止提交。
+**/bin/
+**/obj/
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+**/build/
+**/out/
+.env
+.env.*
+!.env.example
+data/
+exports/
+logs/
+artifacts/

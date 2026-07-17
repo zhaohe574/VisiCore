@@ -1,0 +1,143 @@
+name: video-platform
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-video_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-video_platform}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  setup:
+    profiles: ["setup"]
+    build:
+      context: .
+      dockerfile: deploy/linux/Dockerfile.dotnet
+      args:
+        PROJECT: src/VideoPlatform.Setup/VideoPlatform.Setup.csproj
+        ASSEMBLY: VideoPlatform.Setup.dll
+    environment:
+      ConnectionStrings__Platform: Host=postgres;Port=5432;Database=${POSTGRES_DB:-video_platform};Username=${POSTGRES_USER:-video_platform};Password=${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      Setup__Username: ${SETUP_USERNAME:-}
+      Setup__Password: ${SETUP_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stdin_open: true
+    tty: true
+    restart: "no"
+
+  video-platform-api:
+    build:
+      context: .
+      dockerfile: deploy/linux/Dockerfile.dotnet
+      args:
+        PROJECT: src/VideoPlatform.Api/VideoPlatform.Api.csproj
+        ASSEMBLY: VideoPlatform.Api.dll
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Platform: Host=postgres;Port=5432;Database=${POSTGRES_DB:-video_platform};Username=${POSTGRES_USER:-video_platform};Password=${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      Database__ApplyMigrationsOnStartup: "false"
+      ExportArtifactStorage__RootDirectory: /var/lib/video-platform/exports
+    volumes:
+      - api-exports:/var/lib/video-platform/exports
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  notification-worker:
+    build:
+      context: .
+      dockerfile: deploy/linux/Dockerfile.dotnet
+      args:
+        PROJECT: src/VideoPlatform.NotificationWorker/VideoPlatform.NotificationWorker.csproj
+        ASSEMBLY: VideoPlatform.NotificationWorker.dll
+    restart: unless-stopped
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      ConnectionStrings__Platform: Host=postgres;Port=5432;Database=${POSTGRES_DB:-video_platform};Username=${POSTGRES_USER:-video_platform};Password=${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  admin:
+    build:
+      context: ./src/VideoPlatform.Admin
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_HTTP_BIND_ADDRESS:-127.0.0.1}:${ADMIN_HTTP_PORT:-8080}:8080"
+    depends_on:
+      video-platform-api:
+        condition: service_healthy
+
+  mediamtx:
+    profiles: ["edge"]
+    image: bluenviron/mediamtx:1.19.2
+    restart: unless-stopped
+    volumes:
+      - ./deploy/linux/mediamtx.yml:/mediamtx.yml:ro
+
+  stream-gateway:
+    profiles: ["edge"]
+    build:
+      context: .
+      dockerfile: deploy/linux/Dockerfile.dotnet
+      args:
+        PROJECT: src/VideoPlatform.StreamGateway/VideoPlatform.StreamGateway.csproj
+        ASSEMBLY: VideoPlatform.StreamGateway.dll
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_URLS: http://+:15095
+      Gateway__GatewayName: ${STREAM_GATEWAY_NAME:-default}
+      Gateway__CenterBaseUri: ${PLATFORM_BASE_URI:?请在 .env 中设置 PLATFORM_BASE_URI}
+      Gateway__CenterControlToken: ${STREAM_GATEWAY_CONTROL_TOKEN:?请在 .env 中设置 STREAM_GATEWAY_CONTROL_TOKEN}
+      Gateway__CommandToken: ${STREAM_GATEWAY_COMMAND_TOKEN:?请在 .env 中设置 STREAM_GATEWAY_COMMAND_TOKEN}
+      Gateway__DeviceWorkerAccessToken: ${STREAM_GATEWAY_WORKER_TOKEN:?请在 .env 中设置 STREAM_GATEWAY_WORKER_TOKEN}
+      MediaMtx__ApiBaseUri: http://mediamtx:9997/
+      MediaMtx__HlsBaseUri: http://mediamtx:8888/
+      MediaMtx__PublisherUsername: ${MEDIAMTX_PUBLISHER_USERNAME:-relay}
+      MediaMtx__PublisherPassword: ${MEDIAMTX_PUBLISHER_PASSWORD:?请在 .env 中设置 MEDIAMTX_PUBLISHER_PASSWORD}
+      MediaMtx__HlsReaderUsername: ${MEDIAMTX_HLS_READER_USERNAME:-hlsproxy}
+      MediaMtx__HlsReaderPassword: ${MEDIAMTX_HLS_READER_PASSWORD:?请在 .env 中设置 MEDIAMTX_HLS_READER_PASSWORD}
+    depends_on:
+      mediamtx:
+        condition: service_started
+      video-platform-api:
+        condition: service_healthy
+
+  onvif-edge-worker:
+    profiles: ["edge"]
+    build:
+      context: .
+      dockerfile: deploy/linux/Dockerfile.dotnet
+      args:
+        PROJECT: src/VideoPlatform.OnvifEdgeWorker/VideoPlatform.OnvifEdgeWorker.csproj
+        ASSEMBLY: VideoPlatform.OnvifEdgeWorker.dll
+    restart: unless-stopped
+    environment:
+      OnvifEdge__CenterBaseUri: ${PLATFORM_BASE_URI:?请在 .env 中设置 PLATFORM_BASE_URI}
+      OnvifEdge__AccessToken: ${ONVIF_EDGE_ACCESS_TOKEN:?请在 .env 中设置 ONVIF_EDGE_ACCESS_TOKEN}
+    depends_on:
+      video-platform-api:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  api-exports:

@@ -1,0 +1,38 @@
+# Linux Compose 生产模板。该服务没有宿主机端口，所有 RTSP、HLS 与 Control API 都只在 platform-private 网络内可达。
+logLevel: info
+
+api: yes
+apiAddress: ":9997"
+
+authMethod: http
+authHTTPAddress: http://stream-gateway:15095/internal/mediamtx/auth
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+
+rtsp: yes
+rtspAddress: ":8554"
+rtspTransports: [tcp]
+rtmp: no
+webrtc: no
+srt: no
+playback: no
+
+hls: yes
+hlsAddress: ":8888"
+hlsEncryption: no
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+hlsAlwaysRemux: no
+
+pathDefaults:
+  source: publisher
+  sourceOnDemand: no
+  maxReaders: 100
+
+# 路由由 StreamGateway 通过 MediaMTX Control API 动态维护，不能删除该兜底规则。
+paths:
+  all_others: {}

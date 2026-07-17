@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: bash tools/verify-dco.sh "${{ github.event.pull_request.base.sha }}"
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet restore src/VideoPlatform.Api/VideoPlatform.Api.csproj
+      - run: dotnet restore src/VideoPlatform.Setup/VideoPlatform.Setup.csproj
+      - run: dotnet restore tests/VideoPlatform.Api.Tests/VideoPlatform.Api.Tests.csproj
+      - run: dotnet restore tests/VideoPlatform.OnvifEdgeWorker.Tests/VideoPlatform.OnvifEdgeWorker.Tests.csproj
+      - run: dotnet build src/VideoPlatform.Api/VideoPlatform.Api.csproj --configuration Release --no-restore
+      - run: dotnet build src/VideoPlatform.Setup/VideoPlatform.Setup.csproj --configuration Release --no-restore
+      - run: dotnet test tests/VideoPlatform.Api.Tests/VideoPlatform.Api.Tests.csproj --configuration Release --no-restore
+      - run: dotnet test tests/VideoPlatform.OnvifEdgeWorker.Tests/VideoPlatform.OnvifEdgeWorker.Tests.csproj --configuration Release
+
+  admin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/VideoPlatform.Admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/VideoPlatform.Admin/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: sed -i 's/POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-only-long-password/' .env
+      - run: SETUP_USERNAME=ciadmin SETUP_PASSWORD=ci-only-admin-password docker compose --profile setup run --rm setup
+      - run: docker compose up --build --detach
+      - run: curl --fail --retry 20 --retry-delay 2 http://127.0.0.1:8080/healthz
+      - run: curl --fail --request POST --header 'Content-Type: application/json' --data '{"username":"ciadmin","password":"ci-only-admin-password"}' http://127.0.0.1:8080/api/v1/auth/login
+      - if: always()
+        run: docker compose down --volumes --remove-orphans
