@@ -76,6 +76,7 @@ jobs:
       - run: SETUP_USERNAME=ciadmin SETUP_PASSWORD=ci-only-admin-password docker compose --profile setup run --rm setup
       - run: docker compose up --build --detach
       - run: curl --fail --retry 20 --retry-delay 2 http://127.0.0.1:8080/healthz
-      - run: curl --fail --request POST --header 'Content-Type: application/json' --data '{"username":"ciadmin","password":"ci-only-admin-password"}' http://127.0.0.1:8080/api/v1/auth/login
+      - run: |
+          curl --fail --request POST --header 'Content-Type: application/json' --data '{"username":"ciadmin","password":"ci-only-admin-password"}' http://127.0.0.1:8080/api/v1/auth/login
       - if: always()
         run: docker compose down --volumes --remove-orphans
