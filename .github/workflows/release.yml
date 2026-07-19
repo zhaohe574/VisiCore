@@ -24,11 +24,12 @@ jobs:
       - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.NotificationWorker/VisiCore.NotificationWorker.csproj --build-arg ASSEMBLY=VisiCore.NotificationWorker.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-notification-worker:${{ github.ref_name }} --push .
       - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.StreamGateway/VisiCore.StreamGateway.csproj --build-arg ASSEMBLY=VisiCore.StreamGateway.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-stream-gateway:${{ github.ref_name }} --push .
       - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.OnvifEdgeWorker/VisiCore.OnvifEdgeWorker.csproj --build-arg ASSEMBLY=VisiCore.OnvifEdgeWorker.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-onvif-edge-worker:${{ github.ref_name }} --push .
-      - run: sha256sum compose.yaml NOTICE THIRD_PARTY_NOTICES.md > release-sha256.txt
       - uses: anchore/sbom-action@v0
         with:
           artifact-name: visicore-sbom.spdx.json
+          output-file: visicore-sbom.spdx.json
           path: .
+      - run: sha256sum compose.yaml NOTICE THIRD_PARTY_NOTICES.md visicore-sbom.spdx.json > release-sha256.txt
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -37,3 +38,4 @@ jobs:
             release-sha256.txt
             NOTICE
             THIRD_PARTY_NOTICES.md
+            visicore-sbom.spdx.json
