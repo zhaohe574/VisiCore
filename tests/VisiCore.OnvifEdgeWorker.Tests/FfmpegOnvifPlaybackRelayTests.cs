@@ -68,7 +68,7 @@ public sealed class FfmpegOnvifPlaybackRelayTests
     private static OnvifPlaybackRelayOptions CreateOptions() => new()
     {
         Enabled = true,
-        FfmpegExecutablePath = Path.Combine(Environment.SystemDirectory, "cmd.exe"),
+        FfmpegExecutablePath = Environment.ProcessPath!,
         PublisherBaseUri = "rtsp://127.0.0.1:8554",
         PublisherUsername = "edgepublisher",
         PublisherPassword = "publisher-password-with-at-least-32-chars",
