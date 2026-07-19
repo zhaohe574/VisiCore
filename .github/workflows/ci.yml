@@ -42,27 +42,27 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - run: dotnet restore src/VideoPlatform.Api/VideoPlatform.Api.csproj
-      - run: dotnet restore src/VideoPlatform.Setup/VideoPlatform.Setup.csproj
-      - run: dotnet restore tests/VideoPlatform.Api.Tests/VideoPlatform.Api.Tests.csproj
-      - run: dotnet restore tests/VideoPlatform.OnvifEdgeWorker.Tests/VideoPlatform.OnvifEdgeWorker.Tests.csproj
-      - run: dotnet build src/VideoPlatform.Api/VideoPlatform.Api.csproj --configuration Release --no-restore
-      - run: dotnet build src/VideoPlatform.Setup/VideoPlatform.Setup.csproj --configuration Release --no-restore
-      - run: dotnet test tests/VideoPlatform.Api.Tests/VideoPlatform.Api.Tests.csproj --configuration Release --no-restore
-      - run: dotnet test tests/VideoPlatform.OnvifEdgeWorker.Tests/VideoPlatform.OnvifEdgeWorker.Tests.csproj --configuration Release
+      - run: dotnet restore src/VisiCore.Api/VisiCore.Api.csproj
+      - run: dotnet restore src/VisiCore.Setup/VisiCore.Setup.csproj
+      - run: dotnet restore tests/VisiCore.Api.Tests/VisiCore.Api.Tests.csproj
+      - run: dotnet restore tests/VisiCore.OnvifEdgeWorker.Tests/VisiCore.OnvifEdgeWorker.Tests.csproj
+      - run: dotnet build src/VisiCore.Api/VisiCore.Api.csproj --configuration Release --no-restore
+      - run: dotnet build src/VisiCore.Setup/VisiCore.Setup.csproj --configuration Release --no-restore
+      - run: dotnet test tests/VisiCore.Api.Tests/VisiCore.Api.Tests.csproj --configuration Release --no-restore
+      - run: dotnet test tests/VisiCore.OnvifEdgeWorker.Tests/VisiCore.OnvifEdgeWorker.Tests.csproj --configuration Release
 
   admin:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: src/VideoPlatform.Admin
+        working-directory: src/VisiCore.Admin
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: src/VideoPlatform.Admin/package-lock.json
+          cache-dependency-path: src/VisiCore.Admin/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build

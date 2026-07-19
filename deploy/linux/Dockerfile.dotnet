@@ -10,8 +10,8 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine AS runtime
 ARG ASSEMBLY
 WORKDIR /app
 USER root
-RUN mkdir -p /var/lib/video-platform/edge-agent /var/lib/video-platform/exports /var/lib/video-platform/host-agent/state \
-    && chown -R "${APP_UID}:${APP_UID}" /var/lib/video-platform
+RUN mkdir -p /var/lib/visicore/edge-agent /var/lib/visicore/exports /var/lib/visicore/host-agent/state \
+    && chown -R "${APP_UID}:${APP_UID}" /var/lib/visicore
 COPY --from=build /app/publish ./
 ENV APP_ASSEMBLY=${ASSEMBLY}
 USER ${APP_UID}

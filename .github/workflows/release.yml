@@ -18,15 +18,16 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VideoPlatform.Api/VideoPlatform.Api.csproj --build-arg ASSEMBLY=VideoPlatform.Api.dll --tag ghcr.io/${{ github.repository_owner }}/video-platform-api:${{ github.ref_name }} --push .
-      - run: docker build --file src/VideoPlatform.Admin/Dockerfile --tag ghcr.io/${{ github.repository_owner }}/video-platform-admin:${{ github.ref_name }} --push src/VideoPlatform.Admin
-      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VideoPlatform.NotificationWorker/VideoPlatform.NotificationWorker.csproj --build-arg ASSEMBLY=VideoPlatform.NotificationWorker.dll --tag ghcr.io/${{ github.repository_owner }}/video-platform-notification-worker:${{ github.ref_name }} --push .
-      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VideoPlatform.StreamGateway/VideoPlatform.StreamGateway.csproj --build-arg ASSEMBLY=VideoPlatform.StreamGateway.dll --tag ghcr.io/${{ github.repository_owner }}/video-platform-stream-gateway:${{ github.ref_name }} --push .
-      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VideoPlatform.OnvifEdgeWorker/VideoPlatform.OnvifEdgeWorker.csproj --build-arg ASSEMBLY=VideoPlatform.OnvifEdgeWorker.dll --tag ghcr.io/${{ github.repository_owner }}/video-platform-onvif-edge-worker:${{ github.ref_name }} --push .
+      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.Setup/VisiCore.Setup.csproj --build-arg ASSEMBLY=VisiCore.Setup.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-setup:${{ github.ref_name }} --push .
+      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.Api/VisiCore.Api.csproj --build-arg ASSEMBLY=VisiCore.Api.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-api:${{ github.ref_name }} --push .
+      - run: docker build --file src/VisiCore.Admin/Dockerfile --tag ghcr.io/${{ github.repository_owner }}/visicore-admin:${{ github.ref_name }} --push src/VisiCore.Admin
+      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.NotificationWorker/VisiCore.NotificationWorker.csproj --build-arg ASSEMBLY=VisiCore.NotificationWorker.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-notification-worker:${{ github.ref_name }} --push .
+      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.StreamGateway/VisiCore.StreamGateway.csproj --build-arg ASSEMBLY=VisiCore.StreamGateway.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-stream-gateway:${{ github.ref_name }} --push .
+      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.OnvifEdgeWorker/VisiCore.OnvifEdgeWorker.csproj --build-arg ASSEMBLY=VisiCore.OnvifEdgeWorker.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-onvif-edge-worker:${{ github.ref_name }} --push .
       - run: sha256sum compose.yaml NOTICE THIRD_PARTY_NOTICES.md > release-sha256.txt
       - uses: anchore/sbom-action@v0
         with:
-          artifact-name: video-platform-sbom.spdx.json
+          artifact-name: visicore-sbom.spdx.json
           path: .
       - uses: softprops/action-gh-release@v2
         with:

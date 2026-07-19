@@ -30,11 +30,11 @@ jobs:
         if: matrix.language == 'javascript-typescript'
         with:
           node-version: 22
-      - run: dotnet build src/VideoPlatform.Api/VideoPlatform.Api.csproj --configuration Release
+      - run: dotnet build src/VisiCore.Api/VisiCore.Api.csproj --configuration Release
         if: matrix.language == 'csharp'
       - run: npm ci && npm run build
         if: matrix.language == 'javascript-typescript'
-        working-directory: src/VideoPlatform.Admin
+        working-directory: src/VisiCore.Admin
       - uses: github/codeql-action/analyze@v3
         with:
           category: /language:${{ matrix.language }}

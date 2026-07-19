@@ -1,12 +1,12 @@
-name: video-platform
+name: visicore
 
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-video_platform}
-      POSTGRES_USER: ${POSTGRES_USER:-video_platform}
+      POSTGRES_DB: ${POSTGRES_DB:-visicore}
+      POSTGRES_USER: ${POSTGRES_USER:-visicore}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
@@ -17,15 +17,16 @@ services:
       retries: 20
 
   setup:
+    image: ${VISICORE_IMAGE_PREFIX:-ghcr.io/zhaohe574}/visicore-setup:${VISICORE_VERSION:-v0.2.0}
     profiles: ["setup"]
     build:
       context: .
       dockerfile: deploy/linux/Dockerfile.dotnet
       args:
-        PROJECT: src/VideoPlatform.Setup/VideoPlatform.Setup.csproj
-        ASSEMBLY: VideoPlatform.Setup.dll
+        PROJECT: src/VisiCore.Setup/VisiCore.Setup.csproj
+        ASSEMBLY: VisiCore.Setup.dll
     environment:
-      ConnectionStrings__Platform: Host=postgres;Port=5432;Database=${POSTGRES_DB:-video_platform};Username=${POSTGRES_USER:-video_platform};Password=${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      ConnectionStrings__Platform: Host=postgres;Port=5432;Database=${POSTGRES_DB:-visicore};Username=${POSTGRES_USER:-visicore};Password=${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
       Setup__Username: ${SETUP_USERNAME:-}
       Setup__Password: ${SETUP_PASSWORD:-}
     depends_on:
@@ -35,22 +36,23 @@ services:
     tty: true
     restart: "no"
 
-  video-platform-api:
+  visicore-api:
+    image: ${VISICORE_IMAGE_PREFIX:-ghcr.io/zhaohe574}/visicore-api:${VISICORE_VERSION:-v0.2.0}
     build:
       context: .
       dockerfile: deploy/linux/Dockerfile.dotnet
       args:
-        PROJECT: src/VideoPlatform.Api/VideoPlatform.Api.csproj
-        ASSEMBLY: VideoPlatform.Api.dll
+        PROJECT: src/VisiCore.Api/VisiCore.Api.csproj
+        ASSEMBLY: VisiCore.Api.dll
     restart: unless-stopped
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__Platform: Host=postgres;Port=5432;Database=${POSTGRES_DB:-video_platform};Username=${POSTGRES_USER:-video_platform};Password=${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      ConnectionStrings__Platform: Host=postgres;Port=5432;Database=${POSTGRES_DB:-visicore};Username=${POSTGRES_USER:-visicore};Password=${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
       Database__ApplyMigrationsOnStartup: "false"
-      ExportArtifactStorage__RootDirectory: /var/lib/video-platform/exports
+      ExportArtifactStorage__RootDirectory: /var/lib/visicore/exports
     volumes:
-      - api-exports:/var/lib/video-platform/exports
+      - api-exports:/var/lib/visicore/exports
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,29 +64,31 @@ services:
       start_period: 20s
 
   notification-worker:
+    image: ${VISICORE_IMAGE_PREFIX:-ghcr.io/zhaohe574}/visicore-notification-worker:${VISICORE_VERSION:-v0.2.0}
     build:
       context: .
       dockerfile: deploy/linux/Dockerfile.dotnet
       args:
-        PROJECT: src/VideoPlatform.NotificationWorker/VideoPlatform.NotificationWorker.csproj
-        ASSEMBLY: VideoPlatform.NotificationWorker.dll
+        PROJECT: src/VisiCore.NotificationWorker/VisiCore.NotificationWorker.csproj
+        ASSEMBLY: VisiCore.NotificationWorker.dll
     restart: unless-stopped
     environment:
       DOTNET_ENVIRONMENT: Production
-      ConnectionStrings__Platform: Host=postgres;Port=5432;Database=${POSTGRES_DB:-video_platform};Username=${POSTGRES_USER:-video_platform};Password=${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+      ConnectionStrings__Platform: Host=postgres;Port=5432;Database=${POSTGRES_DB:-visicore};Username=${POSTGRES_USER:-visicore};Password=${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy
 
   admin:
+    image: ${VISICORE_IMAGE_PREFIX:-ghcr.io/zhaohe574}/visicore-admin:${VISICORE_VERSION:-v0.2.0}
     build:
-      context: ./src/VideoPlatform.Admin
+      context: ./src/VisiCore.Admin
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
       - "${ADMIN_HTTP_BIND_ADDRESS:-127.0.0.1}:${ADMIN_HTTP_PORT:-8080}:8080"
     depends_on:
-      video-platform-api:
+      visicore-api:
         condition: service_healthy
 
   mediamtx:
@@ -95,13 +99,14 @@ services:
       - ./deploy/linux/mediamtx.yml:/mediamtx.yml:ro
 
   stream-gateway:
+    image: ${VISICORE_IMAGE_PREFIX:-ghcr.io/zhaohe574}/visicore-stream-gateway:${VISICORE_VERSION:-v0.2.0}
     profiles: ["edge"]
     build:
       context: .
       dockerfile: deploy/linux/Dockerfile.dotnet
       args:
-        PROJECT: src/VideoPlatform.StreamGateway/VideoPlatform.StreamGateway.csproj
-        ASSEMBLY: VideoPlatform.StreamGateway.dll
+        PROJECT: src/VisiCore.StreamGateway/VisiCore.StreamGateway.csproj
+        ASSEMBLY: VisiCore.StreamGateway.dll
     restart: unless-stopped
     environment:
       ASPNETCORE_URLS: http://+:15095
@@ -119,23 +124,24 @@ services:
     depends_on:
       mediamtx:
         condition: service_started
-      video-platform-api:
+      visicore-api:
         condition: service_healthy
 
   onvif-edge-worker:
+    image: ${VISICORE_IMAGE_PREFIX:-ghcr.io/zhaohe574}/visicore-onvif-edge-worker:${VISICORE_VERSION:-v0.2.0}
     profiles: ["edge"]
     build:
       context: .
       dockerfile: deploy/linux/Dockerfile.dotnet
       args:
-        PROJECT: src/VideoPlatform.OnvifEdgeWorker/VideoPlatform.OnvifEdgeWorker.csproj
-        ASSEMBLY: VideoPlatform.OnvifEdgeWorker.dll
+        PROJECT: src/VisiCore.OnvifEdgeWorker/VisiCore.OnvifEdgeWorker.csproj
+        ASSEMBLY: VisiCore.OnvifEdgeWorker.dll
     restart: unless-stopped
     environment:
       OnvifEdge__CenterBaseUri: ${PLATFORM_BASE_URI:?请在 .env 中设置 PLATFORM_BASE_URI}
       OnvifEdge__AccessToken: ${ONVIF_EDGE_ACCESS_TOKEN:?请在 .env 中设置 ONVIF_EDGE_ACCESS_TOKEN}
     depends_on:
-      video-platform-api:
+      visicore-api:
         condition: service_healthy
 
 volumes:

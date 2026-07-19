@@ -35,8 +35,8 @@ with sync_playwright() as playwright:
     browser = playwright.chromium.launch(headless=True)
     page = browser.new_page(viewport={"width": 1440, "height": 960})
     page.add_init_script("""
-        sessionStorage.setItem('video-platform-admin-token', 'smoke-test-token');
-        sessionStorage.setItem('video-platform-admin-user', 'smoke-admin');
+        sessionStorage.setItem('visicore-admin-token', 'smoke-test-token');
+        sessionStorage.setItem('visicore-admin-user', 'smoke-admin');
     """)
     page.route("**/api/**", api_response)
     browser_errors = []
