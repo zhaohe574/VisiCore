@@ -1,0 +1,21 @@
+[Unit]
+Description=VisiCore Edge Host Agent
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=visicore-host-agent
+Group=visicore-edge-config
+SupplementaryGroups=docker
+ExecStart=/opt/visicore/edge-host-agent/VisiCore.EdgeHostAgent
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/visicore/edge-host-agent /var/lib/visicore/edge-node /etc/visicore/edge-host-agent /opt/visicore/edge
+
+[Install]
+WantedBy=multi-user.target

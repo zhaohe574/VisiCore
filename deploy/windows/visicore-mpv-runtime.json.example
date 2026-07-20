@@ -1,0 +1,6 @@
+{
+  "version": "<approved-version>",
+  "source": "<approved-source-url-or-identifier>",
+  "sha256": "<uppercase-sha256-of-libmpv-2.dll>",
+  "licenseFile": "<absolute-path-to-approved-license-file>"
+}

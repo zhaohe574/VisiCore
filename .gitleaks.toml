@@ -1,0 +1,4 @@
+title = "VisiCore secret scanning"
+
+[extend]
+useDefault = true

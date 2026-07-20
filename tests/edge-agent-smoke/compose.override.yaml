@@ -1,0 +1,20 @@
+services:
+  control-plane:
+    image: python:3.12-alpine
+    command: ["python", "/tests/control_plane_mock.py"]
+    network_mode: "service:edge-node"
+    volumes:
+      - ${EDGE_AGENT_SMOKE_TEST_DIRECTORY:?请配置边缘代理冒烟测试目录}:/tests:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18080/')"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  edge-node:
+    user: "0:0"
+    environment:
+      EdgeAgent__ControlPlaneBaseUri: http://127.0.0.1:18080/
+      EdgeAgent__AllowInsecureHttpForDevelopment: "true"
+      EdgeAgent__HeartbeatIntervalSeconds: "5"
+      EdgeAgent__EnrollmentCode: smoke-enrollment-code

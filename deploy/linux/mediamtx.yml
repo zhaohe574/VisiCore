@@ -1,0 +1,38 @@
+# 外置 MediaMTX 的同机 Docker 模板。该容器需加入 visicore-network，且不应发布 Control API、RTSP 或 HLS 宿主机端口。
+logLevel: info
+
+api: yes
+apiAddress: ":9997"
+
+authMethod: http
+authHTTPAddress: http://visicore-core:8080/internal/mediamtx/auth
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+
+rtsp: yes
+rtspAddress: ":8554"
+rtspTransports: [tcp]
+rtmp: no
+webrtc: no
+srt: no
+playback: no
+
+hls: yes
+hlsAddress: ":8888"
+hlsEncryption: no
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+hlsAlwaysRemux: no
+
+pathDefaults:
+  source: publisher
+  sourceOnDemand: no
+  maxReaders: 100
+
+# 路由由 StreamGateway 通过 MediaMTX Control API 动态维护，不能删除该兜底规则。
+paths:
+  all_others: {}

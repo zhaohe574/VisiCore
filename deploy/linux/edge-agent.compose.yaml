@@ -1,0 +1,30 @@
+name: visicore-edge-node
+
+services:
+  edge-node:
+    image: ${VISICORE_EDGE_NODE_IMAGE:-visicore/visicore-edge:0.1.0}
+    build:
+      context: ../..
+      dockerfile: deploy/linux/Dockerfile.dotnet
+    restart: unless-stopped
+    environment:
+      EdgeAgent__BootstrapFilePath: /var/lib/visicore/edge-agent/bootstrap/bootstrap.json
+      EdgeAgent__HeartbeatIntervalSeconds: ${EDGE_HEARTBEAT_INTERVAL_SECONDS:-30}
+      VISICORE_CONFIG_SOCKET_PATH: /var/run/visicore-config/host-agent.sock
+      VISICORE_CONFIG_TOKEN_PATH: /var/run/visicore-config/access.token
+    ports:
+      - "127.0.0.1:${EDGE_CONFIG_PORT:-18081}:8080"
+    volumes:
+      - ${EDGE_STATE_DIRECTORY:?请配置固定宿主状态目录}:/var/lib/visicore/edge-agent
+      - ${EDGE_HOST_EXCHANGE_DIRECTORY:?请配置 Host Agent 交换目录}:/var/lib/visicore/edge-host-agent
+      - ${EDGE_HOST_CONFIG_DIRECTORY:?请配置 Host Agent 配置通道目录}:/var/run/visicore-config
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8081/readyz && wget -q -O /dev/null http://127.0.0.1:8080/api/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s

@@ -1,0 +1,33 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="VisiCore Viewer" Manufacturer="VisiCore" Version="$(var.ProductVersion)" UpgradeCode="4A54A892-2C1B-4A84-8611-1E31E026E94A" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 VisiCore Viewer。" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLROOT" Name="VisiCore">
+        <Directory Id="VIEWERINSTALLFOLDER" Name="Viewer">
+          <Component Id="ViewerExecutable" Guid="*">
+            <File Id="VisiCoreViewerExecutable" Source="$(var.ViewerPublishDir)\VisiCoreQtViewer.exe" KeyPath="yes">
+              <Shortcut Id="VisiCoreViewerStartMenuShortcut" Directory="VisiCoreProgramMenu" Name="VisiCore 查看端" WorkingDirectory="VIEWERINSTALLFOLDER" Advertise="no" />
+            </File>
+            <RemoveFolder Id="RemoveViewerInstallFolder" On="uninstall" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="VisiCoreProgramMenu" Name="VisiCore" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="ViewerRuntime" Directory="VIEWERINSTALLFOLDER">
+      <Files Include="$(var.ViewerPublishDir)\**">
+        <Exclude Files="$(var.ViewerPublishDir)\VisiCoreQtViewer.exe" />
+      </Files>
+    </ComponentGroup>
+
+    <Feature Id="MainFeature" Title="VisiCore Viewer" Level="1">
+      <ComponentRef Id="ViewerExecutable" />
+      <ComponentGroupRef Id="ViewerRuntime" />
+    </Feature>
+  </Package>
+</Wix>

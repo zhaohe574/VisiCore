@@ -1,0 +1,25 @@
+FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS build
+WORKDIR /src
+COPY src ./src
+RUN dotnet restore src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj \
+    && dotnet restore src/VisiCore.EdgeNodeConfig/VisiCore.EdgeNodeConfig.csproj
+RUN dotnet publish src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj --configuration Release --no-restore --output /app/edge-agent \
+    && dotnet publish src/VisiCore.EdgeNodeConfig/VisiCore.EdgeNodeConfig.csproj --configuration Release --no-restore --output /app/edge-node-config
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-bookworm-slim AS runtime
+ARG APP_UID=1654
+WORKDIR /app
+USER root
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/visicore/edge-agent /var/lib/visicore/exports /var/lib/visicore/host-agent/state \
+    && chown -R "${APP_UID}:${APP_UID}" /var/lib/visicore
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
+COPY --from=build /app/edge-agent ./edge-agent
+COPY --from=build /app/edge-node-config ./edge-node-config
+COPY deploy/linux/edge-node-entrypoint.sh /usr/local/bin/visicore-edge-node
+RUN chmod 0555 /usr/local/bin/visicore-edge-node
+USER ${APP_UID}
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/visicore-edge-node"]

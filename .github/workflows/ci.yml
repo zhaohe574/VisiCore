@@ -1,0 +1,190 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: bash tools/verify-dco.sh "${{ github.event.pull_request.base.sha }}"
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+
+  windows-validation:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet restore src/VisiCore.Api/VisiCore.Api.csproj
+      - run: dotnet restore src/VisiCore.Setup/VisiCore.Setup.csproj
+      - run: dotnet restore src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj
+      - run: dotnet restore src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj
+      - run: dotnet restore src/VisiCore.EdgeNodeConfig/VisiCore.EdgeNodeConfig.csproj
+      - run: dotnet restore tests/VisiCore.EdgeAgent.Tests/VisiCore.EdgeAgent.Tests.csproj
+      - run: dotnet restore tests/VisiCore.Api.Tests/VisiCore.Api.Tests.csproj
+      - run: dotnet restore tests/VisiCore.OnvifEdgeWorker.Tests/VisiCore.OnvifEdgeWorker.Tests.csproj
+      - run: dotnet build src/VisiCore.Api/VisiCore.Api.csproj --configuration Release --no-restore
+      - run: dotnet build src/VisiCore.Setup/VisiCore.Setup.csproj --configuration Release --no-restore
+      - run: dotnet build src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj --configuration Release --no-restore
+      - run: dotnet build src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj --configuration Release --no-restore
+      - run: dotnet build src/VisiCore.EdgeNodeConfig/VisiCore.EdgeNodeConfig.csproj --configuration Release --no-restore
+      - run: dotnet test tests/VisiCore.Api.Tests/VisiCore.Api.Tests.csproj --configuration Release --no-restore
+      - run: dotnet test tests/VisiCore.EdgeAgent.Tests/VisiCore.EdgeAgent.Tests.csproj --configuration Release --no-restore
+      - run: dotnet test tests/VisiCore.OnvifEdgeWorker.Tests/VisiCore.OnvifEdgeWorker.Tests.csproj --configuration Release
+
+  windows-edge-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet publish src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-agent
+      - run: dotnet publish src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-host-agent
+      - run: dotnet publish src/VisiCore.EdgeBootstrap/VisiCore.EdgeBootstrap.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-bootstrap
+      - shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          dotnet build deploy/windows/VisiCore.EdgeNode.Installer.wixproj --configuration Release "-p:ProductVersion=$version" "-p:EdgeAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-agent" "-p:EdgeHostAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-host-agent" "-p:EdgeBootstrapPublishDir=${{ github.workspace }}\artifacts\windows\edge-bootstrap"
+      - shell: pwsh
+        run: |
+          $msi = Get-ChildItem deploy\windows\bin\x64\Release\*.msi | Select-Object -First 1
+          if ($null -eq $msi -or $msi.Length -le 0) { throw '未生成 Windows MSI 安装包。' }
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', $msi.FullName, '/qn', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -notin 0, 3010) { throw "MSI 安装失败：$($install.ExitCode)" }
+          try {
+            $services = Get-Service 'VisiCore Edge Agent', 'VisiCore Edge Host Agent' -ErrorAction Stop
+            if ($services | Where-Object Status -ne Stopped) { throw '首次安装后边缘服务必须保持停止，等待本机配置页确认生效。' }
+            if (-not (Test-Path "$env:ProgramFiles\VisiCore\EdgeNode\VisiCore.EdgeBootstrap.exe")) { throw 'MSI 未部署配对向导。' }
+          } finally {
+            $uninstall = Start-Process msiexec.exe -ArgumentList @('/x', $msi.FullName, '/qn', '/norestart') -Wait -PassThru
+            if ($uninstall.ExitCode -notin 0, 3010) { throw "MSI 卸载失败：$($uninstall.ExitCode)" }
+          }
+
+  windows-viewer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.3'
+          arch: 'win64_mingw'
+          tools: 'tools_mingw1310'
+      - shell: pwsh
+        run: |
+          $qtRoot = $env:QT_ROOT_DIR
+          if ([string]::IsNullOrWhiteSpace($qtRoot) -or -not (Test-Path -LiteralPath (Join-Path $qtRoot 'lib\cmake\Qt6\Qt6Config.cmake'))) { throw 'install-qt-action 未提供有效的 QT_ROOT_DIR。' }
+          $mingwBin = Get-ChildItem -LiteralPath $env:IQTA_TOOLS -Directory -Filter 'mingw*_64' | Select-Object -First 1
+          if ($null -eq $mingwBin) { throw '未找到 Qt MinGW 工具链。' }
+          $env:QT_ROOT = $qtRoot
+          $env:Path = "$($mingwBin.FullName)\bin;$env:Path"
+          cmake --preset windows-release
+          cmake --build --preset windows-release --parallel 1
+          ctest --test-dir src\VisiCore.QtViewer\build\release --output-on-failure
+
+  windows-viewer-package:
+    if: ${{ vars.VISICORE_MPV_RUNTIME_URL != '' && vars.VISICORE_MPV_RUNTIME_SHA256 != '' && vars.VISICORE_MPV_RUNTIME_VERSION != '' && vars.VISICORE_MPV_RUNTIME_LICENSE_URL != '' && vars.VISICORE_QT_LICENSE_URL != '' && vars.VISICORE_QT_LICENSE_SHA256 != '' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.3'
+          arch: 'win64_mingw'
+          tools: 'tools_mingw1310'
+      - shell: pwsh
+        env:
+          VISICORE_MPV_RUNTIME_URL: ${{ vars.VISICORE_MPV_RUNTIME_URL }}
+          VISICORE_MPV_RUNTIME_SHA256: ${{ vars.VISICORE_MPV_RUNTIME_SHA256 }}
+          VISICORE_MPV_RUNTIME_VERSION: ${{ vars.VISICORE_MPV_RUNTIME_VERSION }}
+          VISICORE_MPV_RUNTIME_LICENSE_URL: ${{ vars.VISICORE_MPV_RUNTIME_LICENSE_URL }}
+          VISICORE_QT_LICENSE_URL: ${{ vars.VISICORE_QT_LICENSE_URL }}
+          VISICORE_QT_LICENSE_SHA256: ${{ vars.VISICORE_QT_LICENSE_SHA256 }}
+        run: |
+          $required = @($env:VISICORE_MPV_RUNTIME_URL, $env:VISICORE_MPV_RUNTIME_SHA256, $env:VISICORE_MPV_RUNTIME_VERSION, $env:VISICORE_MPV_RUNTIME_LICENSE_URL, $env:VISICORE_QT_LICENSE_URL, $env:VISICORE_QT_LICENSE_SHA256)
+          if ($required | Where-Object { [string]::IsNullOrWhiteSpace($_) }) { throw '缺少受控查看端运行时或许可证变量。' }
+          $qtRoot = $env:QT_ROOT_DIR
+          if ([string]::IsNullOrWhiteSpace($qtRoot) -or -not (Test-Path -LiteralPath (Join-Path $qtRoot 'lib\cmake\Qt6\Qt6Config.cmake'))) { throw 'install-qt-action 未提供有效的 QT_ROOT_DIR。' }
+          $mingwBin = Get-ChildItem -LiteralPath $env:IQTA_TOOLS -Directory -Filter 'mingw*_64' | Select-Object -First 1
+          if ($null -eq $mingwBin) { throw '未找到 Qt MinGW 工具链。' }
+          $mingwLicenses = Join-Path $mingwBin.FullName 'licenses'
+          if (-not (Test-Path -LiteralPath $mingwLicenses -PathType Container)) { throw 'Qt MinGW 工具链未提供许可证目录。' }
+          $env:Path = "$($mingwBin.FullName)\bin;$env:Path"
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP 'visicore-mpv-runtime'
+          New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
+          Invoke-WebRequest -Uri $env:VISICORE_MPV_RUNTIME_URL -OutFile (Join-Path $runtimeRoot 'libmpv-2.dll')
+          Invoke-WebRequest -Uri $env:VISICORE_MPV_RUNTIME_LICENSE_URL -OutFile (Join-Path $runtimeRoot 'LICENSE.txt')
+          Invoke-WebRequest -Uri $env:VISICORE_QT_LICENSE_URL -OutFile (Join-Path $runtimeRoot 'Qt-LGPL-3.0-only.txt')
+          $actualHash = (Get-FileHash -LiteralPath (Join-Path $runtimeRoot 'libmpv-2.dll') -Algorithm SHA256).Hash
+          if ($actualHash -ne $env:VISICORE_MPV_RUNTIME_SHA256.ToUpperInvariant()) { throw 'libmpv SHA-256 不匹配。' }
+          $qtLicenseHash = (Get-FileHash -LiteralPath (Join-Path $runtimeRoot 'Qt-LGPL-3.0-only.txt') -Algorithm SHA256).Hash
+          if ($qtLicenseHash -ne $env:VISICORE_QT_LICENSE_SHA256.ToUpperInvariant()) { throw 'Qt LGPL-3.0 许可证 SHA-256 不匹配。' }
+          .\tools\Build-VisiCoreViewerWindows.ps1 `
+            -QtRoot $qtRoot `
+            -MpvRoot $runtimeRoot `
+            -MpvVersion $env:VISICORE_MPV_RUNTIME_VERSION `
+            -MpvSource $env:VISICORE_MPV_RUNTIME_URL `
+            -MpvSha256 $env:VISICORE_MPV_RUNTIME_SHA256 `
+            -MpvLicenseFile (Join-Path $runtimeRoot 'LICENSE.txt') `
+            -QtLicenseFile (Join-Path $runtimeRoot 'Qt-LGPL-3.0-only.txt') `
+            -MinGwLicenseDirectory $mingwLicenses
+          $msi = Get-Item artifacts\windows\viewer\visicore-viewer-v*.msi
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', $msi.FullName, '/qn', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -notin 0, 3010) { throw "Viewer MSI 安装失败：$($install.ExitCode)" }
+          try {
+            $viewer = "$env:ProgramFiles\VisiCore\Viewer\VisiCoreQtViewer.exe"
+            if (-not (Test-Path $viewer)) { throw 'Viewer MSI 未部署可执行文件。' }
+            & $viewer --verify-mpv-runtime
+            if ($LASTEXITCODE -ne 0) { throw '安装态 libmpv 校验失败。' }
+            & $viewer --verify-login-shell
+            if ($LASTEXITCODE -ne 0) { throw '安装态登录壳验证失败。' }
+          } finally {
+            $uninstall = Start-Process msiexec.exe -ArgumentList @('/x', $msi.FullName, '/qn', '/norestart') -Wait -PassThru
+            if ($uninstall.ExitCode -notin 0, 3010) { throw "Viewer MSI 卸载失败：$($uninstall.ExitCode)" }
+          }
+
+  windows-admin:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: src/VisiCore.Admin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/VisiCore.Admin/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build

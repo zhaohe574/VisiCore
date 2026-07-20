@@ -1,0 +1,37 @@
+# 内置 MediaMTX 仅提供核心容器内的回环服务，不发布到 Docker 网络或宿主机。
+logLevel: info
+
+api: yes
+apiAddress: 127.0.0.1:9997
+
+authMethod: http
+authHTTPAddress: http://127.0.0.1:15095/internal/mediamtx/auth
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+
+rtsp: yes
+rtspAddress: 127.0.0.1:8554
+rtspTransports: [tcp]
+rtmp: no
+webrtc: no
+srt: no
+playback: no
+
+hls: yes
+hlsAddress: 127.0.0.1:8888
+hlsEncryption: no
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+hlsAlwaysRemux: no
+
+pathDefaults:
+  source: publisher
+  sourceOnDemand: no
+  maxReaders: 100
+
+paths:
+  all_others: {}

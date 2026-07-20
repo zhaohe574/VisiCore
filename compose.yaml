@@ -1,0 +1,40 @@
+name: visicore
+
+services:
+  visicore-core:
+    image: ${VISICORE_CORE_IMAGE:-visicore/visicore-core:0.1.0}
+    build:
+      context: .
+      dockerfile: deploy/core/Dockerfile
+      args:
+        NODE_IMAGE: ${VISICORE_NODE_IMAGE:-node:22-alpine}
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_HTTP_BIND_ADDRESS:-127.0.0.1}:${ADMIN_HTTP_PORT:-8080}:8080"
+      - "${ADMIN_HTTPS_BIND_ADDRESS:-127.0.0.1}:${ADMIN_HTTPS_PORT:-8443}:8443"
+    environment:
+      VISICORE_HTTPS_ENABLED: ${VISICORE_HTTPS_ENABLED:-false}
+      VISICORE_TLS_CERTIFICATE_FILE: ${VISICORE_TLS_CERTIFICATE_FILE:-/run/visicore/tls/tls.crt}
+      VISICORE_TLS_PRIVATE_KEY_FILE: ${VISICORE_TLS_PRIVATE_KEY_FILE:-/run/visicore/tls/tls.key}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - visicore-config:/var/lib/visicore/config
+      - api-exports:/var/lib/visicore/exports
+      - visicore-backups:/var/lib/visicore/backups
+      - "${VISICORE_TLS_DIRECTORY:-./deploy/core/tls}:/run/visicore/tls:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+volumes:
+  postgres-data:
+  visicore-config:
+  api-exports:
+  visicore-backups:
+
+networks:
+  default:
+    name: ${VISICORE_NETWORK:-visicore-network}

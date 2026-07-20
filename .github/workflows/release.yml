@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows-edge-msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $repositoryVersion = (Get-Content VERSION -Raw).Trim()
+          if ($version -ne $repositoryVersion) { throw "标签版本 $version 与 VERSION $repositoryVersion 不一致。" }
+      - run: dotnet publish src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-agent
+      - run: dotnet publish src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-host-agent
+      - run: dotnet publish src/VisiCore.EdgeBootstrap/VisiCore.EdgeBootstrap.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-bootstrap
+      - shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          dotnet build deploy/windows/VisiCore.EdgeNode.Installer.wixproj --configuration Release "-p:ProductVersion=$version" "-p:EdgeAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-agent" "-p:EdgeHostAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-host-agent" "-p:EdgeBootstrapPublishDir=${{ github.workspace }}\artifacts\windows\edge-bootstrap"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: visicore-edge-node-msi
+          path: deploy/windows/bin/x64/Release/VisiCore.EdgeNode.Installer.msi
+
+  windows-viewer-msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.3'
+          arch: 'win64_mingw'
+          tools: 'tools_mingw1310'
+      - shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VISICORE_MPV_RUNTIME_URL: ${{ vars.VISICORE_MPV_RUNTIME_URL }}
+          VISICORE_MPV_RUNTIME_SHA256: ${{ vars.VISICORE_MPV_RUNTIME_SHA256 }}
+          VISICORE_MPV_RUNTIME_VERSION: ${{ vars.VISICORE_MPV_RUNTIME_VERSION }}
+          VISICORE_MPV_RUNTIME_LICENSE_URL: ${{ vars.VISICORE_MPV_RUNTIME_LICENSE_URL }}
+          VISICORE_QT_LICENSE_URL: ${{ vars.VISICORE_QT_LICENSE_URL }}
+          VISICORE_QT_LICENSE_SHA256: ${{ vars.VISICORE_QT_LICENSE_SHA256 }}
+        run: |
+          $required = @($env:VISICORE_MPV_RUNTIME_URL, $env:VISICORE_MPV_RUNTIME_SHA256, $env:VISICORE_MPV_RUNTIME_VERSION, $env:VISICORE_MPV_RUNTIME_LICENSE_URL, $env:VISICORE_QT_LICENSE_URL, $env:VISICORE_QT_LICENSE_SHA256)
+          if ($required | Where-Object { [string]::IsNullOrWhiteSpace($_) }) { throw '缺少受控查看端运行时或许可证变量，拒绝制作 Viewer MSI。' }
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $repositoryVersion = (Get-Content VERSION -Raw).Trim()
+          if ($version -ne $repositoryVersion) { throw "标签版本 $version 与 VERSION $repositoryVersion 不一致。" }
+          $qtRoot = $env:QT_ROOT_DIR
+          if ([string]::IsNullOrWhiteSpace($qtRoot) -or -not (Test-Path -LiteralPath (Join-Path $qtRoot 'lib\cmake\Qt6\Qt6Config.cmake'))) { throw 'install-qt-action 未提供有效的 QT_ROOT_DIR。' }
+          $mingwBin = Get-ChildItem -LiteralPath $env:IQTA_TOOLS -Directory -Filter 'mingw*_64' | Select-Object -First 1
+          if ($null -eq $mingwBin) { throw '未找到 Qt MinGW 工具链。' }
+          $mingwLicenses = Join-Path $mingwBin.FullName 'licenses'
+          if (-not (Test-Path -LiteralPath $mingwLicenses -PathType Container)) { throw 'Qt MinGW 工具链未提供许可证目录。' }
+          $env:Path = "$($mingwBin.FullName)\bin;$env:Path"
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP 'visicore-mpv-runtime'
+          New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
+          function Get-ControlledRuntimeAsset([string]$sourceUri, [string]$destination) {
+            $sameRepositoryRelease = [regex]::Match($sourceUri, '^https://github\.com/[^/]+/[^/]+/releases/download/(?<tag>[^/]+)/(?<asset>[^/?#]+)$')
+            if ($sameRepositoryRelease.Success -and $sourceUri.StartsWith("https://github.com/$env:GITHUB_REPOSITORY/", [StringComparison]::OrdinalIgnoreCase)) {
+              $directory = Split-Path -Parent $destination
+              $asset = $sameRepositoryRelease.Groups['asset'].Value
+              gh release download $sameRepositoryRelease.Groups['tag'].Value --repo $env:GITHUB_REPOSITORY --pattern $asset --dir $directory --clobber
+              if ($LASTEXITCODE -ne 0) { throw "无法通过 GitHub Release API 下载受控资产：$asset" }
+              $downloaded = Join-Path $directory $asset
+              if (-not [string]::Equals($downloaded, $destination, [StringComparison]::OrdinalIgnoreCase)) {
+                Move-Item -LiteralPath $downloaded -Destination $destination -Force
+              }
+              return
+            }
+            Invoke-WebRequest -Uri $sourceUri -OutFile $destination
+          }
+          Get-ControlledRuntimeAsset $env:VISICORE_MPV_RUNTIME_URL (Join-Path $runtimeRoot 'libmpv-2.dll')
+          Get-ControlledRuntimeAsset $env:VISICORE_MPV_RUNTIME_LICENSE_URL (Join-Path $runtimeRoot 'LICENSE.txt')
+          Get-ControlledRuntimeAsset $env:VISICORE_QT_LICENSE_URL (Join-Path $runtimeRoot 'Qt-LGPL-3.0-only.txt')
+          $actualHash = (Get-FileHash -LiteralPath (Join-Path $runtimeRoot 'libmpv-2.dll') -Algorithm SHA256).Hash
+          if ($actualHash -ne $env:VISICORE_MPV_RUNTIME_SHA256.ToUpperInvariant()) { throw 'libmpv SHA-256 不匹配。' }
+          $qtLicenseHash = (Get-FileHash -LiteralPath (Join-Path $runtimeRoot 'Qt-LGPL-3.0-only.txt') -Algorithm SHA256).Hash
+          if ($qtLicenseHash -ne $env:VISICORE_QT_LICENSE_SHA256.ToUpperInvariant()) { throw 'Qt LGPL-3.0 许可证 SHA-256 不匹配。' }
+          .\tools\Build-VisiCoreViewerWindows.ps1 `
+            -QtRoot $qtRoot `
+            -MpvRoot $runtimeRoot `
+            -MpvVersion $env:VISICORE_MPV_RUNTIME_VERSION `
+            -MpvSource $env:VISICORE_MPV_RUNTIME_URL `
+            -MpvSha256 $env:VISICORE_MPV_RUNTIME_SHA256 `
+            -MpvLicenseFile (Join-Path $runtimeRoot 'LICENSE.txt') `
+            -QtLicenseFile (Join-Path $runtimeRoot 'Qt-LGPL-3.0-only.txt') `
+            -MinGwLicenseDirectory $mingwLicenses
+      - uses: actions/upload-artifact@v4
+        with:
+          name: visicore-viewer-msi
+          path: |
+            artifacts/windows/viewer/visicore-viewer-v*.msi
+            artifacts/windows/viewer/viewer-sha256.txt
+            artifacts/windows/viewer/visicore-viewer-runtime.json
+
+  publish-windows:
+    needs: [windows-edge-msi, windows-viewer-msi]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: visicore-edge-node-msi
+          path: artifacts/release
+      - uses: actions/download-artifact@v4
+        with:
+          name: visicore-viewer-msi
+          path: artifacts/release
+      - name: 整理 Windows 发行文件
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          test "$version" = "$(tr -d '\r\n' < VERSION)"
+          mv artifacts/release/VisiCore.EdgeNode.Installer.msi "artifacts/release/visicore-edge-node-${GITHUB_REF_NAME}.msi"
+          test -s "artifacts/release/visicore-viewer-${GITHUB_REF_NAME}.msi"
+          test -s artifacts/release/viewer-sha256.txt
+          test -s artifacts/release/visicore-viewer-runtime.json
+      - name: 生成并签名 Windows 发行清单
+        env:
+          EDGE_RELEASE_SIGNING_KEY_BASE64: ${{ secrets.EDGE_RELEASE_SIGNING_KEY_BASE64 }}
+          EDGE_RELEASE_SIGNING_KEY_ID: ${{ vars.EDGE_RELEASE_SIGNING_KEY_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$EDGE_RELEASE_SIGNING_KEY_BASE64"
+          test -n "$EDGE_RELEASE_SIGNING_KEY_ID"
+          key_file="$(mktemp)"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s' "$EDGE_RELEASE_SIGNING_KEY_BASE64" | base64 --decode > "$key_file"
+          openssl pkey -in "$key_file" -pubout > artifacts/release/visicore-edge-release-public-key.pem
+          windows_hash=$(sha256sum "artifacts/release/visicore-edge-node-${GITHUB_REF_NAME}.msi" | cut -d ' ' -f1)
+          version="${GITHUB_REF_NAME#v}"
+          cat > artifacts/release/edge-release-windows-x64.json <<EOF
+          {"releaseId":"${GITHUB_REF_NAME}-windows-x64","operationType":"deployment","targetPlatform":"windows","targetArchitecture":"x64","artifactUrl":"https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/visicore-edge-node-${GITHUB_REF_NAME}.msi","artifactSha256":"$windows_hash","minimumHostAgentVersion":"$version","signingPublicKeyId":"$EDGE_RELEASE_SIGNING_KEY_ID","issuedAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","expiresAt":"$(date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ)"}
+          EOF
+          openssl dgst -sha256 -sign "$key_file" -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 artifacts/release/edge-release-windows-x64.json | base64 -w 0 > artifacts/release/edge-release-windows-x64.signature.base64
+          sha256sum "artifacts/release/visicore-edge-node-${GITHUB_REF_NAME}.msi" "artifacts/release/visicore-viewer-${GITHUB_REF_NAME}.msi" artifacts/release/viewer-sha256.txt artifacts/release/visicore-viewer-runtime.json artifacts/release/visicore-edge-release-public-key.pem artifacts/release/edge-release-windows-x64.json artifacts/release/edge-release-windows-x64.signature.base64 > artifacts/release/release-sha256.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/release/visicore-edge-node-${{ github.ref_name }}.msi
+            artifacts/release/visicore-viewer-${{ github.ref_name }}.msi
+            artifacts/release/viewer-sha256.txt
+            artifacts/release/visicore-viewer-runtime.json
+            artifacts/release/release-sha256.txt
+            artifacts/release/visicore-edge-release-public-key.pem
+            artifacts/release/edge-release-windows-x64.json
+            artifacts/release/edge-release-windows-x64.signature.base64
+            NOTICE
+            THIRD_PARTY_NOTICES.md
