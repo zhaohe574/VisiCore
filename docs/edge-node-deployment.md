@@ -43,7 +43,7 @@ MSI 只注册两个停止状态的服务。交互式安装完成后会打开“V
 
 后台只接受含有目标平台、架构、不可变 HTTPS 制品地址、SHA-256、最低 Host Agent 版本、签发时间和过期时间的签名发行清单。Host Agent 还会自行验签，不信任业务 Agent 的消息内容。
 
-GitHub Release 作业要求配置 `EDGE_RELEASE_SIGNING_KEY_BASE64` 密钥和 `EDGE_RELEASE_SIGNING_KEY_ID` 仓库变量；缺少其中任一项会直接失败。清单内的 `signingPublicKeyId` 必须与后台登记值及节点 Host Agent 配置一致。
+GitHub Release 作业要求配置 `EDGE_RELEASE_SIGNING_KEY_BASE64` 密钥和 `EDGE_RELEASE_SIGNING_KEY_ID` 仓库变量；缺少其中任一项会直接失败。Release 会附带 `visicore-edge-release-public-key.pem`，节点配置页导入该公钥并填写相同的标识后才能启用受控升级。清单内的 `signingPublicKeyId` 必须与后台登记值及节点 Host Agent 配置一致。
 
 Docker 节点只执行固定 Compose `pull` 与 `up --detach --remove-orphans`；Windows 节点只执行固定参数的 MSI 安装。成功发布后才可创建回滚操作，且必须存在本机验证回执、暂存制品和再次匹配的 SHA-256。Host Agent 或安装器恢复失败时，先在后台停用节点，再通过本地受控部署恢复；不要删除节点状态目录来绕过身份或回滚保护。
 

@@ -32,6 +32,8 @@ cmake --preset windows-release `
 
 安装阶段会调用 Qt 部署工具复制所需 DLL 与平台插件，并单独安装 Qt ADS DLL。`mpv-2.dll` 或 `libmpv-2.dll` 必须来自可信 x64 发行包，并通过文件哈希纳入发布清单。正式 Windows 发行只能使用 `tools/Build-VisiCoreViewerWindows.ps1`：必须传入受控 libmpv 目录、版本、来源、SHA-256 与许可证文件；缺少任何输入或部署后哈希不一致都会失败。脚本生成未签名 x64 MSI、MSI SHA-256、libmpv 运行时清单，并在安装包内放入完整第三方许可证目录。首发不含 Authenticode 签名，必须使用发布附带的哈希校验 MSI 完整性。
 
+GitHub Release 使用受控的 `.7z` 运行时归档。`VISICORE_MPV_RUNTIME_URL` 必须指向不可变归档，工作流只会解压其中唯一的 `libmpv-2.dll` 并校验 `VISICORE_MPV_RUNTIME_SHA256`；不得将未校验的 DLL 或可变下载页直接作为发布输入。
+
 安装验收可使用以下命令检查动态运行时是否可被加载、所需 C API 是否齐全，以及 API 主版本是否兼容。该检查不登录中心、不申请视频会话，也不访问录像机或摄像头：
 
 ```powershell

@@ -59,8 +59,20 @@ jobs:
           if ($null -eq $mingwBin) { throw '未找到 Qt MinGW 工具链。' }
           $env:Path = "$($mingwBin.FullName)\bin;$env:Path"
           $runtimeRoot = Join-Path $env:RUNNER_TEMP 'visicore-mpv-runtime'
-          New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
-          Invoke-WebRequest -Uri $env:VISICORE_MPV_RUNTIME_URL -OutFile (Join-Path $runtimeRoot 'libmpv-2.dll')
+          $extractedRuntimeRoot = Join-Path $env:RUNNER_TEMP 'visicore-mpv-runtime-extracted'
+          $runtimeArchive = Join-Path $env:RUNNER_TEMP 'visicore-mpv-runtime.7z'
+          New-Item -ItemType Directory -Force -Path $runtimeRoot, $extractedRuntimeRoot | Out-Null
+
+          # 受控运行时由上游以 7z 包发行，必须解压后校验实际 DLL 哈希。
+          Invoke-WebRequest -Uri $env:VISICORE_MPV_RUNTIME_URL -OutFile $runtimeArchive
+          $sevenZip = Get-Command 7z -ErrorAction SilentlyContinue
+          $sevenZipPath = if ($null -ne $sevenZip) { $sevenZip.Source } else { Join-Path $env:ProgramFiles '7-Zip\7z.exe' }
+          if (-not (Test-Path -LiteralPath $sevenZipPath)) { throw '未找到 7-Zip，无法解压受控 libmpv 发行包。' }
+          & $sevenZipPath x $runtimeArchive "-o$extractedRuntimeRoot" -y
+          if ($LASTEXITCODE -ne 0) { throw '受控 libmpv 发行包解压失败。' }
+          $libraries = @(Get-ChildItem -LiteralPath $extractedRuntimeRoot -Recurse -Filter 'libmpv-2.dll')
+          if ($libraries.Count -ne 1) { throw '受控 libmpv 发行包必须且只能包含一个 libmpv-2.dll。' }
+          Copy-Item -LiteralPath $libraries[0].FullName -Destination (Join-Path $runtimeRoot 'libmpv-2.dll')
           Invoke-WebRequest -Uri $env:VISICORE_MPV_RUNTIME_LICENSE_URL -OutFile (Join-Path $runtimeRoot 'LICENSE.txt')
           $actualHash = (Get-FileHash -LiteralPath (Join-Path $runtimeRoot 'libmpv-2.dll') -Algorithm SHA256).Hash
           if ($actualHash -ne $env:VISICORE_MPV_RUNTIME_SHA256.ToUpperInvariant()) { throw 'libmpv SHA-256 不匹配。' }
@@ -140,6 +152,7 @@ jobs:
           test -n "$EDGE_RELEASE_SIGNING_KEY_BASE64"
           test -n "$EDGE_RELEASE_SIGNING_KEY_ID"
           printf '%s' "$EDGE_RELEASE_SIGNING_KEY_BASE64" | base64 --decode > /tmp/edge-release-signing-key.pem
+          openssl pkey -in /tmp/edge-release-signing-key.pem -pubout > artifacts/release/visicore-edge-release-public-key.pem
           windows_hash=$(sha256sum artifacts/release/visicore-edge-node-${{ github.ref_name }}.msi | cut -d ' ' -f1)
           linux_hash=$(sha256sum artifacts/release/visicore-edge-agent-${{ github.ref_name }}-linux.tar.gz | cut -d ' ' -f1)
           cat > artifacts/release/edge-release-windows-x64.json <<EOF
@@ -154,7 +167,7 @@ jobs:
           openssl dgst -sha256 -sign /tmp/edge-release-signing-key.pem -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 artifacts/release/edge-release-windows-x64.json | base64 -w 0 > artifacts/release/edge-release-windows-x64.signature.base64
           openssl dgst -sha256 -sign /tmp/edge-release-signing-key.pem -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 artifacts/release/edge-release-linux-amd64.json | base64 -w 0 > artifacts/release/edge-release-linux-amd64.signature.base64
           openssl dgst -sha256 -sign /tmp/edge-release-signing-key.pem -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 artifacts/release/edge-release-linux-arm64.json | base64 -w 0 > artifacts/release/edge-release-linux-arm64.signature.base64
-          sha256sum artifacts/release/visicore-edge-node-${{ github.ref_name }}.msi artifacts/release/visicore-viewer-${{ github.ref_name }}.msi artifacts/release/viewer-sha256.txt artifacts/release/visicore-viewer-runtime.json artifacts/release/visicore-edge-agent-${{ github.ref_name }}-linux.tar.gz artifacts/release/visicore-sbom.spdx.json artifacts/release/edge-release-windows-x64.json artifacts/release/edge-release-windows-x64.signature.base64 artifacts/release/edge-release-linux-amd64.json artifacts/release/edge-release-linux-amd64.signature.base64 artifacts/release/edge-release-linux-arm64.json artifacts/release/edge-release-linux-arm64.signature.base64 > artifacts/release/release-sha256.txt
+          sha256sum artifacts/release/visicore-edge-node-${{ github.ref_name }}.msi artifacts/release/visicore-viewer-${{ github.ref_name }}.msi artifacts/release/viewer-sha256.txt artifacts/release/visicore-viewer-runtime.json artifacts/release/visicore-edge-agent-${{ github.ref_name }}-linux.tar.gz artifacts/release/visicore-sbom.spdx.json artifacts/release/visicore-edge-release-public-key.pem artifacts/release/edge-release-windows-x64.json artifacts/release/edge-release-windows-x64.signature.base64 artifacts/release/edge-release-linux-amd64.json artifacts/release/edge-release-linux-amd64.signature.base64 artifacts/release/edge-release-linux-arm64.json artifacts/release/edge-release-linux-arm64.signature.base64 > artifacts/release/release-sha256.txt
           rm -f /tmp/edge-release-signing-key.pem
       - uses: softprops/action-gh-release@v2
         with:
@@ -167,6 +180,7 @@ jobs:
             artifacts/release/visicore-edge-agent-${{ github.ref_name }}-linux.tar.gz
             artifacts/release/release-sha256.txt
             artifacts/release/visicore-sbom.spdx.json
+            artifacts/release/visicore-edge-release-public-key.pem
             artifacts/release/edge-release-windows-x64.json
             artifacts/release/edge-release-windows-x64.signature.base64
             artifacts/release/edge-release-linux-amd64.json
