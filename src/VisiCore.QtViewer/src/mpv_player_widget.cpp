@@ -139,6 +139,13 @@ bool MpvPlayerWidget::isReady() const {
     return mpv_ != nullptr && renderContext_ != nullptr;
 }
 
+QImage MpvPlayerWidget::captureFrame() {
+    if (!isReady() || width() <= 0 || height() <= 0) {
+        return {};
+    }
+    return grabFramebuffer();
+}
+
 bool MpvPlayerWidget::verifyRuntime(QString *errorMessage) {
     QLibrary library;
     if (!loadMpvRuntimeLibrary(library)) {

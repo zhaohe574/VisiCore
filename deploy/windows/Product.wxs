@@ -1,0 +1,42 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="VisiCore Edge Node" Manufacturer="VisiCore" Version="$(var.ProductVersion)" UpgradeCode="D0E6B9B0-81C7-4B4A-A3B4-4F9A67DC5E76" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 VisiCore Edge Node。" />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="VisiCore">
+        <Directory Id="EDGENODEFOLDER" Name="EdgeNode">
+          <Component Id="EdgeAgentService" Guid="*">
+            <File Id="EdgeAgentExecutable" Source="$(var.EdgeAgentPublishDir)\VisiCore.EdgeAgent.exe" KeyPath="yes" />
+            <ServiceInstall Id="InstallEdgeAgent" Name="VisiCore Edge Agent" DisplayName="VisiCore Edge Agent" Description="VisiCore 统一边缘运行时" Start="demand" Type="ownProcess" ErrorControl="normal" Account="NT AUTHORITY\LocalService" />
+            <ServiceControl Id="ControlEdgeAgent" Name="VisiCore Edge Agent" Stop="both" Remove="uninstall" Wait="yes" />
+          </Component>
+          <Component Id="EdgeHostAgentService" Guid="*">
+            <File Id="EdgeHostAgentExecutable" Source="$(var.EdgeHostAgentPublishDir)\VisiCore.EdgeHostAgent.exe" KeyPath="yes" />
+            <ServiceInstall Id="InstallEdgeHostAgent" Name="VisiCore Edge Host Agent" DisplayName="VisiCore Edge Host Agent" Description="VisiCore 受控宿主升级执行器" Start="demand" Type="ownProcess" ErrorControl="normal" Account="LocalSystem" />
+            <ServiceControl Id="ControlEdgeHostAgent" Name="VisiCore Edge Host Agent" Stop="both" Remove="uninstall" Wait="yes" />
+          </Component>
+          <Component Id="EdgeBootstrap" Guid="*">
+            <File Id="EdgeBootstrapExecutable" Source="$(var.EdgeBootstrapPublishDir)\VisiCore.EdgeBootstrap.exe" KeyPath="yes">
+              <Shortcut Id="EdgeBootstrapShortcut" Directory="VisiCoreProgramMenu" Name="VisiCore 边缘节点配置" WorkingDirectory="EDGENODEFOLDER" Advertise="no" />
+            </File>
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="VisiCoreProgramMenu" Name="VisiCore" />
+    </StandardDirectory>
+
+    <CustomAction Id="LaunchEdgeConfiguration" Directory="EDGENODEFOLDER" ExeCommand="VisiCore.EdgeBootstrap.exe" Execute="immediate" Return="asyncNoWait" Impersonate="yes" />
+    <InstallUISequence>
+      <Custom Action="LaunchEdgeConfiguration" After="ExecuteAction" Condition="NOT Installed AND UILevel &gt;= 4" />
+    </InstallUISequence>
+
+    <Feature Id="MainFeature" Title="VisiCore Edge Node" Level="1">
+      <ComponentRef Id="EdgeAgentService" />
+      <ComponentRef Id="EdgeHostAgentService" />
+      <ComponentRef Id="EdgeBootstrap" />
+    </Feature>
+  </Package>
+</Wix>

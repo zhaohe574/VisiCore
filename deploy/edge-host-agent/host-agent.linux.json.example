@@ -1,0 +1,22 @@
+{
+  "HostAgent": {
+    "Enabled": false,
+    "AllowExecution": false,
+    "OperationInboxDirectory": "/var/lib/visicore/edge-host-agent/inbox",
+    "OperationReceiptDirectory": "/var/lib/visicore/edge-host-agent/receipts",
+    "OperationStateDirectory": "/var/lib/visicore/edge-host-agent/state",
+    "ReleaseArtifactDirectory": "/var/lib/visicore/edge-host-agent/releases",
+    "AllowedArtifactHosts": ["github.com", "objects.githubusercontent.com"],
+    "MaximumArtifactBytes": 2147483648,
+    "SigningPublicKeyPath": "/etc/visicore/edge-host-agent/release-public-key.pem",
+    "SigningPublicKeyId": "replace-with-release-key-id",
+    "DockerComposeExecutablePath": "/usr/bin/docker",
+    "ComposeFilePath": "/opt/visicore/edge/edge-agent.compose.yaml",
+    "ConfigurationSocketPath": "/var/lib/visicore/edge-node/config/host-agent.sock",
+    "ConfigurationTokenPath": "/var/lib/visicore/edge-node/config/access.token",
+    "ManagedEdgeAgentConfigurationPath": "/var/lib/visicore/edge-node/state/edge-agent.json",
+    "ManagedEdgeAgentBootstrapPath": "/var/lib/visicore/edge-node/state/bootstrap/bootstrap.json",
+    "ManagedHostAgentConfigurationPath": "/etc/visicore/edge-host-agent/edge-host-agent.json",
+    "ExecutionTimeoutSeconds": 600
+  }
+}

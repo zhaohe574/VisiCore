@@ -3,6 +3,7 @@
 #include "apiclient.h"
 #include "app_dialog.h"
 #include "change_password_dialog.h"
+#include "connection_settings_dialog.h"
 #include "icon_provider.h"
 #include "theme_manager.h"
 
@@ -74,6 +75,8 @@ LoginDialog::LoginDialog(ApiClient *apiClient, QWidget *parent)
     loginButton_->setProperty("primary", true);
     loginButton_->setMinimumHeight(38);
     loginButton_->setDefault(true);
+    auto *connectionButton = new QPushButton(QStringLiteral("中心连接设置"), this);
+    connectionButton->setObjectName(QStringLiteral("connectionSettingsButton"));
 
     auto *usernameLabel = new QLabel(QStringLiteral("用户名"), this);
     usernameLabel->setObjectName(QStringLiteral("panelTitle"));
@@ -88,12 +91,26 @@ LoginDialog::LoginDialog(ApiClient *apiClient, QWidget *parent)
     contentLayout()->addWidget(passwordLabel);
     contentLayout()->addWidget(passwordEdit_);
     contentLayout()->addWidget(rememberUsernameCheck_);
+    contentLayout()->addWidget(connectionButton, 0, Qt::AlignLeft);
     contentLayout()->addWidget(errorLabel_);
     contentLayout()->addSpacing(2);
     contentLayout()->addWidget(loginButton_);
 
     connect(loginButton_, &QPushButton::clicked, this, &LoginDialog::submit);
     connect(passwordEdit_, &QLineEdit::returnPressed, this, &LoginDialog::submit);
+    connect(connectionButton, &QPushButton::clicked, this, [this]() {
+        ConnectionSettingsDialog dialog(apiClient_->baseUrl(), apiClient_->allowsInsecureHttp(), this);
+        if (dialog.exec() != QDialog::Accepted) {
+            return;
+        }
+        if (!apiClient_->setBaseUrl(dialog.baseUrl())) {
+            loginFailed(QStringLiteral("中心地址无效，请检查协议和主机名后重试。"));
+            return;
+        }
+        errorLabel_->hide();
+        passwordEdit_->clear();
+        passwordEdit_->setFocus();
+    });
     connect(apiClient_, &ApiClient::loginSucceeded, this, [this](const QString &username) {
         QSettings settings;
         if (rememberUsernameCheck_->isChecked()) {

@@ -1,0 +1,16 @@
+{
+  "HostAgent": {
+    "Enabled": true,
+    "AllowExecution": false,
+    "OperationInboxDirectory": "C:\\ProgramData\\VisiCore\\EdgeHostAgent\\inbox",
+    "OperationReceiptDirectory": "C:\\ProgramData\\VisiCore\\EdgeHostAgent\\receipts",
+    "OperationStateDirectory": "C:\\ProgramData\\VisiCore\\EdgeHostAgent\\state",
+    "ReleaseArtifactDirectory": "C:\\ProgramData\\VisiCore\\EdgeHostAgent\\releases",
+    "AllowedArtifactHosts": ["github.com", "objects.githubusercontent.com"],
+    "MaximumArtifactBytes": 2147483648,
+    "SigningPublicKeyPath": "C:\\ProgramData\\VisiCore\\EdgeHostAgent\\release-public-key.pem",
+    "SigningPublicKeyId": "replace-with-release-key-id",
+    "WindowsInstallerExecutablePath": "C:\\Windows\\System32\\msiexec.exe",
+    "ExecutionTimeoutSeconds": 600
+  }
+}

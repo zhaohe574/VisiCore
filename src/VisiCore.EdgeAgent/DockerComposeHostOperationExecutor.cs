@@ -6,10 +6,27 @@ namespace VisiCore.EdgeAgent;
 /// 默认关闭的 Compose 执行器。它只接受本机配置中的固定可执行文件和 Compose 文件，
 /// 不读取或拼接操作清单中的任何命令、路径或参数。
 /// </summary>
-public sealed class DockerComposeHostOperationExecutor(HostAgentOptions options)
+public sealed class DockerComposeHostOperationExecutor(HostAgentOptions options) : IHostOperationExecutor
 {
+    public async Task<HostOperationExecutionResult> RestartConfiguredEdgeAgentAsync(CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsLinux() ||
+            string.IsNullOrWhiteSpace(options.DockerComposeExecutablePath) ||
+            string.IsNullOrWhiteSpace(options.ComposeFilePath) ||
+            !Path.IsPathFullyQualified(options.DockerComposeExecutablePath) ||
+            !Path.IsPathFullyQualified(options.ComposeFilePath) ||
+            !File.Exists(options.DockerComposeExecutablePath) ||
+            !File.Exists(options.ComposeFilePath))
+        {
+            return HostOperationExecutionResult.Failed("configuration_restart_unavailable");
+        }
+
+        return await RunComposeAsync(options.ComposeFilePath, ["up", "--detach", "--no-deps", "edge-agent"], cancellationToken);
+    }
+
     public async Task<HostOperationExecutionResult> ExecuteAsync(
         HostOperationKind operationKind,
+        HostVerifiedReleaseArtifact artifact,
         CancellationToken cancellationToken)
     {
         if (!options.AllowExecution)
@@ -17,15 +34,14 @@ public sealed class DockerComposeHostOperationExecutor(HostAgentOptions options)
             return HostOperationExecutionResult.Failed("host_execution_not_enabled");
         }
 
-        var composeFilePath = operationKind == HostOperationKind.Deployment
-            ? options.ComposeFilePath
-            : options.RollbackComposeFilePath;
+        var composeFilePath = artifact.ComposeFilePath;
         if (string.IsNullOrWhiteSpace(options.DockerComposeExecutablePath) ||
             string.IsNullOrWhiteSpace(composeFilePath) ||
             !Path.IsPathFullyQualified(options.DockerComposeExecutablePath) ||
             !Path.IsPathFullyQualified(composeFilePath) ||
             !File.Exists(options.DockerComposeExecutablePath) ||
-            !File.Exists(composeFilePath))
+            !File.Exists(composeFilePath) ||
+            !composeFilePath.EndsWith("compose.yaml", StringComparison.OrdinalIgnoreCase))
         {
             return HostOperationExecutionResult.Failed("host_executor_configuration_invalid");
         }

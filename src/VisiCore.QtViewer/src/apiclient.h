@@ -21,6 +21,9 @@ public:
     explicit ApiClient(QUrl baseUrl, bool allowInsecureHttp, QObject *parent = nullptr);
 
     [[nodiscard]] bool isBaseUrlValid() const;
+    [[nodiscard]] QUrl baseUrl() const;
+    [[nodiscard]] bool allowsInsecureHttp() const;
+    bool setBaseUrl(QUrl baseUrl);
     [[nodiscard]] QString username() const;
     [[nodiscard]] bool passwordChangeRequired() const;
 
@@ -49,6 +52,10 @@ public:
         const QDateTime &position = {},
         double speed = 0.0);
     void requestPlaybackTransport(const QUuid &sessionId);
+    void loadPlaybackExports();
+    void createPlaybackExport(const QUuid &cameraId, const QDateTime &startedAt, const QDateTime &endedAt);
+    void cancelPlaybackExport(const QUuid &exportId);
+    QNetworkReply *downloadPlaybackExport(const QUuid &exportId);
     void requestReconnectTicket(const QUuid &sessionId, const QUuid &requestId);
     void revokeSession(const QUuid &sessionId);
     void requestPtz(const QUuid &cameraId, int action, int motion, int speed = 4);
@@ -70,6 +77,12 @@ signals:
     void playbackControlQueued(const QUuid &sessionId, const PlaybackTransportInfo &transport);
     void playbackControlFailed(const QUuid &sessionId, const QString &message);
     void playbackTransportRefreshed(const QUuid &sessionId, const PlaybackTransportInfo &transport);
+    void playbackExportsLoaded(const QList<PlaybackExportInfo> &exports);
+    void playbackExportsFailed(const QString &message);
+    void playbackExportCreated(const PlaybackExportInfo &exportInfo);
+    void playbackExportCreateFailed(const QString &message);
+    void playbackExportCancelled(const QUuid &exportId);
+    void playbackExportCancelFailed(const QUuid &exportId, const QString &message);
     void ptzRequestFailed(const QString &message);
     void sessionRevoked(const QUuid &sessionId);
     void sessionRevocationFailed(const QUuid &sessionId, const QString &message);
@@ -107,6 +120,7 @@ private:
     void clearAuthenticationState();
     void sendLogout(const QNetworkRequest &request, int attempt, quint64 authGeneration);
     void renewActiveSessions();
+    PlaybackExportInfo parsePlaybackExport(const QJsonObject &object) const;
 
     struct ActiveLease {
         QDateTime expiresAt;

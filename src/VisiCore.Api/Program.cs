@@ -17,7 +17,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using VisiCore.Api;
 using VisiCore.Core;
+using VisiCore.NotificationWorker;
 using VisiCore.Persistence;
+using VisiCore.Setup;
 
 static string? ReadCommandLineOption(string[] arguments, string optionName)
 {
@@ -35,6 +37,23 @@ static string? ReadCommandLineOption(string[] arguments, string optionName)
     return null;
 }
 
+static bool TryGetBrowserOrigin(HttpRequest request, out Uri browserOrigin)
+{
+    browserOrigin = null!;
+    var suppliedOrigin = request.Headers.Origin.ToString();
+    if (string.IsNullOrWhiteSpace(suppliedOrigin) ||
+        !Uri.TryCreate(suppliedOrigin, UriKind.Absolute, out var parsedOrigin) ||
+        !string.IsNullOrEmpty(parsedOrigin.UserInfo) ||
+        !string.IsNullOrEmpty(parsedOrigin.Query) ||
+        !string.IsNullOrEmpty(parsedOrigin.Fragment))
+    {
+        return false;
+    }
+
+    browserOrigin = new Uri(parsedOrigin.GetLeftPart(UriPartial.Authority) + "/", UriKind.Absolute);
+    return true;
+}
+
 var configuredWebRootPath = ReadCommandLineOption(args, "--webroot") ?? Environment.GetEnvironmentVariable("WebRootPath");
 if (!string.IsNullOrWhiteSpace(configuredWebRootPath) && !Path.IsPathFullyQualified(configuredWebRootPath))
 {
@@ -45,6 +64,21 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     Args = args,
     WebRootPath = string.IsNullOrWhiteSpace(configuredWebRootPath) ? null : Path.GetFullPath(configuredWebRootPath)
 });
+var runtimeConfigurationPath = Environment.GetEnvironmentVariable("VISICORE_RUNTIME_CONFIG")
+    ?? "/var/lib/visicore/config/runtime.json";
+if (File.Exists(runtimeConfigurationPath))
+{
+    builder.Configuration.AddJsonFile(runtimeConfigurationPath, optional: false, reloadOnChange: false);
+}
+var runtimeConfigurationDirectory = Path.GetDirectoryName(Path.GetFullPath(runtimeConfigurationPath))
+    ?? throw new InvalidOperationException("运行配置目录无效。");
+var httpsConfigurationPath = Environment.GetEnvironmentVariable("VISICORE_HTTPS_CONFIGURATION")
+    ?? Path.Combine(runtimeConfigurationDirectory, "https-configuration.json");
+if (File.Exists(httpsConfigurationPath))
+{
+    // 待应用文件在进程重启后才成为运行时覆盖，避免保存 HTTPS 设置立即改变现有服务行为。
+    builder.Configuration.AddJsonFile(httpsConfigurationPath, optional: false, reloadOnChange: false);
+}
 var runAsWindowsService = args.Any(argument => string.Equals(argument, "--service", StringComparison.OrdinalIgnoreCase));
 if (runAsWindowsService)
 {
@@ -60,6 +94,14 @@ else
 }
 var connectionString = builder.Configuration.GetConnectionString("Platform");
 var healthChecks = builder.Services.AddHealthChecks();
+builder.Services.AddSingleton(new InstallationService(runtimeConfigurationPath));
+builder.Services.AddSingleton(new HttpsConfigurationService(new HttpsConfigurationPaths(
+    httpsConfigurationPath,
+    Environment.GetEnvironmentVariable("VISICORE_UPLOADED_TLS_DIRECTORY") ?? Path.Combine(runtimeConfigurationDirectory, "tls"),
+    Environment.GetEnvironmentVariable("VISICORE_TLS_CERTIFICATE_FILE") ?? "/run/visicore/tls/tls.crt",
+    Environment.GetEnvironmentVariable("VISICORE_TLS_PRIVATE_KEY_FILE") ?? "/run/visicore/tls/tls.key",
+    runtimeConfigurationPath,
+    string.Equals(Environment.GetEnvironmentVariable("VISICORE_HTTPS_ENABLED"), "true", StringComparison.OrdinalIgnoreCase))));
 builder.Services.AddRateLimiter(rateLimiterOptions =>
 {
     rateLimiterOptions.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -153,8 +195,14 @@ if (string.IsNullOrWhiteSpace(connectionString))
 else
 {
     builder.Services.AddDbContext<PlatformDbContext>(options => options.UseNpgsql(connectionString));
+    builder.Services.AddVisiCoreNotificationWorker(builder.Configuration, connectionString);
     builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
-    builder.Services.AddSingleton<NotificationWebhookAddressProtector>();
+    var webhookMasterKey = builder.Configuration["NotificationWebhook:MasterKey"];
+    if (string.IsNullOrWhiteSpace(webhookMasterKey))
+    {
+        throw new InvalidOperationException("运行配置缺少 NotificationWebhook:MasterKey。请重新运行 setup。 ");
+    }
+    builder.Services.AddSingleton(new NotificationWebhookAddressProtector(webhookMasterKey));
     healthChecks.AddCheck<DatabaseReadinessHealthCheck>("platform_database", HealthStatus.Unhealthy);
     builder.Services.AddSingleton<Argon2PasswordHasher>();
     builder.Services.AddScoped<AccountPasswordService>();
@@ -165,7 +213,7 @@ else
     builder.Services.AddScoped<DevicePluginCapabilityService>();
     builder.Services.AddScoped<DeviceWorkerAccessService>();
     builder.Services.AddScoped<DeviceWorkerSyncService>();
-    builder.Services.AddScoped<LinuxEdgeAgentControlService>();
+    builder.Services.AddScoped<EdgeAgentControlService>();
     builder.Services.AddScoped<PublicOfflineDeviceService>();
     var clockMonitoringOptions = builder.Configuration.GetSection("ClockMonitoring").Get<ClockMonitoringOptions>() ?? new ClockMonitoringOptions();
     clockMonitoringOptions.Validate();
@@ -183,6 +231,7 @@ else
     builder.Services.Configure<ExportArtifactStorageOptions>(builder.Configuration.GetSection("ExportArtifactStorage"));
     builder.Services.AddSingleton<LocalExportArtifactStore>();
     builder.Services.AddScoped<PlaybackExportArtifactService>();
+    builder.Services.AddScoped<ViewerPlaybackExportAccessService>();
     builder.Services.AddScoped<PtzControlService>();
     builder.Services.Configure<StreamGatewayOptions>(builder.Configuration.GetSection("StreamGateway"));
     builder.Services.AddHttpClient(StreamGatewayRevocationWorker.HttpClientName, client =>
@@ -248,12 +297,132 @@ if (Directory.Exists(app.Environment.WebRootPath))
 app.MapHealthChecks("/healthz", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/readyz", new HealthCheckOptions { Predicate = _ => true });
 
+app.MapGet("/api/v1/setup/status", (InstallationService installationService) =>
+{
+    var status = installationService.GetStatus();
+    return Results.Ok(new
+    {
+        state = status.State.ToString().ToLowerInvariant(),
+        defaults = status.Defaults
+    });
+});
+
+app.MapPost("/api/v1/setup/test-postgres", async (
+    PostgreSqlTestRequest request,
+    InstallationService installationService,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        await installationService.TestPostgreSqlAsync(request, cancellationToken);
+        return Results.Ok(new { message = "PostgreSQL 连接、TLS 和创建数据库权限校验通过。" });
+    }
+    catch (InstallationConflictException exception)
+    {
+        return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "PostgreSQL 测试已拒绝", detail: exception.Message);
+    }
+    catch (InstallationValidationException exception)
+    {
+        return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "PostgreSQL 参数无效", detail: exception.Message);
+    }
+    catch (Exception)
+    {
+        loggerFactory.CreateLogger("VisiCore.Api.Setup").LogWarning("PostgreSQL 初始化连接测试未通过。");
+        return Results.Problem(statusCode: StatusCodes.Status502BadGateway, title: "PostgreSQL 测试失败", detail: "无法连接 PostgreSQL 或校验管理账号权限。请检查主机、TLS、账号和网络后重试。");
+    }
+});
+
+app.MapPost("/api/v1/setup/test-mediamtx", async (
+    MediaMtxTestRequest request,
+    InstallationService installationService,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        await installationService.TestMediaMtxAsync(request, cancellationToken);
+        return Results.Ok(new { message = "MediaMTX Control API 与 HLS 地址校验通过。" });
+    }
+    catch (InstallationConflictException exception)
+    {
+        return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "MediaMTX 测试已拒绝", detail: exception.Message);
+    }
+    catch (InstallationValidationException exception)
+    {
+        return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "MediaMTX 参数无效", detail: exception.Message);
+    }
+    catch (Exception)
+    {
+        loggerFactory.CreateLogger("VisiCore.Api.Setup").LogWarning("MediaMTX 初始化连接测试未通过。");
+        return Results.Problem(statusCode: StatusCodes.Status502BadGateway, title: "MediaMTX 测试失败", detail: "无法连接 MediaMTX Control API 或 HLS 地址。请检查地址、TLS 和网络后重试。");
+    }
+});
+
+app.MapPost("/api/v1/setup/initialize", async (
+    InstallationRequest request,
+    HttpContext context,
+    InstallationService installationService,
+    IHostApplicationLifetime applicationLifetime,
+    ILoggerFactory loggerFactory,
+    CancellationToken cancellationToken) =>
+{
+    if (!TryGetBrowserOrigin(context.Request, out var browserOrigin))
+    {
+        return Results.Problem(
+            statusCode: StatusCodes.Status400BadRequest,
+            title: "初始化来源无效",
+            detail: "请从当前视枢初始化页面提交配置，不要通过跨域请求调用此接口。");
+    }
+
+    try
+    {
+        await installationService.InitializeAsync(request, browserOrigin, cancellationToken);
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            applicationLifetime.StopApplication();
+        });
+        return Results.Accepted("/api/v1/setup/status", new { state = "restarting" });
+    }
+    catch (InstallationConflictException exception)
+    {
+        return Results.Problem(
+            statusCode: StatusCodes.Status409Conflict,
+            title: "初始化已拒绝",
+            detail: exception.Message);
+    }
+    catch (InstallationValidationException exception)
+    {
+        return Results.Problem(
+            statusCode: StatusCodes.Status400BadRequest,
+            title: "初始化参数无效",
+            detail: exception.Message);
+    }
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+    {
+        return Results.Problem(
+            statusCode: StatusCodes.Status503ServiceUnavailable,
+            title: "初始化已取消",
+            detail: "初始化请求已取消，未保存运行配置。请检查外置服务后重试。");
+    }
+    catch (Exception)
+    {
+        // 初始化请求可能包含数据库密码；日志仅保留固定事件，不输出异常对象或请求内容。
+        loggerFactory.CreateLogger("VisiCore.Api.Setup").LogWarning("首次初始化未完成，运行配置未写入。");
+        return Results.Problem(
+            statusCode: StatusCodes.Status502BadGateway,
+            title: "初始化失败",
+            detail: "无法完成外置服务校验或数据库初始化。请检查 PostgreSQL、MediaMTX、TLS 与账号权限后重试。");
+    }
+});
+
 if (string.IsNullOrWhiteSpace(connectionString))
 {
     app.MapMethods("/api/{**path}", ["GET", "POST", "PUT", "PATCH", "DELETE"], () => Results.Problem(
         statusCode: StatusCodes.Status503ServiceUnavailable,
         title: "平台数据库尚未配置",
-        detail: "配置 ConnectionStrings__Platform 后才能启用业务 API。"));
+        detail: "平台尚未完成首次初始化。请先在浏览器中完成外置服务与管理员配置。"));
 }
 else
 {
@@ -290,7 +459,11 @@ else
     {
         try
         {
-            var user = await dbContext.Users.SingleOrDefaultAsync(item => item.Username == request.Username && item.DisabledAt == null, cancellationToken);
+            if (!PlatformUsernamePolicy.TryNormalize(request.Username, out var username, out _))
+            {
+                return Results.Unauthorized();
+            }
+            var user = await dbContext.Users.SingleOrDefaultAsync(item => item.Username == username && item.DisabledAt == null, cancellationToken);
             if (user is null || !passwordHasher.Verify(request.Password, user.PasswordHash))
             {
                 return Results.Unauthorized();
@@ -452,11 +625,15 @@ else
     }).AllowAnonymous().RequireRateLimiting("public-offline-devices");
 
     var cameras = app.MapGroup("/api/v1/cameras").RequireAuthorization();
-    cameras.MapGet("/", async (ClaimsPrincipal principal, PlatformAccessService accessService, DevicePluginCapabilityService capabilityService, CancellationToken cancellationToken) =>
+    cameras.MapGet("/", async (ClaimsPrincipal principal, PlatformAccessService accessService, DevicePluginCapabilityService capabilityService, PluginOperationEligibilityService eligibilityService, CancellationToken cancellationToken) =>
     {
         var liveViewCameras = await accessService.GetCamerasAsync(principal, CameraPermission.LiveView, cancellationToken);
         var playbackCameras = await accessService.GetCamerasAsync(principal, CameraPermission.Playback, cancellationToken);
         var ptzCameras = await accessService.GetCamerasAsync(principal, CameraPermission.PtzControl, cancellationToken);
+        var canManageExports = await accessService.HasSystemPermissionAsync(principal, SystemPermission.ManageExports, cancellationToken);
+        var exportCameras = canManageExports
+            ? await accessService.GetCamerasAsync(principal, CameraPermission.Export, cancellationToken)
+            : [];
         var visibleCameras = liveViewCameras
             .Concat(playbackCameras)
             .DistinctBy(item => item.Id)
@@ -469,6 +646,12 @@ else
         var liveViewCameraIds = liveViewCameras.Where(item => liveRecorders.Contains(item.RecorderId)).Select(item => item.Id).ToHashSet();
         var playbackCameraIds = playbackCameras.Where(item => playbackRecorders.Contains(item.RecorderId)).Select(item => item.Id).ToHashSet();
         var ptzCameraIds = ptzCameras.Where(item => ptzRecorders.Contains(item.RecorderId)).Select(item => item.Id).ToHashSet();
+        var exportRecorderIds = await eligibilityService.GetExportEligibleRecorderIdsAsync(
+            exportCameras.Select(item => item.RecorderId), cancellationToken);
+        var exportCameraIds = exportCameras
+            .Where(item => exportRecorderIds.Contains(item.RecorderId))
+            .Select(item => item.Id)
+            .ToHashSet();
         return Results.Ok(visibleCameras
             .Where(item => liveViewCameraIds.Contains(item.Id) || playbackCameraIds.Contains(item.Id))
             .Select(item => new CameraResponse(
@@ -480,7 +663,8 @@ else
             item.Connectivity,
             liveViewCameraIds.Contains(item.Id),
             playbackCameraIds.Contains(item.Id),
-            item.SupportsPtz && ptzCameraIds.Contains(item.Id))));
+            item.SupportsPtz && ptzCameraIds.Contains(item.Id),
+            exportCameraIds.Contains(item.Id))));
     });
 
     cameras.MapGet("/{cameraId:guid}/status", async (Guid cameraId, ClaimsPrincipal principal, PlatformAccessService accessService, CancellationToken cancellationToken) =>
@@ -925,6 +1109,175 @@ else
         }
     }).RequireAuthorization().RequireRateLimiting("playback-transport-control");
 
+    // 查看端仅管理当前账号创建的导出任务；后台管理端保留跨账号的运维视图。
+    var viewerExports = app.MapGroup("/api/v1/viewer/playback-exports").RequireAuthorization();
+    viewerExports.MapGet("/", async (
+        int? limit,
+        ClaimsPrincipal principal,
+        ViewerPlaybackExportAccessService viewerExportAccessService,
+        PlatformDbContext dbContext,
+        CancellationToken cancellationToken) =>
+    {
+        var user = await viewerExportAccessService.FindAuthorizedUserAsync(principal, cancellationToken);
+        if (user is null)
+        {
+            return Results.Forbid();
+        }
+        var exports = await viewerExportAccessService.ListOwnVisibleAsync(
+            principal,
+            user,
+            limit ?? 100,
+            cancellationToken);
+        var exportIds = exports.Select(item => item.Id).ToList();
+        var artifacts = await dbContext.ExportArtifacts.AsNoTracking()
+            .Where(item => exportIds.Contains(item.PlaybackExportId) && item.DeletedAt == null)
+            .ToDictionaryAsync(item => item.PlaybackExportId, cancellationToken);
+        return Results.Ok(exports.Select(item => new PlaybackExportResponse(
+            item.Id, item.CameraId, item.Status.ToString(), item.StartedAt, item.EndedAt, item.Container, item.RequestedAt,
+            artifacts.TryGetValue(item.Id, out var artifact)
+                ? new ExportArtifactResponse(artifact.Id, artifact.FileName, artifact.SizeBytes, artifact.Sha256, artifact.ExpiresAt)
+                : null,
+            item.FailureCode)));
+    });
+
+    viewerExports.MapPost("/", async (
+        CreateViewerPlaybackExportRequest request,
+        ClaimsPrincipal principal,
+        PlatformAccessService accessService,
+        ViewerPlaybackExportAccessService viewerExportAccessService,
+        PlaybackExportService playbackExportService,
+        AuditService auditService,
+        CancellationToken cancellationToken) =>
+    {
+        var user = await viewerExportAccessService.FindAuthorizedUserAsync(principal, cancellationToken);
+        if (user is null)
+        {
+            return Results.Forbid();
+        }
+        var camera = await accessService.FindAuthorizedCameraAsync(principal, request.CameraId, CameraPermission.Export, cancellationToken);
+        if (camera is null)
+        {
+            return Results.NotFound();
+        }
+        try
+        {
+            var export = await playbackExportService.CreateAsync(
+                user.User.Id,
+                camera,
+                new CreatePlaybackExportRequest(request.StartedAt, request.EndedAt, "mp4"),
+                cancellationToken);
+            await auditService.WriteAsync(principal, "playback_export.create", "playback_export", export.Id,
+                new { request.CameraId, request.StartedAt, request.EndedAt, source = "viewer" }, cancellationToken);
+            return Results.Accepted("/api/v1/viewer/playback-exports", new PlaybackExportResponse(
+                export.Id, export.CameraId, export.Status.ToString(), export.StartedAt, export.EndedAt, export.Container,
+                export.RequestedAt, null, null));
+        }
+        catch (ArgumentOutOfRangeException exception)
+        {
+            return Results.BadRequest(new { message = exception.Message });
+        }
+        catch (PlaybackExportUnavailableException exception)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "录像导出不可用", detail: exception.Message);
+        }
+    });
+
+    viewerExports.MapPost("/{playbackExportId:guid}/cancel", async (
+        Guid playbackExportId,
+        ClaimsPrincipal principal,
+        PlatformAccessService accessService,
+        ViewerPlaybackExportAccessService viewerExportAccessService,
+        EdgeCommandControlService commandService,
+        AuditService auditService,
+        CancellationToken cancellationToken) =>
+    {
+        var user = await viewerExportAccessService.FindAuthorizedUserAsync(principal, cancellationToken);
+        if (user is null)
+        {
+            return Results.Forbid();
+        }
+        var export = await viewerExportAccessService.FindOwnAsync(playbackExportId, user, cancellationToken);
+        if (export is null)
+        {
+            return Results.NotFound();
+        }
+        var camera = await accessService.FindAuthorizedCameraAsync(principal, export.CameraId, CameraPermission.Export, cancellationToken);
+        if (camera is null)
+        {
+            return Results.NotFound();
+        }
+        var result = await commandService.CancelPlaybackExportAsync(playbackExportId, cancellationToken);
+        if (result == PlaybackExportCancellationResult.NotFound)
+        {
+            return Results.NotFound();
+        }
+        if (result == PlaybackExportCancellationResult.NotCancellable)
+        {
+            return Results.Conflict(new { message = "仅等待执行或正在执行的录像导出可以取消。" });
+        }
+        await auditService.WriteAsync(principal, "playback_export.cancel", "playback_export", playbackExportId,
+            new { export.CameraId, source = "viewer" }, cancellationToken);
+        return Results.NoContent();
+    });
+
+    viewerExports.MapGet("/{playbackExportId:guid}/artifact", async (
+        Guid playbackExportId,
+        HttpContext context,
+        ClaimsPrincipal principal,
+        PlatformAccessService accessService,
+        ViewerPlaybackExportAccessService viewerExportAccessService,
+        PlaybackExportArtifactService artifactService,
+        PlatformDbContext dbContext,
+        ILogger<AuditedExportDownloadResult> logger,
+        CancellationToken cancellationToken) =>
+    {
+        var user = await viewerExportAccessService.FindAuthorizedUserAsync(principal, cancellationToken);
+        if (user is null)
+        {
+            return Results.Forbid();
+        }
+        var download = await artifactService.FindDownloadAsync(playbackExportId, cancellationToken);
+        if (download is null || download.Export.RequestedByUserId != user.User.Id)
+        {
+            return Results.NotFound();
+        }
+        if (download.Artifact.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            return Results.StatusCode(StatusCodes.Status410Gone);
+        }
+        var camera = await accessService.FindAuthorizedCameraAsync(principal, download.Export.CameraId, CameraPermission.Export, cancellationToken);
+        if (camera is null)
+        {
+            return Results.NotFound();
+        }
+        var stream = await artifactService.OpenReadAsync(download.Artifact, cancellationToken);
+        if (stream is null)
+        {
+            return Results.NotFound();
+        }
+        var sessionId = Guid.TryParse(principal.FindFirstValue(ClaimTypes.Sid), out var parsedSessionId) ? parsedSessionId : (Guid?)null;
+        var clientAddress = context.Connection.RemoteIpAddress?.ToString() ?? string.Empty;
+        var audit = new ExportDownloadAuditEntity
+        {
+            Id = Guid.NewGuid(),
+            ExportArtifactId = download.Artifact.Id,
+            UserId = user.User.Id,
+            UserSessionId = sessionId,
+            ClientAddressHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(clientAddress))),
+            Result = ExportDownloadResult.Started,
+            StartedAt = DateTimeOffset.UtcNow
+        };
+        dbContext.ExportDownloadAudits.Add(audit);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return new AuditedExportDownloadResult(
+            stream,
+            download.Artifact.ContentType,
+            download.Artifact.FileName,
+            audit,
+            dbContext,
+            logger);
+    });
+
     var streamGateway = app.MapGroup("/api/v1/stream-gateway");
     streamGateway.MapPost("/sessions/{sessionId:guid}/consume", async (Guid sessionId, GatewayTicketConsumeRequest request, HttpRequest httpRequest, StreamSessionOrchestrator orchestrator, CancellationToken cancellationToken) =>
     {
@@ -1267,7 +1620,7 @@ else
     var edgeAgents = app.MapGroup("/api/v1/edge-agents");
     edgeAgents.MapPost("/enroll", async (
         EnrollEdgeAgentRequest request,
-        LinuxEdgeAgentControlService edgeAgentControl,
+        EdgeAgentControlService edgeAgentControl,
         CancellationToken cancellationToken) =>
     {
         try
@@ -1292,7 +1645,7 @@ else
         Guid agentId,
         EdgeAgentHeartbeatRequest request,
         HttpRequest httpRequest,
-        LinuxEdgeAgentControlService edgeAgentControl,
+        EdgeAgentControlService edgeAgentControl,
         CancellationToken cancellationToken) =>
     {
         var agent = await edgeAgentControl.AuthenticateAsync(httpRequest, agentId, cancellationToken);
@@ -1311,17 +1664,37 @@ else
     edgeAgents.MapGet("/{agentId:guid}/configuration", async (
         Guid agentId,
         HttpRequest httpRequest,
-        LinuxEdgeAgentControlService edgeAgentControl,
+        EdgeAgentControlService edgeAgentControl,
         CancellationToken cancellationToken) =>
     {
         var agent = await edgeAgentControl.AuthenticateAsync(httpRequest, agentId, cancellationToken);
         return agent is null ? Results.Unauthorized() : Results.Ok(await edgeAgentControl.GetConfigurationAsync(agent, cancellationToken));
     });
 
+    edgeAgents.MapPost("/{agentId:guid}/configuration-status", async (
+        Guid agentId,
+        EdgeAgentConfigurationStatusReport report,
+        HttpRequest httpRequest,
+        EdgeAgentControlService edgeAgentControl,
+        CancellationToken cancellationToken) =>
+    {
+        var agent = await edgeAgentControl.AuthenticateAsync(httpRequest, agentId, cancellationToken);
+        if (agent is null) return Results.Unauthorized();
+        try
+        {
+            await edgeAgentControl.ReportConfigurationStatusAsync(agent, report, cancellationToken);
+            return Results.NoContent();
+        }
+        catch (ArgumentException exception)
+        {
+            return Results.BadRequest(new { message = exception.Message });
+        }
+    });
+
     edgeAgents.MapGet("/{agentId:guid}/credentials", async (
         Guid agentId,
         HttpRequest httpRequest,
-        LinuxEdgeAgentControlService edgeAgentControl,
+        EdgeAgentControlService edgeAgentControl,
         CancellationToken cancellationToken) =>
     {
         var agent = await edgeAgentControl.AuthenticateAsync(httpRequest, agentId, cancellationToken);
@@ -1331,7 +1704,7 @@ else
     edgeAgents.MapGet("/{agentId:guid}/operations", async (
         Guid agentId,
         HttpRequest httpRequest,
-        LinuxEdgeAgentControlService edgeAgentControl,
+        EdgeAgentControlService edgeAgentControl,
         CancellationToken cancellationToken) =>
     {
         var agent = await edgeAgentControl.AuthenticateAsync(httpRequest, agentId, cancellationToken);
@@ -1342,7 +1715,7 @@ else
         Guid agentId,
         EdgeAgentDiagnosticReport report,
         HttpRequest httpRequest,
-        LinuxEdgeAgentControlService edgeAgentControl,
+        EdgeAgentControlService edgeAgentControl,
         CancellationToken cancellationToken) =>
     {
         var agent = await edgeAgentControl.AuthenticateAsync(httpRequest, agentId, cancellationToken);
@@ -1359,6 +1732,154 @@ else
     });
 
     var admin = app.MapGroup("/api/v1/admin").RequireAuthorization();
+
+    admin.MapGet("/https-configuration", async (
+        ClaimsPrincipal principal,
+        PlatformAccessService accessService,
+        HttpsConfigurationService httpsConfigurationService,
+        CancellationToken cancellationToken) =>
+    {
+        if (!await IsSystemAdministratorAsync(principal, accessService, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+
+        try
+        {
+            return Results.Ok(httpsConfigurationService.GetStatus());
+        }
+        catch (HttpsConfigurationValidationException exception)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "HTTPS 配置不可用", detail: exception.Message);
+        }
+    });
+
+    admin.MapPut("/https-configuration", async (
+        HttpsConfigurationUpdate request,
+        ClaimsPrincipal principal,
+        PlatformAccessService accessService,
+        HttpsConfigurationService httpsConfigurationService,
+        AuditService auditService,
+        CancellationToken cancellationToken) =>
+    {
+        if (!await IsSystemAdministratorAsync(principal, accessService, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+
+        try
+        {
+            var status = await httpsConfigurationService.SaveAsync(request, cancellationToken);
+            await auditService.WriteAsync(principal, "https_configuration.save", "https_configuration",
+                HttpsConfigurationService.AuditResourceId,
+                new { status.PendingEnabled, status.PendingPublicBaseUri }, cancellationToken);
+            return Results.Ok(status);
+        }
+        catch (HttpsConfigurationValidationException exception)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["publicBaseUri"] = [exception.Message] });
+        }
+        catch (IOException)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "HTTPS 配置保存失败", detail: "无法安全写入核心配置卷，请检查中心容器的配置卷权限。");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "HTTPS 配置保存失败", detail: "无法安全写入核心配置卷，请检查中心容器的配置卷权限。");
+        }
+    });
+
+    admin.MapPost("/https-configuration/certificate", async (
+        HttpContext context,
+        IFormFile? certificate,
+        IFormFile? privateKey,
+        ClaimsPrincipal principal,
+        PlatformAccessService accessService,
+        HttpsConfigurationService httpsConfigurationService,
+        AuditService auditService,
+        CancellationToken cancellationToken) =>
+    {
+        if (!await IsSystemAdministratorAsync(principal, accessService, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        if (!HttpsCertificateUploadTransportPolicy.Allows(context))
+        {
+            return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "拒绝明文私钥上传", detail: "证书上传仅允许 HTTPS，或本机回环 HTTP 请求。");
+        }
+        if (certificate is null || privateKey is null || certificate.Length <= 0 || privateKey.Length <= 0 ||
+            certificate.Length > 1024 * 1024 || privateKey.Length > 1024 * 1024)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["certificate"] = ["请同时提供不超过 1 MiB 的 PEM 证书链和未加密 PEM 私钥。"] });
+        }
+
+        try
+        {
+            await using var certificateStream = certificate.OpenReadStream();
+            await using var privateKeyStream = privateKey.OpenReadStream();
+            var status = await httpsConfigurationService.UploadCertificateAsync(certificateStream, privateKeyStream, cancellationToken);
+            await auditService.WriteAsync(principal, "https_certificate.upload", "https_configuration",
+                HttpsConfigurationService.AuditResourceId,
+                new
+                {
+                    status.PendingEnabled,
+                    FingerprintSha256 = status.PendingCertificate.FingerprintSha256,
+                    ExpiresAt = status.PendingCertificate.NotAfter
+                }, cancellationToken);
+            return Results.Ok(status);
+        }
+        catch (HttpsConfigurationValidationException exception)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["certificate"] = [exception.Message] });
+        }
+        catch (IOException)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "证书保存失败", detail: "无法安全写入核心配置卷，现有证书未被修改。");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "证书保存失败", detail: "无法安全写入核心配置卷，现有证书未被修改。");
+        }
+    })
+        .DisableAntiforgery();
+
+    admin.MapPost("/https-configuration/apply", async (
+        ClaimsPrincipal principal,
+        PlatformAccessService accessService,
+        HttpsConfigurationService httpsConfigurationService,
+        AuditService auditService,
+        IHostApplicationLifetime applicationLifetime,
+        CancellationToken cancellationToken) =>
+    {
+        if (!await IsSystemAdministratorAsync(principal, accessService, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+
+        try
+        {
+            var validation = httpsConfigurationService.ValidatePendingForApply();
+            await auditService.WriteAsync(principal, "https_configuration.apply", "https_configuration",
+                HttpsConfigurationService.AuditResourceId,
+                new
+                {
+                    validation.Configuration.Enabled,
+                    validation.Configuration.PublicBaseUri,
+                    FingerprintSha256 = validation.Certificate?.FingerprintSha256,
+                    ExpiresAt = validation.Certificate?.NotAfter
+                }, cancellationToken);
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1));
+                applicationLifetime.StopApplication();
+            });
+            return Results.Accepted("/api/v1/admin/https-configuration", new { state = "restarting" });
+        }
+        catch (HttpsConfigurationValidationException exception)
+        {
+            return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "HTTPS 配置不能应用", detail: exception.Message);
+        }
+    });
 
     admin.MapGet("/edge-agents", async (ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, CancellationToken cancellationToken) =>
     {
@@ -1389,6 +1910,7 @@ else
             agent.Id,
             agent.Name,
             agent.Platform,
+            architecture = GetEdgeAgentArchitecture(agent.CapabilitiesJson),
             agent.AgentVersion,
             agent.ConfigurationVersion,
             agent.CapabilitiesJson,
@@ -1399,13 +1921,16 @@ else
             agent.LastDiagnosticSucceeded,
             agent.LastDiagnosticMessage,
             agent.DisabledAt,
+            configurationStatus = latestConfigurations.GetValueOrDefault(agent.Id)?.Status,
+            configurationFailureSummary = latestConfigurations.GetValueOrDefault(agent.Id)?.FailureSummary,
+            configurationAppliedAt = latestConfigurations.GetValueOrDefault(agent.Id)?.AppliedAt,
             credentialCount = envelopeCounts.GetValueOrDefault(agent.Id),
             assignmentCount = assignments.GetValueOrDefault(agent.DeviceWorkerId),
             publicKey = new EdgeAgentPublicKeyRequest(agent.Id, agent.PublicKeyId, AgentCredentialEnvelopeAlgorithms.RsaOaepSha256, agent.SubjectPublicKeyInfoBase64)
         }));
     });
 
-    admin.MapPost("/edge-agents/enrollments", async (CreateEdgeAgentEnrollmentRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, LinuxEdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
+    admin.MapPost("/edge-agents/enrollments", async (CreateEdgeAgentEnrollmentRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, EdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
     {
         if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageDeviceWorkers, cancellationToken))
         {
@@ -1441,7 +1966,7 @@ else
         return Results.NoContent();
     });
 
-    admin.MapPost("/edge-agents/{agentId:guid}/diagnostics", async (Guid agentId, RequestEdgeAgentDiagnosticRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, LinuxEdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
+    admin.MapPost("/edge-agents/{agentId:guid}/diagnostics", async (Guid agentId, RequestEdgeAgentDiagnosticRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, EdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
     {
         if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
         {
@@ -1514,8 +2039,70 @@ else
         {
             return Results.Forbid();
         }
-        var operations = await dbContext.PlatformOperations.AsNoTracking().OrderByDescending(item => item.RequestedAt).Take(100).ToListAsync(cancellationToken);
+        var operations = await dbContext.PlatformOperations.AsNoTracking()
+            .Where(item => item.OperationType != "edge-release")
+            .OrderByDescending(item => item.RequestedAt).Take(100).ToListAsync(cancellationToken);
         return Results.Ok(operations.Select(ToPlatformOperationResponse));
+    });
+
+    admin.MapGet("/edge-releases", async (ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        var entries = await dbContext.PlatformOperations.AsNoTracking()
+            .Where(item => item.OperationType == "edge-release" && item.Status == "available")
+            .OrderByDescending(item => item.RequestedAt)
+            .ToListAsync(cancellationToken);
+        return Results.Ok(entries
+            .Select(TryReadRegisteredEdgeRelease)
+            .Where(item => item is not null)
+            .Select(item => ToEdgeReleaseResponse(item!)));
+    });
+
+    admin.MapPost("/edge-releases", async (RegisterEdgeReleaseRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, AuditService auditService, CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        if (string.IsNullOrWhiteSpace(request.PublicKeyId) || request.PublicKeyId.Trim().Length > 128 ||
+            string.IsNullOrWhiteSpace(request.SignatureBase64) || request.SignatureBase64.Length > 32_768 ||
+            !TryNormalizeJson(request.ManifestJson, out var manifestJson) ||
+            !TryDecodeCiphertext(request.SignatureBase64, out _) ||
+            !EdgeReleaseManifest.TryParse(manifestJson, out var releaseManifest, out _) ||
+            !string.Equals(request.PublicKeyId.Trim(), releaseManifest.SigningPublicKeyId, StringComparison.Ordinal))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["release"] = ["发行清单、签名或制品摘要无效。"] });
+        }
+        var existing = await dbContext.PlatformOperations.AnyAsync(
+            item => item.OperationType == "edge-release" && item.Summary == releaseManifest.ReleaseId && item.Status == "available",
+            cancellationToken);
+        if (existing)
+        {
+            return Results.Conflict(new { message = "该发行版本已经登记。" });
+        }
+        var catalog = new PlatformOperationEntity
+        {
+            Id = Guid.NewGuid(),
+            OperationType = "edge-release",
+            Status = "available",
+            Summary = releaseManifest.ReleaseId,
+            DetailsJson = JsonSerializer.Serialize(new
+            {
+                releaseId = releaseManifest.ReleaseId,
+                manifestJson,
+                signatureBase64 = request.SignatureBase64,
+                publicKeyId = request.PublicKeyId.Trim()
+            }),
+            RequestedAt = DateTimeOffset.UtcNow
+        };
+        dbContext.PlatformOperations.Add(catalog);
+        await dbContext.SaveChangesAsync(cancellationToken);
+        await auditService.WriteAsync(principal, "edge_release.register", "edge_release", catalog.Id,
+            new { releaseManifest.ReleaseId, releaseManifest.TargetPlatform, releaseManifest.TargetArchitecture }, cancellationToken);
+        return Results.Created($"/api/v1/admin/edge-releases/{catalog.Id}", ToEdgeReleaseResponse(TryReadRegisteredEdgeRelease(catalog)!));
     });
 
     admin.MapPost("/platform-operations/deployments", async (RequestPlatformDeploymentRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, AuditService auditService, CancellationToken cancellationToken) =>
@@ -1524,17 +2111,33 @@ else
         {
             return Results.Forbid();
         }
-        if (string.IsNullOrWhiteSpace(request.ReleaseId) || request.ReleaseId.Trim().Length > 128 ||
-            string.IsNullOrWhiteSpace(request.PublicKeyId) || request.PublicKeyId.Trim().Length > 128 ||
-            string.IsNullOrWhiteSpace(request.SignatureBase64) || request.SignatureBase64.Length > 32_768 ||
-            !TryNormalizeJson(request.ManifestJson, out var manifestJson) ||
-            !TryDecodeCiphertext(request.SignatureBase64, out _))
+        if (string.IsNullOrWhiteSpace(request.ReleaseId) || request.ReleaseId.Trim().Length > 128)
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["deployment"] = ["发行版本、签名或部署清单无效。"] });
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["deployment"] = ["发行版本无效。"] });
         }
-        if (!await dbContext.EdgeAgents.AnyAsync(item => item.Id == request.EdgeAgentId && item.DisabledAt == null, cancellationToken))
+        var releaseEntry = await dbContext.PlatformOperations.AsNoTracking()
+            .Where(item => item.OperationType == "edge-release" && item.Status == "available" && item.Summary == request.ReleaseId.Trim())
+            .OrderByDescending(item => item.RequestedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        var registeredRelease = releaseEntry is null ? null : TryReadRegisteredEdgeRelease(releaseEntry);
+        if (registeredRelease is null || !string.Equals(registeredRelease.Manifest.OperationType, "deployment", StringComparison.Ordinal))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["deployment"] = ["请先登记有效的签名发行版本。"] });
+        }
+        var targetAgent = await dbContext.EdgeAgents.AsNoTracking().SingleOrDefaultAsync(
+            item => item.Id == request.EdgeAgentId && item.DisabledAt == null,
+            cancellationToken);
+        if (targetAgent is null)
         {
             return Results.ValidationProblem(new Dictionary<string, string[]> { ["edgeAgentId"] = ["目标边缘节点不存在或已停用。"] });
+        }
+        if (!string.Equals(targetAgent.Platform, registeredRelease.Manifest.TargetPlatform, StringComparison.Ordinal))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["deployment"] = ["发行清单目标平台与边缘节点不匹配。"] });
+        }
+        if (!IsEdgeAgentArchitectureCompatible(targetAgent.CapabilitiesJson, registeredRelease.Manifest.TargetPlatform, registeredRelease.Manifest.TargetArchitecture))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["deployment"] = ["发行清单目标架构与边缘节点不匹配。"] });
         }
         var operation = new PlatformOperationEntity
         {
@@ -1542,14 +2145,14 @@ else
             EdgeAgentId = request.EdgeAgentId,
             OperationType = "deployment",
             Status = "pending",
-            Summary = $"待发布 Linux 发行版本：{request.ReleaseId.Trim()}",
-            DetailsJson = JsonSerializer.Serialize(new { releaseId = request.ReleaseId.Trim(), manifestJson, signatureBase64 = request.SignatureBase64, publicKeyId = request.PublicKeyId.Trim() }),
+            Summary = $"待发布 {registeredRelease.Manifest.TargetPlatform}/{registeredRelease.Manifest.TargetArchitecture} 发行版本：{request.ReleaseId.Trim()}",
+            DetailsJson = JsonSerializer.Serialize(new { releaseId = registeredRelease.Manifest.ReleaseId, manifestJson = registeredRelease.ManifestJson, signatureBase64 = registeredRelease.SignatureBase64, publicKeyId = registeredRelease.PublicKeyId }),
             RequestedAt = DateTimeOffset.UtcNow
         };
         dbContext.PlatformOperations.Add(operation);
         await dbContext.SaveChangesAsync(cancellationToken);
         await auditService.WriteAsync(principal, "platform.deployment.request", "edge_agent", request.EdgeAgentId,
-            new { operation.Id, request.ReleaseId, request.PublicKeyId }, cancellationToken);
+            new { operation.Id, request.ReleaseId, registeredRelease.PublicKeyId }, cancellationToken);
         return Results.Accepted($"/api/v1/admin/platform-operations/deployments/{operation.Id}", ToPlatformOperationResponse(operation));
     });
 
@@ -1582,7 +2185,7 @@ else
         return Results.Accepted($"/api/v1/admin/platform-operations/deployments/{rollback.Id}", ToPlatformOperationResponse(rollback));
     });
 
-    admin.MapPost("/platform-operations/diagnostics", async (RequestPlatformDiagnosticRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, LinuxEdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
+    admin.MapPost("/platform-operations/diagnostics", async (RequestPlatformDiagnosticRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, EdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
     {
         if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
         {
@@ -1601,7 +2204,7 @@ else
         }
     });
 
-    admin.MapPost("/camera-preflights", async (DirectCameraPreflightRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, LinuxEdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
+    admin.MapPost("/camera-preflights", async (DirectCameraPreflightRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, EdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
     {
         if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageAssets, cancellationToken))
         {
@@ -2207,7 +2810,7 @@ else
             workersByRecorder.GetValueOrDefault(item.RecorderId) is { } workerId ? agentsByWorker.GetValueOrDefault(workerId) : null)));
     });
 
-    admin.MapPost("/cameras", async (CreateCameraRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, AuditService auditService, LinuxEdgeAgentControlService edgeAgentControl, CancellationToken cancellationToken) =>
+    admin.MapPost("/cameras", async (CreateCameraRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, AuditService auditService, EdgeAgentControlService edgeAgentControl, CancellationToken cancellationToken) =>
     {
         if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageAssets, cancellationToken))
         {
@@ -2365,7 +2968,10 @@ else
         var requestedMap = request.StreamingChannelMap;
         if (string.IsNullOrWhiteSpace(requestedMap) || requestedMap.Trim() == "{}")
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["streamingChannelMap"] = ["必须填写主、子码流映射。"] });
+            if (!DirectCameraAddressPolicy.TryCreateDefaultStreamingMap(request.InputChannelNumber, out requestedMap))
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]> { ["inputChannelNumber"] = ["输入通道超出默认码流映射支持范围。"] });
+            }
         }
         var rtspEndpoint = await dbContext.RecorderEndpoints.AsNoTracking()
             .SingleOrDefaultAsync(item => item.RecorderId == recorder.Id && item.Protocol == RecorderEndpointProtocol.Rtsp, cancellationToken);
@@ -2402,7 +3008,7 @@ else
         return Results.Created($"/api/v1/admin/cameras/{camera.Id}", ToAdminCameraResponse(camera, recorder, rtspEndpoint, null));
     });
 
-    admin.MapPatch("/cameras/{cameraId:guid}", async (Guid cameraId, UpdateCameraRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, AuditService auditService, StreamSessionOrchestrator orchestrator, PtzControlService ptzControlService, EdgeCommandControlService commandService, LinuxEdgeAgentControlService edgeAgentControl, CancellationToken cancellationToken) =>
+    admin.MapPatch("/cameras/{cameraId:guid}", async (Guid cameraId, UpdateCameraRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, AuditService auditService, StreamSessionOrchestrator orchestrator, PtzControlService ptzControlService, EdgeCommandControlService commandService, EdgeAgentControlService edgeAgentControl, CancellationToken cancellationToken) =>
     {
         if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageAssets, cancellationToken))
         {
@@ -2553,8 +3159,16 @@ else
             {
                 return Results.ValidationProblem(new Dictionary<string, string[]> { ["recorderId"] = ["接入设备缺少 RTSP 端点。"] });
             }
+            var requestedMap = request.StreamingChannelMap;
+            if (requestedMap is not null && (string.IsNullOrWhiteSpace(requestedMap) || requestedMap.Trim() == "{}"))
+            {
+                if (!DirectCameraAddressPolicy.TryCreateDefaultStreamingMap(channel, out requestedMap))
+                {
+                    return Results.ValidationProblem(new Dictionary<string, string[]> { ["inputChannelNumber"] = ["输入通道超出默认码流映射支持范围。"] });
+                }
+            }
             if (!DirectCameraAddressPolicy.TryValidateStreamingMap(
-                    request.StreamingChannelMap ?? camera.StreamingChannelMap,
+                    requestedMap ?? camera.StreamingChannelMap,
                     rtspRegistration,
                     out var streamingMap,
                     out var mapError))
@@ -2725,11 +3339,10 @@ else
         {
             return Results.Forbid();
         }
-        if (string.IsNullOrWhiteSpace(request.Username) || request.Username.Trim().Length > 64)
+        if (!PlatformUsernamePolicy.TryNormalize(request.Username, out var username, out var usernameValidationError))
         {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["username"] = ["用户名长度必须为 1 至 64 位。"] });
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["username"] = [usernameValidationError] });
         }
-        var username = request.Username.Trim();
         if (await dbContext.Users.AnyAsync(item => item.Username == username, cancellationToken))
         {
             return Results.Conflict(new { message = "用户名已存在。" });
@@ -2902,7 +3515,7 @@ else
             });
             foreach (var envelope in envelopes)
             {
-                dbContext.DeviceCredentialEnvelopes.Add(LinuxEdgeAgentControlService.ToEnvelopeEntity(envelope, versionId));
+                dbContext.DeviceCredentialEnvelopes.Add(EdgeAgentControlService.ToEnvelopeEntity(envelope, versionId));
             }
             await dbContext.SaveChangesAsync(cancellationToken);
             await auditService.WriteAsync(principal, "device_credential.create", "device_credential", credential.Id,
@@ -2965,7 +3578,7 @@ else
             });
             foreach (var envelope in envelopes)
             {
-                dbContext.DeviceCredentialEnvelopes.Add(LinuxEdgeAgentControlService.ToEnvelopeEntity(envelope, versionId));
+                dbContext.DeviceCredentialEnvelopes.Add(EdgeAgentControlService.ToEnvelopeEntity(envelope, versionId));
             }
             await dbContext.SaveChangesAsync(cancellationToken);
             await auditService.WriteAsync(principal, "device_credential.rotate", "device_credential", credential.Id,
@@ -4038,7 +4651,7 @@ static bool TryValidateAgentCredentialEnvelopes(
     var agentIds = new HashSet<Guid>();
     foreach (var envelope in envelopes)
     {
-        if (!LinuxEdgeAgentControlService.TryValidateEnvelope(envelope, out error))
+        if (!EdgeAgentControlService.TryValidateEnvelope(envelope, out error))
         {
             return false;
         }
@@ -4083,6 +4696,73 @@ static PlatformOperationResponse ToPlatformOperationResponse(PlatformOperationEn
     ToSafePlatformOperationDetails(operation),
     operation.RequestedAt,
     operation.CompletedAt);
+
+static string? GetEdgeAgentArchitecture(string capabilitiesJson)
+{
+    try
+    {
+        using var document = JsonDocument.Parse(capabilitiesJson);
+        return document.RootElement.TryGetProperty("architecture", out var architecture) &&
+               architecture.ValueKind == JsonValueKind.String &&
+               architecture.GetString() is { Length: > 0 } value
+            ? value
+            : null;
+    }
+    catch (JsonException)
+    {
+        return null;
+    }
+}
+
+static bool IsEdgeAgentArchitectureCompatible(string capabilitiesJson, string platform, string targetArchitecture)
+{
+    var architecture = GetEdgeAgentArchitecture(capabilitiesJson)?.Trim().ToLowerInvariant();
+    return platform switch
+    {
+        "linux" when targetArchitecture == "amd64" => architecture is "x64" or "amd64",
+        "linux" when targetArchitecture == "arm64" => architecture == "arm64",
+        "windows" when targetArchitecture == "x64" => architecture == "x64",
+        _ => false
+    };
+}
+
+static RegisteredEdgeRelease? TryReadRegisteredEdgeRelease(PlatformOperationEntity entry)
+{
+    try
+    {
+        using var document = JsonDocument.Parse(entry.DetailsJson);
+        var root = document.RootElement;
+        if (!root.TryGetProperty("manifestJson", out var manifestJson) || manifestJson.ValueKind != JsonValueKind.String ||
+            !root.TryGetProperty("signatureBase64", out var signature) || signature.ValueKind != JsonValueKind.String ||
+            !root.TryGetProperty("publicKeyId", out var publicKeyId) || publicKeyId.ValueKind != JsonValueKind.String ||
+            !EdgeReleaseManifest.TryParse(manifestJson.GetString(), out var manifest, out _))
+        {
+            return null;
+        }
+        return new RegisteredEdgeRelease(
+            entry.Id,
+            manifest,
+            manifestJson.GetString()!,
+            signature.GetString()!,
+            publicKeyId.GetString()!,
+            entry.RequestedAt);
+    }
+    catch (JsonException)
+    {
+        return null;
+    }
+}
+
+static EdgeReleaseResponse ToEdgeReleaseResponse(RegisteredEdgeRelease release) => new(
+    release.Id,
+    release.Manifest.ReleaseId,
+    release.Manifest.TargetPlatform,
+    release.Manifest.TargetArchitecture,
+    release.Manifest.MinimumHostAgentVersion,
+    release.Manifest.IssuedAt,
+    release.Manifest.ExpiresAt,
+    release.PublicKeyId,
+    release.RegisteredAt);
 
 static string ToSafePlatformOperationDetails(PlatformOperationEntity operation)
 {
@@ -4272,6 +4952,7 @@ public sealed record PlaybackTransportResponse(
 public sealed record PtzLeaseResponse(Guid LeaseId, DateTimeOffset ExpiresAt, long LastSequence, string LeaseToken);
 public sealed record PtzCommandRequest(Guid LeaseId, string LeaseToken, PtzAction Action, PtzMotion Motion, int Speed, long Sequence);
 public sealed record PtzCommandResponse(Guid CommandId, DateTimeOffset LeaseExpiresAt, long LastSequence);
+public sealed record CreateViewerPlaybackExportRequest(Guid CameraId, DateTimeOffset StartedAt, DateTimeOffset EndedAt);
 public sealed record CreatePlaybackExportAdminRequest(Guid CameraId, DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Container);
 public sealed record ExportArtifactResponse(Guid Id, string FileName, long SizeBytes, string Sha256, DateTimeOffset ExpiresAt);
 public sealed record PlaybackExportResponse(Guid Id, Guid CameraId, string Status, DateTimeOffset StartedAt, DateTimeOffset EndedAt, string Container, DateTimeOffset RequestedAt, ExportArtifactResponse? Artifact, string? FailureCode);
@@ -4287,7 +4968,8 @@ public sealed record CameraResponse(
     CameraConnectivity Connectivity,
     bool CanLiveView = false,
     bool CanPlayback = false,
-    bool CanControlPtz = false);
+    bool CanControlPtz = false,
+    bool CanExport = false);
 public sealed record CreateRegionRequest(Guid? ParentId, string Code, string Name);
 public sealed record UpdateRegionRequest(Guid? ParentId, string Code, string Name);
 public sealed record CreateRecorderEndpointRequest(RecorderEndpointProtocol Protocol, string Host, int Port, bool UseTls, string? CertificateThumbprint, string CredentialReference);
@@ -4446,7 +5128,25 @@ public sealed record RequestEdgeAgentDiagnosticRequest(string Kind);
 public sealed record RequestPlatformDiagnosticRequest(Guid EdgeAgentId, string Kind);
 public sealed record UpdateEdgeAgentConfigurationRequest(string ConfigurationJson);
 public sealed record DirectCameraPreflightRequest(Guid EdgeAgentId, Guid CredentialId, string MainStreamUrl, string? SubStreamUrl = null);
-public sealed record RequestPlatformDeploymentRequest(Guid EdgeAgentId, string ReleaseId, string ManifestJson, string SignatureBase64, string PublicKeyId);
+public sealed record RegisterEdgeReleaseRequest(string ManifestJson, string SignatureBase64, string PublicKeyId);
+public sealed record RequestPlatformDeploymentRequest(Guid EdgeAgentId, string ReleaseId);
+public sealed record RegisteredEdgeRelease(
+    Guid Id,
+    EdgeReleaseManifest Manifest,
+    string ManifestJson,
+    string SignatureBase64,
+    string PublicKeyId,
+    DateTimeOffset RegisteredAt);
+public sealed record EdgeReleaseResponse(
+    Guid Id,
+    string ReleaseId,
+    string TargetPlatform,
+    string TargetArchitecture,
+    string MinimumHostAgentVersion,
+    DateTimeOffset IssuedAt,
+    DateTimeOffset ExpiresAt,
+    string PublicKeyId,
+    DateTimeOffset RegisteredAt);
 public sealed record PlatformOperationResponse(
     Guid Id,
     Guid? EdgeAgentId,

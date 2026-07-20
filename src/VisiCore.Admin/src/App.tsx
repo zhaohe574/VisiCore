@@ -1,10 +1,10 @@
-import { useEffect, useState, type FormEvent } from 'react'
-import { Activity, BellRing, Boxes, ChevronRight, CircleUserRound, Cpu, FileDown, KeyRound, LogOut, Menu, PlugZap, ShieldCheck, UsersRound, Wrench, X } from 'lucide-react'
-import { api, session } from './api'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { Activity, AlertTriangle, BellRing, Boxes, ChevronRight, CircleUserRound, Cpu, Database, FileDown, KeyRound, LoaderCircle, LockKeyhole, LogOut, Menu, PlugZap, ShieldAlert, ShieldCheck, UsersRound, Wrench, X } from 'lucide-react'
+import { api, session, type SetupDefaults, type SetupRequest } from './api'
 import type { Section } from './types'
-import { Button, Input } from './ui'
+import { Button, Input, Select } from './ui'
 import { AccessPage, AlertsPage, AssetsPage, AuditPage, ExportsPage, OverviewPage, PluginsPage } from './pages'
-import { CredentialsPage, EdgeAgentsPage, PlatformOperationsPage } from './platform-pages'
+import { CredentialsPage, EdgeAgentsPage, HttpsConfigurationPage, PlatformOperationsPage } from './platform-pages'
 import { PublicOfflineDevicesPage } from './public-offline-devices'
 
 const navigation: Array<{ id: Section; label: string; icon: typeof Activity }> = [
@@ -12,6 +12,7 @@ const navigation: Array<{ id: Section; label: string; icon: typeof Activity }> =
   { id: 'credentials', label: '设备凭据', icon: KeyRound },
   { id: 'edgeAgents', label: '边缘节点', icon: Cpu },
   { id: 'operations', label: '平台运维', icon: Wrench },
+  { id: 'https', label: '中心 HTTPS', icon: LockKeyhole },
   { id: 'assets', label: '资产与区域', icon: Boxes },
   { id: 'plugins', label: '设备插件', icon: PlugZap },
   { id: 'access', label: '账号与权限', icon: UsersRound },
@@ -33,7 +34,11 @@ function isPublicOfflinePath(pathname: string) {
 export default function App() {
   const [authenticated, setAuthenticated] = useState(!!session.token() && !session.requiresPasswordChange())
   const [passwordChangeRequired, setPasswordChangeRequired] = useState(!!session.token() && session.requiresPasswordChange())
+  const [setupState, setSetupState] = useState<'loading' | 'unconfigured' | 'initializing' | 'completed' | 'error'>('loading')
+  const [setupDefaults, setSetupDefaults] = useState<SetupDefaults | null>(null)
+  const [setupError, setSetupError] = useState('')
   const [active, setActive] = useState<Section>('overview')
+  const [canManageHttps, setCanManageHttps] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [toast, setToast] = useState<{ message: string; tone: 'good' | 'bad' } | null>(null)
   useEffect(() => {
@@ -46,6 +51,42 @@ export default function App() {
     const timer = window.setTimeout(() => setToast(null), 3600)
     return () => window.clearTimeout(timer)
   }, [toast])
+  const loadSetupStatus = async () => {
+    try {
+      const status = await api.setupStatus()
+      setSetupDefaults(status.defaults)
+      setSetupState(status.state)
+      setSetupError('')
+    } catch (reason) {
+      setSetupState('error')
+      setSetupError(reason instanceof Error ? reason.message : '无法读取初始化状态。')
+    }
+  }
+  useEffect(() => { void loadSetupStatus() }, [])
+  useEffect(() => {
+    if (!authenticated || passwordChangeRequired) {
+      setCanManageHttps(false)
+      return
+    }
+    let disposed = false
+    void api.get('/api/v1/admin/https-configuration')
+      .then(() => { if (!disposed) setCanManageHttps(true) })
+      .catch(() => { if (!disposed) setCanManageHttps(false) })
+    return () => { disposed = true }
+  }, [authenticated, passwordChangeRequired])
+  useEffect(() => {
+    if (setupState !== 'initializing') return
+    const timer = window.setInterval(() => {
+      void api.setupStatus()
+        .then(status => {
+          if (status.state === 'completed') window.location.assign('/admin')
+        })
+        .catch(() => {
+          // API 主动退出期间会短暂断开，等待 Docker 重启后继续轮询。
+        })
+    }, 1500)
+    return () => window.clearInterval(timer)
+  }, [setupState])
   const notify = (message: string, tone: 'good' | 'bad' = 'good') => setToast({ message, tone })
   const select = (section: Section) => { setActive(section); setMenuOpen(false) }
   const adminPath = isAdminPath(window.location.pathname)
@@ -54,6 +95,10 @@ export default function App() {
     try { await api.logout() } catch { /* 本地会话仍需清除。 */ }
     session.clear(); setAuthenticated(false); setPasswordChangeRequired(false)
   }
+  if (setupState === 'loading') return <BootstrapLoadingPage />
+  if (setupState === 'error') return <BootstrapErrorPage message={setupError} retry={() => void loadSetupStatus()} />
+  if (setupState === 'initializing') return <BootstrapRestartPage />
+  if (setupState === 'unconfigured' && setupDefaults) return <SetupPage defaults={setupDefaults} onSubmitted={() => setSetupState('initializing')} />
   if (publicOfflinePath) return <PublicOfflineDevicesPage />
   if (!adminPath) return <NotFoundPage />
   if (passwordChangeRequired) return <RequiredPasswordChangePage onFinished={() => { session.clear(); setPasswordChangeRequired(false); setAuthenticated(false) }} />
@@ -62,7 +107,8 @@ export default function App() {
     : active === 'credentials' ? <CredentialsPage notify={notify} />
       : active === 'edgeAgents' ? <EdgeAgentsPage notify={notify} />
         : active === 'operations' ? <PlatformOperationsPage notify={notify} />
-          : active === 'assets' ? <AssetsPage notify={notify} />
+          : active === 'https' && canManageHttps ? <HttpsConfigurationPage notify={notify} />
+            : active === 'assets' ? <AssetsPage notify={notify} />
             : active === 'plugins' ? <PluginsPage notify={notify} />
               : active === 'access' ? <AccessPage notify={notify} />
                 : active === 'exports' ? <ExportsPage notify={notify} />
@@ -71,13 +117,146 @@ export default function App() {
   return <div className="app-shell">
     <aside className={`sidebar ${menuOpen ? 'sidebar--open' : ''}`}>
       <div className="brand"><div className="brand__mark"><Activity size={20} /></div><div><strong>视枢</strong><span>CONTROL PLANE</span></div><button className="sidebar-close" aria-label="关闭导航" onClick={() => setMenuOpen(false)}><X size={19} /></button></div>
-      <nav>{navigation.map(item => { const Icon = item.icon; return <button key={item.id} className={active === item.id ? 'active' : ''} onClick={() => select(item.id)}><Icon size={18} /><span>{item.label}</span>{active === item.id && <ChevronRight size={15} />}</button> })}</nav>
+      <nav>{navigation.filter(item => item.id !== 'https' || canManageHttps).map(item => { const Icon = item.icon; return <button key={item.id} className={active === item.id ? 'active' : ''} onClick={() => select(item.id)}><Icon size={18} /><span>{item.label}</span>{active === item.id && <ChevronRight size={15} />}</button> })}</nav>
       <div className="sidebar__footer"><div className="environment"><span className="status-dot status-dot--good" /><div><strong>中心 API</strong><small>统一运维控制面</small></div></div><button onClick={() => void logout()}><LogOut size={17} />退出登录</button></div>
     </aside>
     {menuOpen && <button className="sidebar-scrim" aria-label="关闭导航" onClick={() => setMenuOpen(false)} />}
-    <main className="main-shell"><header className="topbar"><button className="menu-trigger" aria-label="打开导航" onClick={() => setMenuOpen(true)}><Menu size={20} /></button><div className="breadcrumb"><span>控制平面</span><ChevronRight size={14} /><strong>{navigation.find(item => item.id === active)?.label}</strong></div><div className="operator"><CircleUserRound size={18} /><span>{session.username()}</span></div></header><div className="page-content">{page}</div></main>
+    <main className="main-shell"><header className="topbar"><button className="menu-trigger" aria-label="打开导航" onClick={() => setMenuOpen(true)}><Menu size={20} /></button><div className="breadcrumb"><span>控制平面</span><ChevronRight size={14} /><strong>{navigation.find(item => item.id === active)?.label ?? '运行总览'}</strong></div><div className="operator"><CircleUserRound size={18} /><span>{session.username()}</span></div></header><div className="page-content">{page}</div></main>
     {toast && <div className={`toast toast--${toast.tone}`} role="status">{toast.tone === 'good' ? <ShieldCheck size={18} /> : <BellRing size={18} />}{toast.message}</div>}
   </div>
+}
+
+function BootstrapLoadingPage() {
+  return <main className="setup-page setup-page--loading"><LoaderCircle className="spin" size={24} /><span>正在检查视枢运行状态</span></main>
+}
+
+function BootstrapErrorPage({ message, retry }: { message: string; retry: () => void }) {
+  return <main className="setup-page setup-page--loading"><AlertTriangle size={25} /><strong>无法连接初始化服务</strong><span>{message}</span><Button variant="secondary" type="button" onClick={retry}>重新检查</Button></main>
+}
+
+function BootstrapRestartPage() {
+  return <main className="setup-page setup-page--loading"><LoaderCircle className="spin" size={26} /><strong>正在应用视枢配置</strong><span>核心容器会自动重启。请保持此页面打开，完成后将进入管理员登录页。</span></main>
+}
+
+function SetupPage({ defaults, onSubmitted }: { defaults: SetupDefaults; onSubmitted: () => void }) {
+  const formRef = useRef<HTMLFormElement>(null)
+  const [step, setStep] = useState<1 | 2 | 3>(1)
+  const [postgresTested, setPostgresTested] = useState(false)
+  const [mediaTested, setMediaTested] = useState(false)
+  const [mediaMode, setMediaMode] = useState<'same-host' | 'remote'>(defaults.mediaMode)
+  const [mediaApiBaseUri, setMediaApiBaseUri] = useState(defaults.mediaApiBaseUri)
+  const [mediaHlsBaseUri, setMediaHlsBaseUri] = useState(defaults.mediaHlsBaseUri)
+  const [publicBaseUri, setPublicBaseUri] = useState(`${window.location.origin}/`)
+  const [httpAcknowledged, setHttpAcknowledged] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [testing, setTesting] = useState<'postgres' | 'media' | null>(null)
+  const [loading, setLoading] = useState(false)
+  const currentOriginUsesHttp = window.location.protocol === 'http:'
+
+  const readForm = () => new FormData(formRef.current ?? undefined)
+  const invalidatePostgres = () => { setPostgresTested(false); setMediaTested(false); setMessage(''); setError('') }
+  const invalidateMedia = () => { setMediaTested(false); setMessage(''); setError('') }
+
+  const selectMediaMode = (mode: 'same-host' | 'remote') => {
+    setMediaMode(mode)
+    invalidateMedia()
+    if (mode === 'same-host') {
+      setMediaApiBaseUri(defaults.mediaApiBaseUri)
+      setMediaHlsBaseUri(defaults.mediaHlsBaseUri)
+    } else {
+      setMediaApiBaseUri('')
+      setMediaHlsBaseUri('')
+    }
+  }
+
+  const testPostgreSql = async () => {
+    const form = readForm()
+    setTesting('postgres'); setError(''); setMessage('')
+    try {
+      const result = await api.testPostgreSql({
+        databaseHost: String(form.get('databaseHost') ?? ''),
+        databasePort: Number(form.get('databasePort') ?? 0),
+        postgresTlsMode: String(form.get('postgresTlsMode') ?? ''),
+        databaseAdministratorUsername: String(form.get('databaseAdministratorUsername') ?? ''),
+        databaseAdministratorPassword: String(form.get('databaseAdministratorPassword') ?? ''),
+        databaseName: String(form.get('databaseName') ?? '')
+      })
+      setPostgresTested(true); setMessage(result.message)
+    } catch (reason) {
+      setPostgresTested(false); setError(reason instanceof Error ? reason.message : 'PostgreSQL 测试失败。')
+    } finally {
+      setTesting(null)
+    }
+  }
+
+  const testMediaMtx = async () => {
+    setTesting('media'); setError(''); setMessage('')
+    try {
+      const result = await api.testMediaMtx({ mediaMode, mediaApiBaseUri, mediaHlsBaseUri })
+      setMediaTested(true); setMessage(result.message)
+    } catch (reason) {
+      setMediaTested(false); setError(reason instanceof Error ? reason.message : 'MediaMTX 测试失败。')
+    } finally {
+      setTesting(null)
+    }
+  }
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!postgresTested || !mediaTested) return
+    setError('')
+    const form = new FormData(event.currentTarget)
+    const platformAdministratorPassword = String(form.get('platformAdministratorPassword') ?? '')
+    if (platformAdministratorPassword !== String(form.get('platformAdministratorPasswordConfirmation') ?? '')) {
+      setError('两次输入的系统管理员密码不一致。')
+      return
+    }
+    if (currentOriginUsesHttp && !httpAcknowledged && publicBaseUri.startsWith('http:')) {
+      setError('请确认局域网 HTTP 的明文传输风险，或改用 HTTPS 访问地址。')
+      return
+    }
+
+    const request: SetupRequest = {
+      databaseHost: String(form.get('databaseHost') ?? ''),
+      databasePort: Number(form.get('databasePort') ?? 0),
+      postgresTlsMode: String(form.get('postgresTlsMode') ?? ''),
+      databaseAdministratorUsername: String(form.get('databaseAdministratorUsername') ?? ''),
+      databaseAdministratorPassword: String(form.get('databaseAdministratorPassword') ?? ''),
+      databaseName: String(form.get('databaseName') ?? ''),
+      publicBaseUri,
+      mediaMode,
+      mediaApiBaseUri,
+      mediaHlsBaseUri,
+      platformAdministratorUsername: String(form.get('platformAdministratorUsername') ?? ''),
+      platformAdministratorPassword,
+      allowInsecureLanHttp: currentOriginUsesHttp && httpAcknowledged
+    }
+
+    setLoading(true)
+    try {
+      await api.initialize(request)
+      onSubmitted()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '初始化失败，请检查配置后重试。')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return <main className="setup-page">
+    <section className="setup-brand"><div className="login-brand__line"><Activity size={22} /><span>VISICORE</span></div><h1>视枢初始化</h1><p>逐步验证 PostgreSQL 与 MediaMTX，创建首个管理员后自动进入控制台。</p><div className="setup-brand__status"><span className="status-dot status-dot--good" />核心容器引导态</div></section>
+    <section className="setup-content"><form ref={formRef} className="setup-form" onSubmit={submit}>
+      <header><Database size={23} /><div><h2>首次安装配置</h2><p>连接测试不写入外部服务；密码仅保留在当前页面内存和最终初始化请求中。</p></div></header>
+      <nav className="setup-steps" aria-label="安装步骤"><span className={step === 1 ? 'active' : postgresTested ? 'complete' : ''}>1. PostgreSQL</span><span className={step === 2 ? 'active' : mediaTested ? 'complete' : ''}>2. MediaMTX</span><span className={step === 3 ? 'active' : ''}>3. 系统设置</span></nav>
+      <section className="setup-section" hidden={step !== 1}><h3>连接 PostgreSQL</h3><p className="setup-hint">使用管理账号测试 TLS、目标数据库状态和创建数据库权限。核心运行期也使用此账号。</p><div className="setup-grid"><label><span>主机</span><Input name="databaseHost" autoComplete="off" placeholder="postgres.example.internal" required maxLength={255} onChange={invalidatePostgres} /></label><label><span>端口</span><Input name="databasePort" type="number" min={1} max={65535} defaultValue={defaults.databasePort} required onChange={invalidatePostgres} /></label><label><span>TLS 模式</span><Select name="postgresTlsMode" defaultValue={defaults.postgresTlsMode} onChange={invalidatePostgres}><option value="disable">不使用 TLS</option><option value="require">要求 TLS</option><option value="verify-full">校验服务器证书</option></Select></label><label><span>管理账号</span><Input name="databaseAdministratorUsername" autoComplete="username" required onChange={invalidatePostgres} /></label><label><span>管理密码</span><Input name="databaseAdministratorPassword" type="password" autoComplete="current-password" required onChange={invalidatePostgres} /></label><label><span>目标数据库</span><Input name="databaseName" defaultValue={defaults.databaseName} autoComplete="off" required onChange={invalidatePostgres} /></label></div><div className="setup-actions"><Button type="button" variant="secondary" disabled={testing !== null} onClick={() => void testPostgreSql()}>{testing === 'postgres' ? '正在测试' : '测试 PostgreSQL'}</Button><Button type="button" disabled={!postgresTested || testing !== null} onClick={() => { setStep(2); setMessage(''); setError('') }}>下一步</Button></div></section>
+      <section className="setup-section" hidden={step !== 2}><h3>连接 MediaMTX</h3><p className="setup-hint">测试 Control API 与 HLS 地址的网络、TLS 和响应可用性，不触发真实设备流。</p><div className="setup-mode" role="group" aria-label="MediaMTX 部署方式"><button type="button" className={mediaMode === 'same-host' ? 'active' : ''} aria-pressed={mediaMode === 'same-host'} onClick={() => selectMediaMode('same-host')}>同机 Docker 网络</button><button type="button" className={mediaMode === 'remote' ? 'active' : ''} aria-pressed={mediaMode === 'remote'} onClick={() => selectMediaMode('remote')}>远程 HTTPS 服务</button></div><div className="setup-grid"><label><span>Control API 地址</span><Input type="url" value={mediaApiBaseUri} onChange={event => { setMediaApiBaseUri(event.target.value); invalidateMedia() }} placeholder={mediaMode === 'remote' ? 'https://media.example.com/api/' : undefined} required /></label><label><span>HLS 地址</span><Input type="url" value={mediaHlsBaseUri} onChange={event => { setMediaHlsBaseUri(event.target.value); invalidateMedia() }} placeholder={mediaMode === 'remote' ? 'https://media.example.com/hls/' : undefined} required /></label></div>{mediaMode === 'remote' && <p className="setup-hint">远程模式仅接受 HTTPS 地址，并必须允许 MediaMTX 回调视枢的内部鉴权地址。</p>}<div className="setup-actions"><Button type="button" variant="secondary" disabled={testing !== null} onClick={() => void testMediaMtx()}>{testing === 'media' ? '正在测试' : '测试 MediaMTX'}</Button><div><Button type="button" variant="secondary" disabled={testing !== null} onClick={() => { setStep(1); setMessage(''); setError('') }}>上一步</Button><Button type="button" disabled={!mediaTested || testing !== null} onClick={() => { setStep(3); setMessage(''); setError('') }}>下一步</Button></div></div></section>
+      <section className="setup-section" hidden={step !== 3}><h3>系统设置</h3><label><span>视枢地址</span><Input type="url" value={publicBaseUri} onChange={event => setPublicBaseUri(event.target.value)} autoComplete="url" required /></label>{currentOriginUsesHttp && <label className="setup-risk"><input type="checkbox" checked={httpAcknowledged} onChange={event => setHttpAcknowledged(event.target.checked)} /><span><ShieldAlert size={17} />我理解局域网 HTTP 会明文传输登录密码和会话，仅在受控网络中使用。</span></label>}<div className="setup-grid"><label><span>首个管理员账号</span><Input name="platformAdministratorUsername" defaultValue={defaults.platformAdministratorUsername} autoComplete="username" required /><small>支持邮箱，邮箱登录不区分大小写；普通账号可使用数字开头。</small></label><label><span>管理员密码</span><Input name="platformAdministratorPassword" type="password" minLength={12} maxLength={256} autoComplete="new-password" required /></label><label><span>确认密码</span><Input name="platformAdministratorPasswordConfirmation" type="password" minLength={12} maxLength={256} autoComplete="new-password" required /></label></div><div className="setup-actions"><Button type="button" variant="secondary" disabled={loading} onClick={() => { setStep(2); setMessage(''); setError('') }}>上一步</Button><Button disabled={loading}>{loading ? '正在初始化' : '完成初始化'}</Button></div></section>
+      {message && <div className="setup-success"><ShieldCheck size={17} />{message}</div>}
+      {error && <div className="setup-error"><AlertTriangle size={17} />{error}</div>}
+      <footer><span>完成初始化时会再次校验两项连接，创建全新数据库、迁移和首个管理员，并自动重启核心容器。</span></footer>
+    </form></section>
+  </main>
 }
 
 function NotFoundPage() {

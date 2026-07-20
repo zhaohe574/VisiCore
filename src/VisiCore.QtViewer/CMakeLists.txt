@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
-project(VisiCoreQtViewer VERSION 0.2.0 LANGUAGES CXX)
+file(READ "${CMAKE_CURRENT_LIST_DIR}/../../VERSION" VISICORE_VIEWER_VERSION_RAW)
+string(STRIP "${VISICORE_VIEWER_VERSION_RAW}" VISICORE_VIEWER_VERSION)
+if(NOT VISICORE_VIEWER_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+    message(FATAL_ERROR "根目录 VERSION 必须是 x.y.z 格式。")
+endif()
+project(VisiCoreQtViewer VERSION ${VISICORE_VIEWER_VERSION} LANGUAGES CXX)
 
 set(CMAKE_INSTALL_BINDIR ".")
 
@@ -8,6 +13,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
+
+option(VISICORE_RELEASE_BUILD "启用受控 Windows 发行构建校验" OFF)
+set(VISICORE_MPV_ROOT "$ENV{MPV_ROOT}" CACHE PATH "已审批 libmpv x64 运行时目录")
+set(VISICORE_MPV_RUNTIME_VERSION "" CACHE STRING "已审批 libmpv 运行时版本")
+set(VISICORE_MPV_RUNTIME_SOURCE "" CACHE STRING "已审批 libmpv 运行时来源")
+set(VISICORE_MPV_RUNTIME_SHA256 "" CACHE STRING "已审批 libmpv-2.dll 的 SHA-256")
+set(VISICORE_MPV_RUNTIME_LICENSE_FILE "" CACHE FILEPATH "已审批 libmpv 运行时许可证文件")
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Network Widgets OpenGLWidgets Svg)
 
@@ -28,6 +40,10 @@ qt_add_executable(VisiCoreQtViewer WIN32
     src/viewer_logic.cpp
     src/apiclient.h
     src/apiclient.cpp
+    src/connection_settings.h
+    src/connection_settings.cpp
+    src/connection_settings_dialog.h
+    src/connection_settings_dialog.cpp
     src/login_dialog.h
     src/login_dialog.cpp
     src/change_password_dialog.h
@@ -57,6 +73,14 @@ qt_add_executable(VisiCoreQtViewer WIN32
     src/ptz_controller.cpp
     src/dock_layout_controller.h
     src/dock_layout_controller.cpp
+    src/export_controller.h
+    src/export_controller.cpp
+    src/export_tasks_panel.h
+    src/export_tasks_panel.cpp
+    src/bookmark_store.h
+    src/bookmark_store.cpp
+    src/screenshot_service.h
+    src/screenshot_service.cpp
     src/camera_tree_widget.h
     src/camera_tree_widget.cpp
     src/mpv_player_widget.h
@@ -251,6 +275,10 @@ if(BUILD_TESTING)
         src/viewer_logic.cpp
         src/apiclient.h
         src/apiclient.cpp
+        src/connection_settings.h
+        src/connection_settings.cpp
+        src/connection_settings_dialog.h
+        src/connection_settings_dialog.cpp
         src/login_dialog.h
         src/login_dialog.cpp
         src/change_password_dialog.h
@@ -280,6 +308,14 @@ if(BUILD_TESTING)
         src/ptz_controller.cpp
         src/dock_layout_controller.h
         src/dock_layout_controller.cpp
+        src/export_controller.h
+        src/export_controller.cpp
+        src/export_tasks_panel.h
+        src/export_tasks_panel.cpp
+        src/bookmark_store.h
+        src/bookmark_store.cpp
+        src/screenshot_service.h
+        src/screenshot_service.cpp
         src/camera_tree_widget.h
         src/camera_tree_widget.cpp
         src/mpv_player_widget.h
@@ -326,6 +362,41 @@ if(BUILD_TESTING)
     add_test(NAME VisiCoreQtViewer.MainWindowInteraction COMMAND VisiCoreQtViewerInteractionTests)
     set_property(TEST VisiCoreQtViewer.MainWindowInteraction PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 
+    qt_add_executable(VisiCoreQtViewerLocalFeatureTests
+        tests/local_feature_tests.cpp
+        src/models.h
+        src/connection_settings.h
+        src/connection_settings.cpp
+        src/export_controller.h
+        src/export_controller.cpp
+        src/export_download_verifier.h
+        src/bookmark_store.h
+        src/bookmark_store.cpp
+        src/screenshot_service.h
+        src/screenshot_service.cpp)
+
+    target_include_directories(VisiCoreQtViewerLocalFeatureTests PRIVATE src)
+
+    target_link_libraries(VisiCoreQtViewerLocalFeatureTests PRIVATE
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Test)
+
+    target_compile_definitions(VisiCoreQtViewerLocalFeatureTests PRIVATE
+        QT_NO_CAST_FROM_ASCII
+        QT_NO_CAST_TO_ASCII
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN)
+
+    if(MSVC)
+        target_compile_options(VisiCoreQtViewerLocalFeatureTests PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(VisiCoreQtViewerLocalFeatureTests PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    add_test(NAME VisiCoreQtViewer.LocalFeatures COMMAND VisiCoreQtViewerLocalFeatureTests)
+    set_property(TEST VisiCoreQtViewer.LocalFeatures PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
     if(WIN32)
         get_filename_component(VIEWER_TEST_COMPILER_RUNTIME_DIRECTORY "${CMAKE_CXX_COMPILER}" DIRECTORY)
         set_property(TEST VisiCoreQtViewer.Logic PROPERTY ENVIRONMENT_MODIFICATION
@@ -344,6 +415,9 @@ if(BUILD_TESTING)
         set_property(TEST VisiCoreQtViewer.MainWindowInteraction PROPERTY ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:qtadvanceddocking-qt6>"
+            "PATH=path_list_prepend:${VIEWER_TEST_COMPILER_RUNTIME_DIRECTORY}")
+        set_property(TEST VisiCoreQtViewer.LocalFeatures PROPERTY ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>"
             "PATH=path_list_prepend:${VIEWER_TEST_COMPILER_RUNTIME_DIRECTORY}")
     endif()
 endif()
@@ -370,13 +444,45 @@ if(MINGW)
         DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 
-if(WIN32 AND DEFINED ENV{MPV_ROOT})
-    file(TO_CMAKE_PATH "$ENV{MPV_ROOT}" MPV_ROOT_PATH)
-    install(FILES
-        "${MPV_ROOT_PATH}/bin/mpv-2.dll"
-        "${MPV_ROOT_PATH}/bin/libmpv-2.dll"
-        "${MPV_ROOT_PATH}/mpv-2.dll"
-        "${MPV_ROOT_PATH}/libmpv-2.dll"
-        DESTINATION .
-        OPTIONAL)
+set(VISICORE_MPV_LIBRARY "")
+if(WIN32 AND NOT VISICORE_MPV_ROOT STREQUAL "")
+    file(TO_CMAKE_PATH "${VISICORE_MPV_ROOT}" MPV_ROOT_PATH)
+    foreach(candidate
+            "${MPV_ROOT_PATH}/libmpv-2.dll"
+            "${MPV_ROOT_PATH}/bin/libmpv-2.dll"
+            "${MPV_ROOT_PATH}/mpv-2.dll"
+            "${MPV_ROOT_PATH}/bin/mpv-2.dll")
+        if(EXISTS "${candidate}")
+            set(VISICORE_MPV_LIBRARY "${candidate}")
+            break()
+        endif()
+    endforeach()
+endif()
+
+if(VISICORE_RELEASE_BUILD)
+    if(VISICORE_MPV_LIBRARY STREQUAL "" OR VISICORE_MPV_RUNTIME_VERSION STREQUAL "" OR
+       VISICORE_MPV_RUNTIME_SOURCE STREQUAL "" OR VISICORE_MPV_RUNTIME_SHA256 STREQUAL "" OR
+       VISICORE_MPV_RUNTIME_LICENSE_FILE STREQUAL "")
+        message(FATAL_ERROR "发行构建必须提供 libmpv 目录、版本、来源、SHA-256 与许可证文件。")
+    endif()
+    if(NOT EXISTS "${VISICORE_MPV_RUNTIME_LICENSE_FILE}")
+        message(FATAL_ERROR "未找到 libmpv 许可证文件：${VISICORE_MPV_RUNTIME_LICENSE_FILE}")
+    endif()
+    file(SHA256 "${VISICORE_MPV_LIBRARY}" VISICORE_MPV_LIBRARY_SHA256)
+    string(TOUPPER "${VISICORE_MPV_RUNTIME_SHA256}" VISICORE_MPV_RUNTIME_SHA256_UPPER)
+    string(TOUPPER "${VISICORE_MPV_LIBRARY_SHA256}" VISICORE_MPV_LIBRARY_SHA256_UPPER)
+    if(NOT VISICORE_MPV_LIBRARY_SHA256_UPPER STREQUAL VISICORE_MPV_RUNTIME_SHA256_UPPER)
+        message(FATAL_ERROR "libmpv 运行时 SHA-256 与受控输入不匹配。")
+    endif()
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/visicore-viewer-runtime.json"
+        "{\n  \"component\": \"libmpv\",\n  \"version\": \"${VISICORE_MPV_RUNTIME_VERSION}\",\n  \"source\": \"${VISICORE_MPV_RUNTIME_SOURCE}\",\n  \"sha256\": \"${VISICORE_MPV_LIBRARY_SHA256_UPPER}\"\n}\n")
+endif()
+
+if(WIN32 AND NOT VISICORE_MPV_LIBRARY STREQUAL "")
+    install(FILES "${VISICORE_MPV_LIBRARY}" DESTINATION . RENAME "libmpv-2.dll")
+endif()
+
+if(VISICORE_RELEASE_BUILD)
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/visicore-viewer-runtime.json" DESTINATION .)
+    install(FILES "${VISICORE_MPV_RUNTIME_LICENSE_FILE}" DESTINATION "licenses" RENAME "libmpv-LICENSE.txt")
 endif()

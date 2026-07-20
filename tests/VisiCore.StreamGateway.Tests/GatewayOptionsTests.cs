@@ -15,6 +15,50 @@ public sealed class GatewayOptionsTests
         Assert.Throws<InvalidOperationException>(() => reused.ValidateAndGetCenterBaseUri());
     }
 
+    [Fact(DisplayName = "显式白名单中的 Compose 中心允许开发 HTTP")]
+    public void TrustedDevelopmentCenterHostIsAccepted()
+    {
+        var options = CreateValidOptions(
+            centerBaseUri: "http://visicore-api:8080/",
+            allowInsecureCenterHttpForDevelopment: true,
+            trustedDevelopmentHttpHosts: ["visicore-api"]);
+
+        Assert.Equal("visicore-api", options.ValidateAndGetCenterBaseUri().Host);
+    }
+
+    [Fact(DisplayName = "局域网 HTTP 仅接受安装时保存的精确来源")]
+    public void TrustedInsecureClientOriginMustMatchHostAndPort()
+    {
+        var options = CreateValidOptions();
+        options = new GatewayOptions
+        {
+            GatewayName = options.GatewayName,
+            CenterBaseUri = options.CenterBaseUri,
+            CenterControlToken = options.CenterControlToken,
+            DeviceWorkerAccessToken = options.DeviceWorkerAccessToken,
+            CommandToken = options.CommandToken,
+            TrustedInsecureHttpOrigins = ["http://10.37.200.52:8080"]
+        };
+
+        Assert.True(options.IsTrustedInsecureClientOrigin(new Microsoft.AspNetCore.Http.HostString("10.37.200.52:8080")));
+        Assert.False(options.IsTrustedInsecureClientOrigin(new Microsoft.AspNetCore.Http.HostString("10.37.200.52:8081")));
+        Assert.False(options.IsTrustedInsecureClientOrigin(new Microsoft.AspNetCore.Http.HostString("10.37.200.53:8080")));
+    }
+
+    [Fact(DisplayName = "显式开发模式兼容既有的 24 位 Worker 令牌")]
+    public void DevelopmentModeAcceptsExisting24CharacterWorkerToken()
+    {
+        var options = CreateValidOptions(
+            centerBaseUri: "http://visicore-api:8080/",
+            centerControlToken: new string('a', 24),
+            commandToken: new string('b', 24),
+            deviceWorkerAccessToken: new string('c', 24),
+            allowInsecureCenterHttpForDevelopment: true,
+            trustedDevelopmentHttpHosts: ["visicore-api"]);
+
+        Assert.Equal("visicore-api", options.ValidateAndGetCenterBaseUri().Host);
+    }
+
     [Fact(DisplayName = "MediaMTX 明文 Control API 仅允许回环或显式受信任服务")]
     public void MediaMtxHttpApiMustBeLoopback()
     {
@@ -149,13 +193,18 @@ public sealed class GatewayOptionsTests
     private static GatewayOptions CreateValidOptions(
         string centerBaseUri = "https://center.test/",
         string centerControlToken = "center-control-token-at-least-32-bytes",
-        string commandToken = "gateway-command-token-at-least-32-bytes") =>
+        string commandToken = "gateway-command-token-at-least-32-bytes",
+        string deviceWorkerAccessToken = "device-worker-token-at-least-32-bytes",
+        bool allowInsecureCenterHttpForDevelopment = false,
+        string[]? trustedDevelopmentHttpHosts = null) =>
         new()
         {
             GatewayName = "integration",
             CenterBaseUri = centerBaseUri,
             CenterControlToken = centerControlToken,
-            DeviceWorkerAccessToken = "device-worker-token-at-least-32-bytes",
-            CommandToken = commandToken
+            DeviceWorkerAccessToken = deviceWorkerAccessToken,
+            CommandToken = commandToken,
+            AllowInsecureCenterHttpForDevelopment = allowInsecureCenterHttpForDevelopment,
+            TrustedDevelopmentHttpHosts = trustedDevelopmentHttpHosts ?? []
         };
 }

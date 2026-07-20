@@ -8,7 +8,7 @@ public sealed class PlatformDbContextFactory : IDesignTimeDbContextFactory<Platf
     public PlatformDbContext CreateDbContext(string[] args)
     {
         var connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__Platform")
-            ?? "Host=127.0.0.1;Port=5432;Database=visicore;Username=visicore;Password=design-time-only";
+            ?? "Host=127.0.0.1;Port=5432;Database=visicore;Username=postgres;Password=design-time-only";
         var options = new DbContextOptionsBuilder<PlatformDbContext>()
             .UseNpgsql(connectionString)
             .Options;

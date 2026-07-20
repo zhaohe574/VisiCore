@@ -15,6 +15,8 @@ public sealed record DirectCameraAddress(
 
 public static class DirectCameraAddressPolicy
 {
+    private const int MaximumDefaultMappingChannel = 21_474_836;
+
     private static readonly IReadOnlySet<string> SensitiveQueryKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "user", "username", "password", "passwd", "pwd", "token", "access_token", "auth", "auth_token",
@@ -72,6 +74,19 @@ public static class DirectCameraAddressPolicy
             WithoutUserInfo(sub).AbsoluteUri,
             streamingMap);
         validationError = string.Empty;
+        return true;
+    }
+
+    public static bool TryCreateDefaultStreamingMap(int inputChannelNumber, out string streamingChannelMap)
+    {
+        streamingChannelMap = "{}";
+        if (inputChannelNumber is < 1 or > MaximumDefaultMappingChannel)
+        {
+            return false;
+        }
+
+        var channelBase = inputChannelNumber * 100;
+        streamingChannelMap = JsonSerializer.Serialize(new { main = channelBase + 1, sub = channelBase + 2 });
         return true;
     }
 

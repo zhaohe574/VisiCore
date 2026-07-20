@@ -57,6 +57,8 @@ public sealed class DeviceWorkerAccessService(
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         var endpoints = await dbContext.RecorderEndpoints.AsNoTracking().Where(item => recorderIds.Contains(item.RecorderId)).ToListAsync(cancellationToken);
         var cameras = await dbContext.Cameras.AsNoTracking().Where(item => recorderIds.Contains(item.RecorderId)).ToListAsync(cancellationToken);
+        var isAgentBackedWorker = await dbContext.EdgeAgents.AsNoTracking()
+            .AnyAsync(item => item.DeviceWorkerId == workerId && item.DisabledAt == null, cancellationToken);
         var credentialNames = endpoints.Select(item => item.CredentialReference).Distinct().ToList();
         // 旧 Device Worker 只能接收其本机 DPAPI 密文。Linux Agent 信封必须通过独立控制面拉取，不能降级下发到此接口。
         var credentials = await dbContext.DeviceCredentials.AsNoTracking()
@@ -71,7 +73,7 @@ public sealed class DeviceWorkerAccessService(
             var plugin = recorder.DevicePluginId is { } pluginId ? pluginsById.GetValueOrDefault(pluginId) : null;
             var assignedEndpoints = endpoints.Where(item => item.RecorderId == recorder.Id).ToList();
             var missingCredential = assignedEndpoints.Select(item => item.CredentialReference).FirstOrDefault(name => !credentialsByName.ContainsKey(name));
-            if (missingCredential is not null)
+            if (!isAgentBackedWorker && missingCredential is not null)
             {
                 var registeredReferences = string.Join(",", credentialsByName.Keys.OrderBy(item => item, StringComparer.Ordinal));
                 logger.LogWarning(
@@ -87,8 +89,10 @@ public sealed class DeviceWorkerAccessService(
                 recorder.Id, assignment.DefaultRegionId, recorder.Code, recorder.Name, recorder.Vendor, recorder.AdapterType,
                 recorder.TimeZoneId,
                 assignedEndpoints.Select(item => new WorkerRecorderEndpoint(item.Protocol.ToString(), item.Host, item.Port, item.UseTls, item.CredentialReference, item.CertificateThumbprint)).ToList(),
-                assignedEndpoints.Select(item => credentialsByName[item.CredentialReference]).DistinctBy(item => item.Name)
-                    .Select(item => new WorkerProtectedCredential(item.Name, item.ProtectionMode.ToString(), Convert.ToBase64String(item.Ciphertext), item.KeyVersion)).ToList(),
+                isAgentBackedWorker
+                    ? []
+                    : assignedEndpoints.Select(item => credentialsByName[item.CredentialReference]).DistinctBy(item => item.Name)
+                        .Select(item => new WorkerProtectedCredential(item.Name, item.ProtectionMode.ToString(), Convert.ToBase64String(item.Ciphertext), item.KeyVersion)).ToList(),
                 cameras.Where(item => item.RecorderId == recorder.Id)
                     .Select(item => new WorkerCameraRoute(item.Id, item.InputChannelNumber, item.StreamingChannelMap, item.Alias, item.SupportsPtz)).ToList(),
                 recorder.DeviceKind,

@@ -1,149 +1,36 @@
 name: visicore
 
 services:
-  postgres:
-    image: ${POSTGRES_IMAGE:-postgres:16-alpine}
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-visicore}
-      POSTGRES_USER: ${POSTGRES_USER:-visicore}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
-    volumes:
-      - postgres-data:/var/lib/postgresql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  setup:
-    image: ${VISICORE_IMAGE_PREFIX:-ghcr.io/zhaohe574}/visicore-setup:${VISICORE_VERSION:-v0.2.0}
-    profiles: ["setup"]
+  visicore-core:
+    image: ${VISICORE_CORE_IMAGE:-ghcr.io/zhaohe574/visicore-core:v0.3.0}
     build:
       context: .
-      dockerfile: deploy/linux/Dockerfile.dotnet
+      dockerfile: deploy/core/Dockerfile
       args:
-        PROJECT: src/VisiCore.Setup/VisiCore.Setup.csproj
-        ASSEMBLY: VisiCore.Setup.dll
-    environment:
-      ConnectionStrings__Platform: Host=postgres;Port=5432;Database=${POSTGRES_DB:-visicore};Username=${POSTGRES_USER:-visicore};Password=${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
-      Setup__Username: ${SETUP_USERNAME:-}
-      Setup__Password: ${SETUP_PASSWORD:-}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    stdin_open: true
-    tty: true
-    restart: "no"
-
-  visicore-api:
-    image: ${VISICORE_IMAGE_PREFIX:-ghcr.io/zhaohe574}/visicore-api:${VISICORE_VERSION:-v0.2.0}
-    build:
-      context: .
-      dockerfile: deploy/linux/Dockerfile.dotnet
-      args:
-        PROJECT: src/VisiCore.Api/VisiCore.Api.csproj
-        ASSEMBLY: VisiCore.Api.dll
-    restart: unless-stopped
-    environment:
-      ASPNETCORE_ENVIRONMENT: Production
-      ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__Platform: Host=postgres;Port=5432;Database=${POSTGRES_DB:-visicore};Username=${POSTGRES_USER:-visicore};Password=${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
-      Database__ApplyMigrationsOnStartup: "false"
-      ExportArtifactStorage__RootDirectory: /var/lib/visicore/exports
-    volumes:
-      - api-exports:/var/lib/visicore/exports
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 20s
-
-  notification-worker:
-    image: ${VISICORE_IMAGE_PREFIX:-ghcr.io/zhaohe574}/visicore-notification-worker:${VISICORE_VERSION:-v0.2.0}
-    build:
-      context: .
-      dockerfile: deploy/linux/Dockerfile.dotnet
-      args:
-        PROJECT: src/VisiCore.NotificationWorker/VisiCore.NotificationWorker.csproj
-        ASSEMBLY: VisiCore.NotificationWorker.dll
-    restart: unless-stopped
-    environment:
-      DOTNET_ENVIRONMENT: Production
-      ConnectionStrings__Platform: Host=postgres;Port=5432;Database=${POSTGRES_DB:-visicore};Username=${POSTGRES_USER:-visicore};Password=${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  admin:
-    image: ${VISICORE_IMAGE_PREFIX:-ghcr.io/zhaohe574}/visicore-admin:${VISICORE_VERSION:-v0.2.0}
-    build:
-      context: ./src/VisiCore.Admin
-      dockerfile: Dockerfile
+        NODE_IMAGE: ${VISICORE_NODE_IMAGE:-node:22-alpine}
     restart: unless-stopped
     ports:
       - "${ADMIN_HTTP_BIND_ADDRESS:-127.0.0.1}:${ADMIN_HTTP_PORT:-8080}:8080"
-    depends_on:
-      visicore-api:
-        condition: service_healthy
-
-  mediamtx:
-    profiles: ["edge"]
-    image: bluenviron/mediamtx:1.19.2
-    restart: unless-stopped
+      - "${ADMIN_HTTPS_BIND_ADDRESS:-127.0.0.1}:${ADMIN_HTTPS_PORT:-8443}:8443"
+    environment:
+      VISICORE_HTTPS_ENABLED: ${VISICORE_HTTPS_ENABLED:-false}
+      VISICORE_TLS_CERTIFICATE_FILE: ${VISICORE_TLS_CERTIFICATE_FILE:-/run/visicore/tls/tls.crt}
+      VISICORE_TLS_PRIVATE_KEY_FILE: ${VISICORE_TLS_PRIVATE_KEY_FILE:-/run/visicore/tls/tls.key}
     volumes:
-      - ./deploy/linux/mediamtx.yml:/mediamtx.yml:ro
-
-  stream-gateway:
-    image: ${VISICORE_IMAGE_PREFIX:-ghcr.io/zhaohe574}/visicore-stream-gateway:${VISICORE_VERSION:-v0.2.0}
-    profiles: ["edge"]
-    build:
-      context: .
-      dockerfile: deploy/linux/Dockerfile.dotnet
-      args:
-        PROJECT: src/VisiCore.StreamGateway/VisiCore.StreamGateway.csproj
-        ASSEMBLY: VisiCore.StreamGateway.dll
-    restart: unless-stopped
-    environment:
-      ASPNETCORE_URLS: http://+:15095
-      Gateway__GatewayName: ${STREAM_GATEWAY_NAME:-default}
-      Gateway__CenterBaseUri: ${PLATFORM_BASE_URI:?请在 .env 中设置 PLATFORM_BASE_URI}
-      Gateway__CenterControlToken: ${STREAM_GATEWAY_CONTROL_TOKEN:?请在 .env 中设置 STREAM_GATEWAY_CONTROL_TOKEN}
-      Gateway__CommandToken: ${STREAM_GATEWAY_COMMAND_TOKEN:?请在 .env 中设置 STREAM_GATEWAY_COMMAND_TOKEN}
-      Gateway__DeviceWorkerAccessToken: ${STREAM_GATEWAY_WORKER_TOKEN:?请在 .env 中设置 STREAM_GATEWAY_WORKER_TOKEN}
-      MediaMtx__ApiBaseUri: http://mediamtx:9997/
-      MediaMtx__HlsBaseUri: http://mediamtx:8888/
-      MediaMtx__PublisherUsername: ${MEDIAMTX_PUBLISHER_USERNAME:-relay}
-      MediaMtx__PublisherPassword: ${MEDIAMTX_PUBLISHER_PASSWORD:?请在 .env 中设置 MEDIAMTX_PUBLISHER_PASSWORD}
-      MediaMtx__HlsReaderUsername: ${MEDIAMTX_HLS_READER_USERNAME:-hlsproxy}
-      MediaMtx__HlsReaderPassword: ${MEDIAMTX_HLS_READER_PASSWORD:?请在 .env 中设置 MEDIAMTX_HLS_READER_PASSWORD}
-    depends_on:
-      mediamtx:
-        condition: service_started
-      visicore-api:
-        condition: service_healthy
-
-  onvif-edge-worker:
-    image: ${VISICORE_IMAGE_PREFIX:-ghcr.io/zhaohe574}/visicore-onvif-edge-worker:${VISICORE_VERSION:-v0.2.0}
-    profiles: ["edge"]
-    build:
-      context: .
-      dockerfile: deploy/linux/Dockerfile.dotnet
-      args:
-        PROJECT: src/VisiCore.OnvifEdgeWorker/VisiCore.OnvifEdgeWorker.csproj
-        ASSEMBLY: VisiCore.OnvifEdgeWorker.dll
-    restart: unless-stopped
-    environment:
-      OnvifEdge__CenterBaseUri: ${PLATFORM_BASE_URI:?请在 .env 中设置 PLATFORM_BASE_URI}
-      OnvifEdge__AccessToken: ${ONVIF_EDGE_ACCESS_TOKEN:?请在 .env 中设置 ONVIF_EDGE_ACCESS_TOKEN}
-    depends_on:
-      visicore-api:
-        condition: service_healthy
+      - visicore-config:/var/lib/visicore/config
+      - api-exports:/var/lib/visicore/exports
+      - "${VISICORE_TLS_DIRECTORY:-./deploy/core/tls}:/run/visicore/tls:ro"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
 volumes:
-  postgres-data:
+  visicore-config:
   api-exports:
+
+networks:
+  default:
+    name: ${VISICORE_NETWORK:-visicore-network}

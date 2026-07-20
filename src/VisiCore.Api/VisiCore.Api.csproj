@@ -6,7 +6,9 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\VisiCore.Core\VisiCore.Core.csproj" />
+    <ProjectReference Include="..\VisiCore.NotificationWorker\VisiCore.NotificationWorker.csproj" />
     <ProjectReference Include="..\VisiCore.Persistence\VisiCore.Persistence.csproj" />
+    <ProjectReference Include="..\VisiCore.Setup\VisiCore.Setup.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.11">

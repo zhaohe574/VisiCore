@@ -1,6 +1,7 @@
 #include "apiclient.h"
 #include "app_dialog.h"
 #include "crash_reporter.h"
+#include "connection_settings.h"
 #include "login_dialog.h"
 #include "main_window.h"
 #include "mpv_player_widget.h"
@@ -109,7 +110,7 @@ int main(int argc, char *argv[]) {
     parser.setApplicationDescription(QStringLiteral("视枢 Windows 原生查看客户端"));
     parser.addHelpOption();
     QCommandLineOption apiOption(QStringList{QStringLiteral("a"), QStringLiteral("api-url")},
-                                 QStringLiteral("中心 API 基础地址"), QStringLiteral("url"), QStringLiteral("https://visicore.local/"));
+                                 QStringLiteral("仅本次启动使用的中心 API 基础地址"), QStringLiteral("url"));
     QCommandLineOption insecureOption(QStringLiteral("allow-insecure-http"), QStringLiteral("仅允许 localhost 开发环境使用 HTTP"));
     QCommandLineOption safeUiOption(
         QStringLiteral("safe-ui"),
@@ -409,7 +410,11 @@ int main(int argc, char *argv[]) {
         startupState.markCleanShutdown();
     });
 
-    ApiClient apiClient(QUrl(parser.value(apiOption)), parser.isSet(insecureOption));
+    const bool allowInsecureHttp = parser.isSet(insecureOption);
+    const QUrl initialApiUrl = parser.isSet(apiOption)
+        ? QUrl(parser.value(apiOption), QUrl::StrictMode)
+        : ConnectionSettings(allowInsecureHttp).savedBaseUrl();
+    ApiClient apiClient(initialApiUrl, allowInsecureHttp);
     if (!apiClient.isBaseUrlValid()) {
         AppDialog::critical(
             nullptr,

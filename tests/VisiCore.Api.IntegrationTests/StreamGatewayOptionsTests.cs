@@ -62,6 +62,19 @@ public sealed class StreamGatewayOptionsTests
         Assert.Equal("http", commandSettings.BaseUri.Scheme);
     }
 
+    [Fact(DisplayName = "显式开发模式兼容既有的 24 位网关令牌")]
+    public void DevelopmentModeAcceptsExisting24CharacterGatewayTokens()
+    {
+        var options = CreateValidOptions(
+            controlToken: new string('c', 24),
+            commandToken: new string('d', 24),
+            publicBaseUri: "http://127.0.0.1:15095/",
+            commandBaseUri: "http://127.0.0.1:15095/",
+            allowInsecureLoopbackHttpForDevelopment: true);
+
+        Assert.True(options.TryValidate(out _, out var error), error);
+    }
+
     [Fact(DisplayName = "开发 HTTP 豁免不能用于非回环地址")]
     public void DevelopmentHttpExceptionDoesNotAcceptNonLoopbackAddress()
     {
@@ -72,6 +85,20 @@ public sealed class StreamGatewayOptionsTests
 
         Assert.False(options.TryValidate(out _, out var error));
         Assert.NotEmpty(error);
+    }
+
+    [Fact(DisplayName = "开发模式仅接受显式白名单中的内部流网关命令地址")]
+    public void TrustedDevelopmentCommandHostIsAccepted()
+    {
+        var options = CreateValidOptions(
+            publicBaseUri: "http://127.0.0.1:15095/",
+            commandBaseUri: "http://mediamtx:15095/",
+            allowInsecureLoopbackHttpForDevelopment: true,
+            trustedDevelopmentHttpHosts: ["mediamtx"]);
+
+        Assert.True(options.TryValidate(out _, out var error), error);
+        Assert.True(options.TryValidateCommand(out var commandSettings, out error), error);
+        Assert.Equal("mediamtx", commandSettings.BaseUri.Host);
     }
 
     [Fact(DisplayName = "主动撤销命令令牌不能与网关控制令牌复用")]
@@ -101,7 +128,8 @@ public sealed class StreamGatewayOptionsTests
         string commandToken = "integration-command-token-at-least-32-bytes",
         int commandLockSeconds = 30,
         string publicBaseUri = "https://gateway.integration.test/",
-        bool allowInsecureLoopbackHttpForDevelopment = false) =>
+        bool allowInsecureLoopbackHttpForDevelopment = false,
+        string[]? trustedDevelopmentHttpHosts = null) =>
         new()
         {
             GatewayName = "integration",
@@ -110,6 +138,7 @@ public sealed class StreamGatewayOptionsTests
             CommandBaseUri = commandBaseUri,
             CommandToken = commandToken,
             AllowInsecureLoopbackHttpForDevelopment = allowInsecureLoopbackHttpForDevelopment,
+            TrustedDevelopmentHttpHosts = trustedDevelopmentHttpHosts ?? [],
             CommandLockSeconds = commandLockSeconds,
             TicketLifetimeSeconds = 20,
             LeaseLifetimeSeconds = 120,

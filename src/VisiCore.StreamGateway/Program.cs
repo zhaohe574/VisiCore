@@ -2,9 +2,25 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using VisiCore.StreamGateway;
 
 var builder = WebApplication.CreateBuilder(args);
+var runtimeConfigurationPath = Environment.GetEnvironmentVariable("VISICORE_RUNTIME_CONFIG")
+    ?? "/var/lib/visicore/config/runtime.json";
+if (File.Exists(runtimeConfigurationPath))
+{
+    builder.Configuration.AddJsonFile(runtimeConfigurationPath, optional: false, reloadOnChange: false);
+}
+var runtimeConfigurationDirectory = Path.GetDirectoryName(Path.GetFullPath(runtimeConfigurationPath))
+    ?? throw new InvalidOperationException("运行配置目录无效。");
+var httpsConfigurationPath = Environment.GetEnvironmentVariable("VISICORE_HTTPS_CONFIGURATION")
+    ?? Path.Combine(runtimeConfigurationDirectory, "https-configuration.json");
+if (File.Exists(httpsConfigurationPath))
+{
+    // 与中心 API 使用相同的启动快照，HTTPS 待应用项只在容器重启后生效。
+    builder.Configuration.AddJsonFile(httpsConfigurationPath, optional: false, reloadOnChange: false);
+}
 // HLS 票据位于路径中，禁止 ASP.NET 默认请求日志记录完整 URL。
 builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", _ => false);
 if (OperatingSystem.IsWindows())
@@ -39,7 +55,11 @@ builder.Services.AddSingleton(gatewayOptions);
 builder.Services.AddSingleton(mediaMtxOptions);
 builder.Services.AddSingleton(liveTranscodeOptions);
 builder.Services.AddSingleton<GatewayPathRegistry>();
-builder.Services.AddSingleton<DpapiGatewayCredentialResolver>();
+if (gatewayOptions.EnableDeviceAssignments)
+{
+    // 旧 Windows Worker 兼容模式才允许注册 DPAPI 解密器；单核心运行期保持无设备凭据。
+    builder.Services.AddSingleton<DpapiGatewayCredentialResolver>();
+}
 builder.Services.AddSingleton<ILiveTranscodeProcessFactory, FfmpegLiveTranscodeProcessFactory>();
 builder.Services.AddSingleton<LiveTranscodeRelayManager>();
 builder.Services.AddSingleton<ILiveTranscodeRelayManager>(provider => provider.GetRequiredService<LiveTranscodeRelayManager>());
@@ -71,9 +91,13 @@ builder.Services.AddHttpClient<IMediaMtxClient, MediaMtxClient>(client =>
     client.Timeout = TimeSpan.FromSeconds(mediaMtxOptions.RequestTimeoutSeconds);
 });
 builder.Services.AddHostedService(provider => provider.GetRequiredService<LiveTranscodeRelayManager>());
-builder.Services.AddHostedService<GatewayAssignmentWorker>();
+if (gatewayOptions.EnableDeviceAssignments)
+{
+    builder.Services.AddHostedService<GatewayAssignmentWorker>();
+}
 builder.Services.AddHostedService<StreamAuthorizationMonitor>();
-builder.Services.AddHealthChecks();
+builder.Services.AddHealthChecks()
+    .AddCheck<MediaMtxReadinessHealthCheck>("mediamtx", HealthStatus.Unhealthy);
 
 var app = builder.Build();
 if (trustedForwardedProxyAddresses.Count > 0)
@@ -85,7 +109,9 @@ app.Use(async (context, next) =>
     var isTrustedMediaMtxCallback =
         context.Request.Path.Equals("/internal/mediamtx/auth", StringComparison.OrdinalIgnoreCase) &&
         mediaMtxOptions.IsTrustedAuthCallbackAddress(context.Connection.RemoteIpAddress);
-    if (!context.Request.IsHttps && !IsLoopback(context.Connection.RemoteIpAddress) && !isTrustedMediaMtxCallback)
+    if (!context.Request.IsHttps && !isTrustedMediaMtxCallback &&
+        (!gatewayOptions.AllowInsecureClientHttpForDevelopment ||
+         !gatewayOptions.IsTrustedInsecureClientOrigin(context.Request.Host)))
     {
         context.Response.StatusCode = StatusCodes.Status400BadRequest;
         await context.Response.WriteAsJsonAsync(new { message = "流网关外部控制接口必须使用 HTTPS。" });
@@ -94,7 +120,8 @@ app.Use(async (context, next) =>
     await next(context);
 });
 
-app.MapHealthChecks("/healthz");
+app.MapHealthChecks("/healthz", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/readyz");
 app.MapPost("/internal/mediamtx/auth", async (
     MediaMtxAuthRequest request,
     HttpContext context,

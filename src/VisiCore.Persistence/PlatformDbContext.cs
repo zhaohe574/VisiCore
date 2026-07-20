@@ -1186,7 +1186,7 @@ public enum NotificationChannelType
 
 public enum NotificationChannelWebhookProtectionMode
 {
-    WindowsDpapiLocalMachine
+    AesGcmRuntimeKey
 }
 
 public sealed class NotificationChannelEntity

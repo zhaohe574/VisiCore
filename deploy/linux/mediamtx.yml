@@ -1,11 +1,11 @@
-# Linux Compose 生产模板。该服务没有宿主机端口，所有 RTSP、HLS 与 Control API 都只在 platform-private 网络内可达。
+# 外置 MediaMTX 的同机 Docker 模板。该容器需加入 visicore-network，且不应发布 Control API、RTSP 或 HLS 宿主机端口。
 logLevel: info
 
 api: yes
 apiAddress: ":9997"
 
 authMethod: http
-authHTTPAddress: http://stream-gateway:15095/internal/mediamtx/auth
+authHTTPAddress: http://visicore-core:8080/internal/mediamtx/auth
 authHTTPExclude:
   - action: api
   - action: metrics

@@ -8,6 +8,7 @@
 - PostgreSQL：PostgreSQL License。
 - Nginx：BSD 2-Clause。
 - MediaMTX：MIT。
-- 可选 Qt 查看端及其运行时依赖不包含在 Docker 镜像中，使用者必须遵守其独立许可证。
+- Windows 查看端 MSI 包含 Qt 运行时、Qt ADS、Qlementine、Lucide 资源与受控 libmpv 运行时。安装目录的 `licenses` 子目录保存 Qt、Qt ADS、Qlementine、Lucide 和受控 libmpv 的许可证文本；`visicore-viewer-runtime.json` 记录 libmpv 的版本、来源与 SHA-256。
+- Qt：LGPL-3.0-only 或 Qt Commercial，取决于发行构建所使用的 Qt 许可证。Qt ADS、Qlementine、Lucide：MIT。libmpv：LGPL-2.1-or-later，具体以受控运行时随包许可证文本为准。
 
-发布流程应为镜像和发行附件生成 SBOM，并随 GitHub Release 一并提供。不得将厂商 SDK、许可证正文或私有二进制纳入本仓库、基础镜像或 SBOM 之外的发行物。
+发布流程应为镜像和发行附件生成 SBOM，并随 GitHub Release 一并提供。不得将厂商 SDK、许可证正文或私有二进制纳入本仓库、基础镜像或 SBOM 之外的发行物。受控 libmpv 的许可证正文只在 MSI 阶段目录和发行安装包中交付，不写入仓库。

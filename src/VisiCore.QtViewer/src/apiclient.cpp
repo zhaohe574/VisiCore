@@ -21,6 +21,19 @@ QDateTime parseDateTime(const QJsonValue &value) {
     return QDateTime::fromString(value.toString(), Qt::ISODate);
 }
 
+QUrl normalizedBaseUrl(QUrl url) {
+    if (!url.path().endsWith(u'/')) {
+        url.setPath(url.path() + u'/');
+    }
+    return url;
+}
+
+bool isLoopbackHost(const QString &host) {
+    const QString normalized = host.trimmed().toLower();
+    return normalized == QStringLiteral("127.0.0.1") || normalized == QStringLiteral("localhost") ||
+           normalized == QStringLiteral("::1");
+}
+
 bool containsChineseText(const QString &value) {
     for (const QChar character : value) {
         const ushort codePoint = character.unicode();
@@ -93,24 +106,41 @@ PlaybackTransportInfo parsePlaybackTransport(const QJsonObject &object) {
 }
 
 ApiClient::ApiClient(QUrl baseUrl, bool allowInsecureHttp, QObject *parent)
-    : QObject(parent), baseUrl_(std::move(baseUrl)), allowInsecureHttp_(allowInsecureHttp) {
-    if (!baseUrl_.path().endsWith(u'/')) {
-        baseUrl_.setPath(baseUrl_.path() + u'/');
-    }
+    : QObject(parent), baseUrl_(normalizedBaseUrl(std::move(baseUrl))), allowInsecureHttp_(allowInsecureHttp) {
     leaseTimer_ = new QTimer(this);
     leaseTimer_->setInterval(5000);
     connect(leaseTimer_, &QTimer::timeout, this, &ApiClient::renewActiveSessions);
 }
 
 bool ApiClient::isBaseUrlValid() const {
-    if (!baseUrl_.isValid() || baseUrl_.host().isEmpty()) {
+    if (!baseUrl_.isValid() || baseUrl_.host().isEmpty() || !baseUrl_.userInfo().isEmpty() ||
+        !baseUrl_.query().isEmpty() || !baseUrl_.fragment().isEmpty()) {
         return false;
     }
-    if (baseUrl_.scheme() == QStringLiteral("https")) {
+    if (baseUrl_.scheme().compare(QStringLiteral("https"), Qt::CaseInsensitive) == 0) {
         return true;
     }
-    return allowInsecureHttp_ && baseUrl_.scheme() == QStringLiteral("http") &&
-           (baseUrl_.host() == QStringLiteral("127.0.0.1") || baseUrl_.host() == QStringLiteral("localhost"));
+    return allowInsecureHttp_ && baseUrl_.scheme().compare(QStringLiteral("http"), Qt::CaseInsensitive) == 0 &&
+           isLoopbackHost(baseUrl_.host());
+}
+
+QUrl ApiClient::baseUrl() const {
+    return baseUrl_;
+}
+
+bool ApiClient::allowsInsecureHttp() const {
+    return allowInsecureHttp_;
+}
+
+bool ApiClient::setBaseUrl(QUrl baseUrl) {
+    const QUrl previous = baseUrl_;
+    baseUrl_ = normalizedBaseUrl(std::move(baseUrl));
+    if (isBaseUrlValid()) {
+        clearAuthenticationState();
+        return true;
+    }
+    baseUrl_ = previous;
+    return false;
 }
 
 QString ApiClient::username() const {
@@ -269,7 +299,8 @@ void ApiClient::loadCatalog() {
                                 object.value(QStringLiteral("supportsPtz")).toBool(), object.value(QStringLiteral("connectivity")).toInt(),
                                 object.value(QStringLiteral("canLiveView")).toBool(true),
                                 object.value(QStringLiteral("canPlayback")).toBool(false),
-                                object.value(QStringLiteral("canControlPtz")).toBool(false)});
+                                object.value(QStringLiteral("canControlPtz")).toBool(false),
+                                object.value(QStringLiteral("canExport")).toBool(false)});
             }
             emit catalogLoaded(regions, cameras);
             camerasReply->deleteLater();
@@ -551,6 +582,101 @@ void ApiClient::requestPlaybackTransport(const QUuid &sessionId) {
         }
         reply->deleteLater();
     });
+}
+
+void ApiClient::loadPlaybackExports() {
+    if (token_.isEmpty()) {
+        emit playbackExportsFailed(QStringLiteral("当前登录状态已失效，请重新登录。"));
+        return;
+    }
+    const quint64 authGeneration = authGeneration_;
+    auto *reply = network_.get(makeRequest(QStringLiteral("api/v1/viewer/playback-exports")));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, authGeneration]() {
+        if (authGeneration != authGeneration_) {
+            reply->deleteLater();
+            return;
+        }
+        const QByteArray body = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError) {
+            emit playbackExportsFailed(errorMessage(reply, body));
+            reply->deleteLater();
+            return;
+        }
+        QList<PlaybackExportInfo> exports;
+        for (const QJsonValue &value : QJsonDocument::fromJson(body).array()) {
+            const PlaybackExportInfo exportInfo = parsePlaybackExport(value.toObject());
+            if (!exportInfo.id.isNull()) {
+                exports.append(exportInfo);
+            }
+        }
+        emit playbackExportsLoaded(exports);
+        reply->deleteLater();
+    });
+}
+
+void ApiClient::createPlaybackExport(const QUuid &cameraId, const QDateTime &startedAt, const QDateTime &endedAt) {
+    if (token_.isEmpty() || cameraId.isNull() || !startedAt.isValid() || !endedAt.isValid() ||
+        startedAt >= endedAt || startedAt.secsTo(endedAt) > 31 * 24 * 60 * 60) {
+        emit playbackExportCreateFailed(QStringLiteral("录像导出参数无效。"));
+        return;
+    }
+    const quint64 authGeneration = authGeneration_;
+    const QJsonObject payload{{QStringLiteral("cameraId"), cameraId.toString(QUuid::WithoutBraces)},
+                              {QStringLiteral("startedAt"), startedAt.toUTC().toString(Qt::ISODateWithMs)},
+                              {QStringLiteral("endedAt"), endedAt.toUTC().toString(Qt::ISODateWithMs)}};
+    auto *reply = network_.post(
+        makeRequest(QStringLiteral("api/v1/viewer/playback-exports")),
+        QJsonDocument(payload).toJson(QJsonDocument::Compact));
+    connect(reply, &QNetworkReply::finished, this, [this, reply, authGeneration]() {
+        if (authGeneration != authGeneration_) {
+            reply->deleteLater();
+            return;
+        }
+        const QByteArray body = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError) {
+            emit playbackExportCreateFailed(errorMessage(reply, body));
+        } else {
+            const PlaybackExportInfo exportInfo = parsePlaybackExport(QJsonDocument::fromJson(body).object());
+            if (exportInfo.id.isNull()) {
+                emit playbackExportCreateFailed(QStringLiteral("中心 API 未返回录像导出编号。"));
+            } else {
+                emit playbackExportCreated(exportInfo);
+            }
+        }
+        reply->deleteLater();
+    });
+}
+
+void ApiClient::cancelPlaybackExport(const QUuid &exportId) {
+    if (token_.isEmpty() || exportId.isNull()) {
+        emit playbackExportCancelFailed(exportId, QStringLiteral("录像导出编号无效或当前登录状态已失效。"));
+        return;
+    }
+    const quint64 authGeneration = authGeneration_;
+    const QString path = QStringLiteral("api/v1/viewer/playback-exports/%1/cancel")
+                             .arg(exportId.toString(QUuid::WithoutBraces));
+    auto *reply = network_.post(makeRequest(path), QByteArray{});
+    connect(reply, &QNetworkReply::finished, this, [this, reply, exportId, authGeneration]() {
+        if (authGeneration != authGeneration_) {
+            reply->deleteLater();
+            return;
+        }
+        const QByteArray body = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError) {
+            emit playbackExportCancelFailed(exportId, errorMessage(reply, body));
+        } else {
+            emit playbackExportCancelled(exportId);
+        }
+        reply->deleteLater();
+    });
+}
+
+QNetworkReply *ApiClient::downloadPlaybackExport(const QUuid &exportId) {
+    if (token_.isEmpty() || exportId.isNull()) {
+        return nullptr;
+    }
+    return network_.get(makeRequest(QStringLiteral("api/v1/viewer/playback-exports/%1/artifact")
+                                        .arg(exportId.toString(QUuid::WithoutBraces))));
 }
 
 void ApiClient::pollPlaybackTransportForGeneration(
@@ -1040,6 +1166,30 @@ void ApiClient::renewActiveSessions() {
         });
     }
     if (activeLeases_.isEmpty()) leaseTimer_->stop();
+}
+
+PlaybackExportInfo ApiClient::parsePlaybackExport(const QJsonObject &object) const {
+    PlaybackExportInfo result;
+    result.id = parseId(object.value(QStringLiteral("id")));
+    result.cameraId = parseId(object.value(QStringLiteral("cameraId")));
+    result.status = object.value(QStringLiteral("status")).toString();
+    result.startedAt = parseDateTime(object.value(QStringLiteral("startedAt")));
+    result.endedAt = parseDateTime(object.value(QStringLiteral("endedAt")));
+    result.requestedAt = parseDateTime(object.value(QStringLiteral("requestedAt")));
+    result.failureCode = object.value(QStringLiteral("failureCode")).toString();
+    const QJsonObject artifact = object.value(QStringLiteral("artifact")).toObject();
+    if (!artifact.isEmpty()) {
+        PlaybackExportArtifactInfo artifactInfo;
+        artifactInfo.id = parseId(artifact.value(QStringLiteral("id")));
+        artifactInfo.fileName = artifact.value(QStringLiteral("fileName")).toString();
+        artifactInfo.sizeBytes = static_cast<qint64>(artifact.value(QStringLiteral("sizeBytes")).toDouble());
+        artifactInfo.sha256 = artifact.value(QStringLiteral("sha256")).toString();
+        artifactInfo.expiresAt = parseDateTime(artifact.value(QStringLiteral("expiresAt")));
+        if (!artifactInfo.id.isNull() && !artifactInfo.sha256.isEmpty()) {
+            result.artifact = artifactInfo;
+        }
+    }
+    return result;
 }
 
 QNetworkRequest ApiClient::makeRequest(const QString &path) const {

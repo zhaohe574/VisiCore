@@ -280,6 +280,8 @@ public sealed class LiveTranscodeRelayManagerTests
         public int RemovedPublisherPaths { get; private set; }
         public int ReadinessRequests { get; private set; }
 
+        public Task ProbeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
         public Task ApplyPullPathAsync(string pathName, Uri sourceUri, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 

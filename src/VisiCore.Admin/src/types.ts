@@ -235,6 +235,7 @@ export interface EdgeAgent {
   name: string
   status?: string | number | null
   platform?: string | null
+  architecture?: string | null
   version?: string | null
   agentVersion?: string | null
   lastSeenAt?: string | null
@@ -242,9 +243,12 @@ export interface EdgeAgent {
   configVersion?: string | null
   appliedConfigVersion?: string | null
   configurationVersion?: number | null
+  configurationStatus?: string | null
+  configurationFailureSummary?: string | null
+  configurationAppliedAt?: string | null
   upgradeStatus?: string | null
   certificateExpiresAt?: string | null
-  capabilities?: string[] | Record<string, boolean> | null
+  capabilities?: string[] | Record<string, unknown> | null
   capabilitiesJson?: string | null
   serviceStatusJson?: string | null
   publicKey?: AgentPublicKeyContract | null
@@ -335,6 +339,18 @@ export interface PlatformDeployment {
   summary?: string | null
   detailsJson?: string | null
   detail?: string | null
+}
+
+export interface EdgeRelease {
+  id: Id
+  releaseId: string
+  targetPlatform: 'linux' | 'windows' | string
+  targetArchitecture: string
+  minimumHostAgentVersion: string
+  issuedAt: string
+  expiresAt: string
+  publicKeyId: string
+  registeredAt: string
 }
 
 export interface NotificationChannel {
@@ -448,4 +464,4 @@ export interface ExportArtifact {
   expiresAt: string
 }
 
-export type Section = 'overview' | 'credentials' | 'edgeAgents' | 'operations' | 'assets' | 'plugins' | 'access' | 'workers' | 'exports' | 'alerts' | 'audit'
+export type Section = 'overview' | 'credentials' | 'edgeAgents' | 'operations' | 'https' | 'assets' | 'plugins' | 'access' | 'workers' | 'exports' | 'alerts' | 'audit'

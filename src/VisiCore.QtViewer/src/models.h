@@ -5,6 +5,8 @@
 #include <QUrl>
 #include <QUuid>
 
+#include <optional>
+
 struct RegionInfo {
     QUuid id;
     QUuid parentId;
@@ -22,6 +24,7 @@ struct CameraInfo {
     bool canLiveView = false;
     bool canPlayback = false;
     bool canControlPtz = false;
+    bool canExport = false;
 };
 
 struct CameraStatusInfo {
@@ -58,4 +61,23 @@ struct StreamSessionInfo {
     int renewAfterSeconds = 0;
     bool hasPlaybackTransport = false;
     PlaybackTransportInfo playbackTransport;
+};
+
+struct PlaybackExportArtifactInfo {
+    QUuid id;
+    QString fileName;
+    qint64 sizeBytes = 0;
+    QString sha256;
+    QDateTime expiresAt;
+};
+
+struct PlaybackExportInfo {
+    QUuid id;
+    QUuid cameraId;
+    QString status;
+    QDateTime startedAt;
+    QDateTime endedAt;
+    QDateTime requestedAt;
+    std::optional<PlaybackExportArtifactInfo> artifact;
+    QString failureCode;
 };

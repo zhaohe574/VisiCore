@@ -14,10 +14,13 @@ namespace VisiCore.EdgeAgent;
 
 public sealed class EdgeAgentRuntimeWorker(
     EdgeAgentOptions options,
+    EdgeAgentBootstrapStore bootstrapStore,
     EdgeAgentIdentityStore identityStore,
     EdgeAgentControlPlaneClient controlPlaneClient,
     EdgeAgentRuntimeState runtimeState,
-    HostOperationWorker hostOperationWorker,
+    EdgeAgentRuntimeSettings runtimeSettings,
+    EdgeAgentDeviceSynchronizer deviceSynchronizer,
+    HostOperationExchange hostOperationExchange,
     HostOperationState hostOperationState,
     ILogger<EdgeAgentRuntimeWorker> logger) : BackgroundService
 {
@@ -56,14 +59,15 @@ public sealed class EdgeAgentRuntimeWorker(
                 {
                     if (!identity.Identity.IsEnrolled)
                     {
-                        if (string.IsNullOrWhiteSpace(options.EnrollmentCode))
+                        var enrollmentCode = bootstrapStore.ReadEnrollmentCode();
+                        if (string.IsNullOrWhiteSpace(enrollmentCode))
                         {
                             runtimeState.SetAwaitingEnrollment();
                             await DelayAsync(stoppingToken);
                             continue;
                         }
 
-                        var enrollment = await controlPlaneClient.EnrollAsync(identity, options, stoppingToken);
+                        var enrollment = await controlPlaneClient.EnrollAsync(identity, options, enrollmentCode, stoppingToken);
                         if (!Guid.TryParse(enrollment.AgentId, out var enrolledAgentId) ||
                             !Guid.TryParse(identity.Identity.AgentId, out var localAgentId) ||
                             enrolledAgentId != localAgentId)
@@ -71,6 +75,7 @@ public sealed class EdgeAgentRuntimeWorker(
                             throw new EdgeControlPlaneException("agent_id_mismatch");
                         }
                         identity.UpdateEnrollment(enrollment.WorkerId, enrollment.WorkerToken, enrollment.ConfigurationVersion);
+                        bootstrapStore.ClearAfterEnrollment();
                         runtimeState.SetIdentity(identity.Identity.AgentId, identity.Identity.KeyId, identity.Identity.ConfigurationVersion);
                     }
 
@@ -80,14 +85,29 @@ public sealed class EdgeAgentRuntimeWorker(
                         runtimeState.Snapshot(),
                         stoppingToken);
                     var configuration = await controlPlaneClient.GetConfigurationAsync(identity.Identity, stoppingToken);
-                    // 当前阶段只保存配置版本，不将未定义 schema 的配置或凭据内容写入磁盘、日志或诊断。
-                    identity.UpdateConfigurationVersion(configuration.Version);
+                    if (!string.IsNullOrWhiteSpace(configuration.Version))
+                    {
+                        if (runtimeSettings.TryApply(configuration.ConfigurationJson, out var configurationFailureKind))
+                        {
+                            identity.UpdateConfigurationVersion(configuration.Version);
+                            await controlPlaneClient.ReportConfigurationStatusAsync(
+                                identity.Identity, configuration.Version, true, null, stoppingToken);
+                        }
+                        else
+                        {
+                            await controlPlaneClient.ReportConfigurationStatusAsync(
+                                identity.Identity, configuration.Version, false, configurationFailureKind, stoppingToken);
+                        }
+                    }
                     var credentialEnvelopes = await controlPlaneClient.GetCredentialEnvelopesAsync(identity.Identity, stoppingToken);
                     var credentials = DecryptCredentialEnvelopes(identity, credentialEnvelopes);
+                    var credentialsByReference = MapCredentialsByReference(credentialEnvelopes, credentials);
                     try
                     {
                         var credentialEnvelopeCount = credentials.Count;
-                        runtimeState.SetRunning(identity.Identity.ConfigurationVersion, credentialEnvelopeCount);
+                        var assignments = await controlPlaneClient.GetWorkerAssignmentsAsync(identity.Identity, stoppingToken);
+                        await deviceSynchronizer.SynchronizeAsync(identity.Identity, assignments, credentialsByReference, stoppingToken);
+                        runtimeState.SetRunning(identity.Identity.ConfigurationVersion, credentialEnvelopeCount, assignments.Count);
 
                         var operations = await controlPlaneClient.GetOperationsAsync(identity.Identity, stoppingToken);
                         foreach (var operation in operations)
@@ -99,6 +119,7 @@ public sealed class EdgeAgentRuntimeWorker(
                     {
                         // 明文对象只在当前同步轮次存活，随后移除全部引用。
                         credentials.Clear();
+                        credentialsByReference.Clear();
                     }
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -143,11 +164,16 @@ public sealed class EdgeAgentRuntimeWorker(
         else if (operation.OperationType.Equals("deployment", StringComparison.OrdinalIgnoreCase) ||
                  operation.OperationType.Equals("rollback", StringComparison.OrdinalIgnoreCase))
         {
-            var result = await hostOperationWorker.ValidateAndExecuteAsync(operation, cancellationToken);
+            await hostOperationExchange.SubmitAsync(operation, cancellationToken);
+            var receipt = await hostOperationExchange.TryReadReceiptAsync(operation.Id, cancellationToken);
+            if (receipt is null)
+            {
+                return;
+            }
             diagnostic = new EdgeDiagnostic(
                 operation.OperationType.ToLowerInvariant(),
-                JsonSerializer.Serialize(new { reason = result.FailureKind ?? "completed" }),
-                result.Succeeded,
+                JsonSerializer.Serialize(new { reason = receipt.FailureKind ?? "completed" }),
+                receipt.Succeeded,
                 operation.Id);
         }
         else
@@ -380,6 +406,23 @@ public sealed class EdgeAgentRuntimeWorker(
         }
 
         return credentials;
+    }
+
+    private static Dictionary<string, AgentCredentialPayload> MapCredentialsByReference(
+        IReadOnlyList<EdgeCredentialEnvelope> envelopes,
+        IReadOnlyDictionary<Guid, AgentCredentialPayload> credentials)
+    {
+        var result = new Dictionary<string, AgentCredentialPayload>(StringComparer.Ordinal);
+        foreach (var envelope in envelopes)
+        {
+            if (string.IsNullOrWhiteSpace(envelope.CredentialName) ||
+                !credentials.TryGetValue(envelope.CredentialId, out var credential) ||
+                !result.TryAdd(envelope.CredentialName, credential))
+            {
+                throw new EdgeControlPlaneException("credential_reference_invalid");
+            }
+        }
+        return result;
     }
 }
 

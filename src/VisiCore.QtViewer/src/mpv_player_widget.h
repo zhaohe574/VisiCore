@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QOpenGLWidget>
+#include <QImage>
 
 class QLibrary;
 class QTimer;
@@ -16,6 +17,7 @@ public:
     bool start(const QUrl &url, quint64 playbackGeneration);
     void stop();
     void release();
+    [[nodiscard]] QImage captureFrame();
     [[nodiscard]] bool isReady() const;
     static bool verifyRuntime(QString *errorMessage = nullptr);
 

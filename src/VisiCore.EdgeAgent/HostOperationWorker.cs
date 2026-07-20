@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using VisiCore.Core;
 
 namespace VisiCore.EdgeAgent;
 
@@ -14,8 +15,9 @@ namespace VisiCore.EdgeAgent;
 public sealed class HostOperationWorker(
     HostAgentOptions options,
     HostOperationState state,
-    DockerComposeHostOperationExecutor executor,
+    IHostOperationExecutor executor,
     VerifiedDeploymentStore verifiedDeploymentStore,
+    HostReleaseArtifactVerifier releaseArtifactVerifier,
     ILogger<HostOperationWorker> logger) : BackgroundService
 {
     private static readonly HashSet<string> AllowedOperationTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -47,6 +49,7 @@ public sealed class HostOperationWorker(
             try
             {
                 await VerifyOperationInboxAsync(stoppingToken);
+                await ProcessOperationExchangeAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -89,9 +92,16 @@ public sealed class HostOperationWorker(
         var sourceFailureKind = string.Empty;
         var hasRollbackSource = operationKind == HostOperationKind.Rollback &&
             TryReadRollbackSourceOperationId(operation, out sourceOperationId, out sourceFailureKind);
+        if (operationKind == HostOperationKind.Rollback && !hasRollbackSource)
+        {
+            return HostOperationExecutionResult.Failed(
+                string.IsNullOrEmpty(sourceFailureKind) ? "rollback_source_missing" : sourceFailureKind);
+        }
         if (hasRollbackSource)
         {
-            if (!await verifiedDeploymentStore.ContainsAsync(sourceOperationId, cancellationToken))
+            var rollbackArtifact = await verifiedDeploymentStore.GetArtifactAsync(sourceOperationId, cancellationToken);
+            if (rollbackArtifact is null ||
+                !await releaseArtifactVerifier.VerifyPersistedAsync(rollbackArtifact, cancellationToken))
             {
                 return HostOperationExecutionResult.Failed("rollback_source_unverified");
             }
@@ -101,7 +111,7 @@ public sealed class HostOperationWorker(
             }
 
             state.SetAccepted();
-            return await executor.ExecuteAsync(HostOperationKind.Rollback, cancellationToken);
+            return await executor.ExecuteAsync(HostOperationKind.Rollback, rollbackArtifact, cancellationToken);
         }
         if (operationKind == HostOperationKind.Rollback && !string.IsNullOrEmpty(sourceFailureKind))
         {
@@ -142,8 +152,19 @@ public sealed class HostOperationWorker(
                 return HostOperationExecutionResult.Failed("host_execution_not_enabled");
             }
 
+            if (!EdgeReleaseManifest.TryParse(controlPlaneManifest.ManifestJson, out var releaseManifest, out _))
+            {
+                return HostOperationExecutionResult.Failed("release_manifest_invalid");
+            }
+
+            var artifactVerification = await releaseArtifactVerifier.DownloadAndVerifyAsync(releaseManifest, cancellationToken);
+            if (!artifactVerification.Succeeded || artifactVerification.Artifact is null)
+            {
+                return HostOperationExecutionResult.Failed(artifactVerification.FailureKind ?? "artifact_verification_failed");
+            }
+
             state.SetAccepted();
-            var executionResult = await executor.ExecuteAsync(operationKind, cancellationToken);
+            var executionResult = await executor.ExecuteAsync(operationKind, artifactVerification.Artifact, cancellationToken);
             if (!executionResult.Succeeded || operationKind != HostOperationKind.Deployment)
             {
                 return executionResult;
@@ -155,6 +176,7 @@ public sealed class HostOperationWorker(
                     operation.Id,
                     controlPlaneManifest.ReleaseId,
                     options.SigningPublicKeyId!,
+                    artifactVerification.Artifact,
                     cancellationToken);
                 return executionResult;
             }
@@ -200,7 +222,7 @@ public sealed class HostOperationWorker(
         Directory.CreateDirectory(options.OperationInboxDirectory);
         using var publicKey = RSA.Create();
         publicKey.ImportFromPem(await File.ReadAllTextAsync(options.SigningPublicKeyPath!, cancellationToken));
-        foreach (var path in Directory.EnumerateFiles(options.OperationInboxDirectory, "*.json", SearchOption.TopDirectoryOnly))
+        foreach (var path in Directory.EnumerateFiles(options.OperationInboxDirectory, "*.manifest.json", SearchOption.TopDirectoryOnly))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var manifestBytes = await File.ReadAllBytesAsync(path, cancellationToken);
@@ -221,6 +243,66 @@ public sealed class HostOperationWorker(
             observedManifestHashes.TryAdd(manifestHash, 0);
             state.SetAccepted();
             logger.LogInformation("Host Agent 已验证受签名操作清单，等待独立执行器处理。 ");
+        }
+    }
+
+    private async Task ProcessOperationExchangeAsync(CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(options.OperationInboxDirectory);
+        Directory.CreateDirectory(options.OperationReceiptDirectory);
+        foreach (var path in Directory.EnumerateFiles(options.OperationInboxDirectory, "*.operation.json", SearchOption.TopDirectoryOnly))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            HostOperationReceipt receipt;
+            try
+            {
+                var message = JsonSerializer.Deserialize<HostOperationMessage>(
+                    await File.ReadAllTextAsync(path, cancellationToken));
+                if (message is null || message.OperationId == Guid.Empty || !HostOperationExchange.IsHostOperation(message.OperationType))
+                {
+                    receipt = new HostOperationReceipt(Guid.Empty, false, "host_operation_message_invalid", DateTimeOffset.UtcNow);
+                }
+                else
+                {
+                    var result = await ValidateAndExecuteAsync(
+                        new EdgeOperation(message.OperationId, message.OperationType, message.DetailsJson),
+                        cancellationToken);
+                    receipt = new HostOperationReceipt(message.OperationId, result.Succeeded, result.FailureKind, DateTimeOffset.UtcNow);
+                }
+            }
+            catch (JsonException)
+            {
+                receipt = new HostOperationReceipt(Guid.Empty, false, "host_operation_message_invalid", DateTimeOffset.UtcNow);
+            }
+            catch (IOException)
+            {
+                // 正在由 Edge Agent 原子写入，留给下一轮处理。
+                continue;
+            }
+
+            if (receipt.OperationId != Guid.Empty)
+            {
+                await WriteReceiptAsync(receipt, cancellationToken);
+            }
+            File.Delete(path);
+        }
+    }
+
+    private async Task WriteReceiptAsync(HostOperationReceipt receipt, CancellationToken cancellationToken)
+    {
+        var path = Path.Combine(options.OperationReceiptDirectory, $"{receipt.OperationId:N}.receipt.json");
+        var temporaryPath = Path.Combine(options.OperationReceiptDirectory, $".{receipt.OperationId:N}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            await File.WriteAllTextAsync(temporaryPath, JsonSerializer.Serialize(receipt), cancellationToken);
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
         }
     }
 
@@ -319,7 +401,7 @@ public sealed class HostOperationWorker(
         }
     }
 
-    private static bool TryValidateControlPlaneManifest(
+    private bool TryValidateControlPlaneManifest(
         ControlPlaneManifest manifest,
         HostOperationKind expectedOperationKind,
         out string failureKind)
@@ -338,6 +420,22 @@ public sealed class HostOperationWorker(
                 !TryReadDateTimeOffset(content, "expiresAt", out var expiresAt) ||
                 expiresAt <= DateTimeOffset.UtcNow || expiresAt > issuedAt.AddHours(24) || issuedAt > DateTimeOffset.UtcNow.AddMinutes(5))
             {
+                return false;
+            }
+            if (!EdgeReleaseManifest.TryParse(manifest.ManifestJson, out var releaseManifest, out _) ||
+                !string.Equals(releaseManifest.ReleaseId, manifest.ReleaseId, StringComparison.Ordinal) ||
+                !string.Equals(releaseManifest.OperationType, expectedOperationType, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(releaseManifest.SigningPublicKeyId, options.SigningPublicKeyId, StringComparison.Ordinal) ||
+                !releaseManifest.TargetsCurrentHost())
+            {
+                failureKind = "release_target_invalid";
+                return false;
+            }
+            var currentVersion = typeof(HostOperationWorker).Assembly.GetName().Version ?? new Version(0, 0);
+            if (!Version.TryParse(releaseManifest.MinimumHostAgentVersion, out var minimumVersion) ||
+                currentVersion < minimumVersion)
+            {
+                failureKind = "minimum_host_version_not_met";
                 return false;
             }
             return true;

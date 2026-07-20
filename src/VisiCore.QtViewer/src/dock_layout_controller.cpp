@@ -22,6 +22,7 @@ constexpr int ResourcePanelWidth = 248;
 constexpr int PtzPanelWidth = 220;
 constexpr int SearchPanelHeight = 80;
 constexpr int TimelinePanelHeight = 250;
+constexpr int ExportTasksPanelHeight = 230;
 constexpr int MinimumCentralWidth = 420;
 constexpr int MinimumCentralHeight = 300;
 
@@ -87,27 +88,32 @@ void DockLayoutController::initialize(
     ptzDock_ = createPanel(DockPanelId::Ptz, QStringLiteral("云台控制"), panels.ptz);
     playbackSearchDock_ = createPanel(DockPanelId::PlaybackSearch, QStringLiteral("回放检索"), panels.playbackSearch);
     recordingTimelineDock_ = createPanel(DockPanelId::RecordingTimeline, QStringLiteral("录像时间轴"), panels.recordingTimeline);
+    exportTasksDock_ = createPanel(DockPanelId::ExportTasks, QStringLiteral("导出任务"), panels.exportTasks);
 
     dockManager_->addDockWidget(ads::LeftDockWidgetArea, resourceDock_);
     dockManager_->addDockWidget(ads::RightDockWidgetArea, ptzDock_);
     auto *searchArea = dockManager_->addDockWidget(ads::BottomDockWidgetArea, playbackSearchDock_);
     dockManager_->addDockWidget(ads::BottomDockWidgetArea, recordingTimelineDock_, searchArea);
+    dockManager_->addDockWidget(ads::BottomDockWidgetArea, exportTasksDock_, searchArea);
 
     resourceDock_->setPreferredAutoHideSideBarLocation(ads::SideBarLeft);
     ptzDock_->setPreferredAutoHideSideBarLocation(ads::SideBarRight);
     playbackSearchDock_->setPreferredAutoHideSideBarLocation(ads::SideBarBottom);
     recordingTimelineDock_->setPreferredAutoHideSideBarLocation(ads::SideBarBottom);
+    exportTasksDock_->setPreferredAutoHideSideBarLocation(ads::SideBarBottom);
 
     resourceDock_->toggleView(true);
     ptzDock_->toggleView(showPtzByDefault);
     playbackSearchDock_->toggleView(false);
     recordingTimelineDock_->toggleView(false);
+    exportTasksDock_->toggleView(false);
     applyDefaultPanelSizes(WorkspaceMode::Preview);
     defaultStates_.insert(workspaceKey(WorkspaceMode::Preview), dockManager_->saveState(DockStateVersion));
 
     ptzDock_->toggleView(false);
     playbackSearchDock_->toggleView(true);
     recordingTimelineDock_->toggleView(true);
+    exportTasksDock_->toggleView(true);
     applyDefaultPanelSizes(WorkspaceMode::Playback);
     defaultStates_.insert(workspaceKey(WorkspaceMode::Playback), dockManager_->saveState(DockStateVersion));
 
@@ -165,7 +171,8 @@ QList<QAction *> DockLayoutController::dockPanelActions() const {
              DockPanelId::ResourceCatalog,
              DockPanelId::Ptz,
              DockPanelId::PlaybackSearch,
-             DockPanelId::RecordingTimeline}) {
+             DockPanelId::RecordingTimeline,
+             DockPanelId::ExportTasks}) {
         if (QAction *action = dockPanelAction(panelId)) {
             actions.append(action);
         }
@@ -245,7 +252,8 @@ void DockLayoutController::setCanvasOnly(bool canvasOnly) {
                  DockPanelId::ResourceCatalog,
                  DockPanelId::Ptz,
                  DockPanelId::PlaybackSearch,
-                 DockPanelId::RecordingTimeline}) {
+                 DockPanelId::RecordingTimeline,
+                 DockPanelId::ExportTasks}) {
             ads::CDockWidget *dock = panel(panelId);
             if (dock != nullptr) {
                 canvasOnlyPanelVisibility_.insert(static_cast<int>(panelId), !dock->isClosed());
@@ -261,7 +269,8 @@ void DockLayoutController::setCanvasOnly(bool canvasOnly) {
              DockPanelId::ResourceCatalog,
              DockPanelId::Ptz,
              DockPanelId::PlaybackSearch,
-             DockPanelId::RecordingTimeline}) {
+             DockPanelId::RecordingTimeline,
+             DockPanelId::ExportTasks}) {
         ads::CDockWidget *dock = panel(panelId);
         const auto visibility = panelVisibility.constFind(static_cast<int>(panelId));
         if (dock == nullptr || visibility == panelVisibility.cend() ||
@@ -312,6 +321,7 @@ ads::CDockWidget *DockLayoutController::panel(DockPanelId panelId) const {
         case DockPanelId::Ptz: return ptzDock_;
         case DockPanelId::PlaybackSearch: return playbackSearchDock_;
         case DockPanelId::RecordingTimeline: return recordingTimelineDock_;
+        case DockPanelId::ExportTasks: return exportTasksDock_;
     }
     return nullptr;
 }
@@ -390,7 +400,8 @@ void DockLayoutController::applyDefaultPanelSizes(WorkspaceMode mode) {
         horizontalSplitter->setSizes(sizes);
     }
 
-    if (mode != WorkspaceMode::Playback || playbackSearchDock_ == nullptr || recordingTimelineDock_ == nullptr) {
+    if (mode != WorkspaceMode::Playback || playbackSearchDock_ == nullptr || recordingTimelineDock_ == nullptr ||
+        exportTasksDock_ == nullptr) {
         return;
     }
 
@@ -403,11 +414,13 @@ void DockLayoutController::applyDefaultPanelSizes(WorkspaceMode mode) {
     QList<int> sizes = verticalSplitter->sizes();
     const int searchIndex = dockIndexInSplitter(playbackSearchDock_, verticalSplitter);
     const int timelineIndex = dockIndexInSplitter(recordingTimelineDock_, verticalSplitter);
+    const int exportTasksIndex = dockIndexInSplitter(exportTasksDock_, verticalSplitter);
     const int centralIndex = dockIndexInSplitter(centralDock_, verticalSplitter);
     const int currentTotal = std::accumulate(sizes.cbegin(), sizes.cend(), 0);
     const int total = std::max({currentTotal, verticalSplitter->height(), 680});
     if (searchIndex >= 0) sizes[searchIndex] = SearchPanelHeight;
     if (timelineIndex >= 0) sizes[timelineIndex] = TimelinePanelHeight;
+    if (exportTasksIndex >= 0) sizes[exportTasksIndex] = ExportTasksPanelHeight;
     if (centralIndex >= 0) {
         const int occupied = std::accumulate(sizes.cbegin(), sizes.cend(), 0) - sizes[centralIndex];
         sizes[centralIndex] = std::max(MinimumCentralHeight, total - occupied);
@@ -421,6 +434,7 @@ void DockLayoutController::normalizeVisiblePanelSizes(WorkspaceMode mode) {
     if (mode == WorkspaceMode::Playback) {
         ensurePanelExtent(DockPanelId::PlaybackSearch, Qt::Vertical, SearchPanelHeight);
         ensurePanelExtent(DockPanelId::RecordingTimeline, Qt::Vertical, TimelinePanelHeight);
+        ensurePanelExtent(DockPanelId::ExportTasks, Qt::Vertical, ExportTasksPanelHeight);
     }
 }
 
@@ -468,6 +482,7 @@ void DockLayoutController::ensurePanelExtent(
         if (orientation == Qt::Horizontal && containsDock(ptzDock_)) return PtzPanelWidth;
         if (orientation == Qt::Vertical && containsDock(playbackSearchDock_)) return SearchPanelHeight;
         if (orientation == Qt::Vertical && containsDock(recordingTimelineDock_)) return TimelinePanelHeight;
+        if (orientation == Qt::Vertical && containsDock(exportTasksDock_)) return ExportTasksPanelHeight;
         return 60;
     };
 

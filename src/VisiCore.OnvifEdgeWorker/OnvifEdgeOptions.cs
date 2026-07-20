@@ -5,6 +5,7 @@ public sealed class OnvifEdgeOptions
     public string? CenterBaseUri { get; init; }
     public string? AccessToken { get; init; }
     public bool AllowInsecureCenterHttpForDevelopment { get; init; }
+    public string[] TrustedDevelopmentHttpHosts { get; init; } = [];
     public int AssignmentRefreshSeconds { get; init; } = 30;
     public int CommandPollMilliseconds { get; init; } = 1000;
     public int OperationStatusRefreshSeconds { get; init; } = 30;
@@ -19,8 +20,8 @@ public sealed class OnvifEdgeOptions
             (!centerBaseUri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
              !(AllowInsecureCenterHttpForDevelopment &&
                centerBaseUri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
-               centerBaseUri.IsLoopback)) ||
-            string.IsNullOrWhiteSpace(AccessToken) || AccessToken.Length < 32 ||
+               (centerBaseUri.IsLoopback || IsTrustedDevelopmentHttpHost(centerBaseUri.Host)))) ||
+            !HasValidAccessToken() ||
             AssignmentRefreshSeconds is < 5 or > 300 ||
             CommandPollMilliseconds is < 250 or > 10_000 ||
             OperationStatusRefreshSeconds is < 10 or > 300)
@@ -30,6 +31,15 @@ public sealed class OnvifEdgeOptions
         Ptz.Validate();
         return new Uri(centerBaseUri.ToString().TrimEnd('/') + "/", UriKind.Absolute);
     }
+
+    private bool IsTrustedDevelopmentHttpHost(string host) =>
+        TrustedDevelopmentHttpHosts.Any(value =>
+            !string.IsNullOrWhiteSpace(value) &&
+            string.Equals(value.Trim(), host, StringComparison.OrdinalIgnoreCase));
+
+    private bool HasValidAccessToken() =>
+        !string.IsNullOrWhiteSpace(AccessToken) &&
+        AccessToken.Length >= (AllowInsecureCenterHttpForDevelopment ? 24 : 32);
 }
 
 public sealed class OnvifPtzOptions

@@ -53,7 +53,7 @@ void DockLayoutControllerTests::defaultLayoutMatchesWorkspace() {
     window.show();
     QCoreApplication::processEvents();
 
-    QCOMPARE(controller.dockPanelActions().size(), 4);
+    QCOMPARE(controller.dockPanelActions().size(), 5);
     QVERIFY(controller.isPanelVisible(DockPanelId::ResourceCatalog));
     QVERIFY(controller.isPanelVisible(DockPanelId::Ptz));
     QVERIFY(!controller.isPanelVisible(DockPanelId::PlaybackSearch));
@@ -342,11 +342,16 @@ DockLayoutController::PanelWidgets DockLayoutControllerTests::createPanels() {
     recordingTimeline->setObjectName(QStringLiteral("test.recordingTimeline"));
     recordingTimeline->setMinimumHeight(220);
 
+    auto *exportTasks = new QWidget;
+    exportTasks->setObjectName(QStringLiteral("test.exportTasks"));
+    exportTasks->setMinimumHeight(180);
+
     return {
         resource,
         ptz,
         playbackSearch,
         recordingTimeline,
+        exportTasks,
     };
 }
 

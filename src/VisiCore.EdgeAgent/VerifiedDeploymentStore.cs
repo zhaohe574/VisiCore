@@ -24,10 +24,35 @@ public sealed class VerifiedDeploymentStore(HostAgentOptions options)
         }
     }
 
+    public async Task<HostVerifiedReleaseArtifact?> GetArtifactAsync(
+        Guid sourceOperationId,
+        CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var receipt = (await ReadAsync(cancellationToken))
+                .FirstOrDefault(item => item.SourceOperationId == sourceOperationId);
+            return receipt is null ||
+                   string.IsNullOrWhiteSpace(receipt.ArtifactPath) ||
+                   string.IsNullOrWhiteSpace(receipt.ArtifactSha256)
+                ? null
+                : new HostVerifiedReleaseArtifact(
+                    receipt.ArtifactPath,
+                    receipt.ComposeFilePath,
+                    receipt.ArtifactSha256);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     public async Task RememberAsync(
         Guid sourceOperationId,
         string releaseId,
         string publicKeyId,
+        HostVerifiedReleaseArtifact artifact,
         CancellationToken cancellationToken)
     {
         await gate.WaitAsync(cancellationToken);
@@ -35,7 +60,14 @@ public sealed class VerifiedDeploymentStore(HostAgentOptions options)
         {
             var receipts = await ReadAsync(cancellationToken);
             receipts.RemoveAll(item => item.SourceOperationId == sourceOperationId);
-            receipts.Add(new VerifiedDeploymentReceipt(sourceOperationId, releaseId, publicKeyId, DateTimeOffset.UtcNow));
+            receipts.Add(new VerifiedDeploymentReceipt(
+                sourceOperationId,
+                releaseId,
+                publicKeyId,
+                artifact.ArtifactPath,
+                artifact.ComposeFilePath,
+                artifact.ArtifactSha256,
+                DateTimeOffset.UtcNow));
             // 保持有限回执，避免宿主状态目录无限增长。
             receipts = receipts.OrderByDescending(item => item.VerifiedAt).Take(100).ToList();
             await WriteAsync(receipts, cancellationToken);
@@ -89,4 +121,7 @@ public sealed record VerifiedDeploymentReceipt(
     Guid SourceOperationId,
     string ReleaseId,
     string PublicKeyId,
+    string? ArtifactPath,
+    string? ComposeFilePath,
+    string? ArtifactSha256,
     DateTimeOffset VerifiedAt);

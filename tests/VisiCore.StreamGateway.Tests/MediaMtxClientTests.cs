@@ -6,6 +6,23 @@ namespace VisiCore.StreamGateway.Tests;
 
 public sealed class MediaMtxClientTests
 {
+    [Fact(DisplayName = "MediaMTX 就绪探测访问受控 Control API")]
+    public async Task ProbeUsesControlApi()
+    {
+        var handler = new DelegateHttpMessageHandler(request =>
+        {
+            Assert.Equal(HttpMethod.Get, request.Method);
+            Assert.Equal("/v3/config/global/get", request.RequestUri?.AbsolutePath);
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        });
+        var client = new MediaMtxClient(
+            new HttpClient(handler) { BaseAddress = new Uri("http://127.0.0.1:9997/") },
+            new MediaMtxOptions(),
+            new GatewayOptions());
+
+        await client.ProbeAsync(CancellationToken.None);
+    }
+
     [Fact(DisplayName = "动态 RTSP 路径会强制使用 TCP 拉取上游码流")]
     public async Task ApplyPathUsesTcpForRtspSource()
     {

@@ -26,6 +26,7 @@ public:
         QWidget *ptz = nullptr;
         QWidget *playbackSearch = nullptr;
         QWidget *recordingTimeline = nullptr;
+        QWidget *exportTasks = nullptr;
     };
 
     explicit DockLayoutController(QMainWindow *window, QObject *parent = nullptr);
@@ -79,6 +80,7 @@ private:
     ads::CDockWidget *ptzDock_ = nullptr;
     ads::CDockWidget *playbackSearchDock_ = nullptr;
     ads::CDockWidget *recordingTimelineDock_ = nullptr;
+    ads::CDockWidget *exportTasksDock_ = nullptr;
     QHash<int, QByteArray> workspaceStates_;
     QHash<int, QByteArray> defaultStates_;
     QSet<int> loadedWorkspaceStates_;

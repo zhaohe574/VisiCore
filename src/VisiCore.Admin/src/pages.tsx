@@ -193,6 +193,19 @@ function mappingValue(value: FormDataEntryValue | null) {
   return /^\d+$/.test(text) ? Number(text) : text
 }
 
+function defaultChannelStreamMap(channel: string | number) {
+  const inputChannel = Number(channel)
+  if (!Number.isSafeInteger(inputChannel) || inputChannel < 1 || inputChannel > 21_474_836) {
+    return { main: '', sub: '' }
+  }
+  return { main: String(inputChannel * 100 + 1), sub: String(inputChannel * 100 + 2) }
+}
+
+function hasCustomChannelStreamMap(map: { main: string; sub: string }, channel: string | number) {
+  const defaults = defaultChannelStreamMap(channel)
+  return map.main !== defaults.main || map.sub !== defaults.sub
+}
+
 function streamHostLabel(value: string | null) {
   if (!value) return '地址未登记'
   try { return new URL(value).host } catch { return '地址格式异常' }
@@ -263,8 +276,16 @@ function CameraDialog({ open, camera, recorders, regions, plugins, edgeAgents, c
   const [selectedCredentialId, setSelectedCredentialId] = useState('')
   const [mainStreamUrl, setMainStreamUrl] = useState('')
   const [subStreamUrl, setSubStreamUrl] = useState('')
+  const [inputChannel, setInputChannel] = useState('1')
+  const [useCustomChannelStreamMap, setUseCustomChannelStreamMap] = useState(false)
+  const [mainMapping, setMainMapping] = useState('')
+  const [subMapping, setSubMapping] = useState('')
+  const [useCustomSubStreamUrl, setUseCustomSubStreamUrl] = useState(false)
   const [preflighting, setPreflighting] = useState(false)
-  const streamMap = useMemo(() => parseStreamMap(camera?.streamingChannelMap ?? '{}'), [camera])
+  const channelStreamDefaults = useMemo(() => defaultChannelStreamMap(inputChannel), [inputChannel])
+  const resolvedChannelStreamMap = useCustomChannelStreamMap
+    ? { main: mainMapping, sub: subMapping }
+    : channelStreamDefaults
   const directPlugins = plugins.filter(item => (item.enabled || item.id === camera?.devicePluginId) && item.runtimeType === 'direct-rtsp' && item.manifest.supportedDeviceKinds.includes('camera'))
   const availableAgents = edgeAgents.filter(item => isActiveEdgeAgent(item) || item.id === camera?.edgeAgentId || item.id === camera?.agentId)
   const selectedCredential = credentials.find(item => item.id === selectedCredentialId)
@@ -279,7 +300,17 @@ function CameraDialog({ open, camera, recorders, regions, plugins, edgeAgents, c
       setSelectedAgentId(hasCurrentAgent ? initialAgentId : '')
       setSelectedCredentialId(camera?.credentialId ?? (hasCurrentAgent ? credentials.find(item => item.name === camera?.credentialReference)?.id ?? '' : ''))
       setMainStreamUrl(camera?.mainStreamUrl ?? '')
-      setSubStreamUrl(camera?.subStreamUrl ?? '')
+      const initialChannel = String(camera?.inputChannelNumber ?? 1)
+      const initialStreamMap = parseStreamMap(camera?.streamingChannelMap ?? '{}')
+      const customChannelMap = camera?.sourceType === 'recorder-channel' && hasCustomChannelStreamMap(initialStreamMap, initialChannel)
+      const customSubStreamUrl = camera?.sourceType === 'direct' &&
+        !!camera.mainStreamUrl && !!camera.subStreamUrl && camera.mainStreamUrl !== camera.subStreamUrl
+      setInputChannel(initialChannel)
+      setUseCustomChannelStreamMap(customChannelMap)
+      setMainMapping(customChannelMap ? initialStreamMap.main : defaultChannelStreamMap(initialChannel).main)
+      setSubMapping(customChannelMap ? initialStreamMap.sub : defaultChannelStreamMap(initialChannel).sub)
+      setUseCustomSubStreamUrl(customSubStreamUrl)
+      setSubStreamUrl(customSubStreamUrl ? camera?.subStreamUrl ?? '' : '')
       setPreflighting(false)
     }
   }, [open, camera, edgeAgents, credentials])
@@ -294,7 +325,7 @@ function CameraDialog({ open, camera, recorders, regions, plugins, edgeAgents, c
     }
     try {
       const submittedMainStreamUrl = String(form.get('mainStreamUrl') ?? '')
-      const submittedSubStreamUrl = String(form.get('subStreamUrl') ?? '')
+      const submittedSubStreamUrl = useCustomSubStreamUrl ? String(form.get('subStreamUrl') ?? '') : ''
       if (sourceType === 'direct' && (hasEmbeddedUrlCredentials(submittedMainStreamUrl) || hasEmbeddedUrlCredentials(submittedSubStreamUrl))) {
         throw new Error('码流地址不能包含账号或密码，请使用已登记的设备凭据。')
       }
@@ -310,21 +341,21 @@ function CameraDialog({ open, camera, recorders, regions, plugins, edgeAgents, c
       if (camera) {
         const body = camera.sourceType === 'direct'
           ? {
-            ...common, mainStreamUrl: form.get('mainStreamUrl'), subStreamUrl: form.get('subStreamUrl'),
+            ...common, mainStreamUrl: form.get('mainStreamUrl'), subStreamUrl: submittedSubStreamUrl,
             ...directConnection, devicePluginId: form.get('devicePluginId'), timeZoneId: form.get('timeZoneId')
           }
-          : { ...common, inputChannelNumber: Number(form.get('channel')), supportsPtz: form.get('ptz') === 'on', streamingChannelMap: JSON.stringify({ main: mappingValue(form.get('mainMapping')), sub: mappingValue(form.get('subMapping')) }) }
+          : { ...common, inputChannelNumber: Number(form.get('channel')), supportsPtz: form.get('ptz') === 'on', streamingChannelMap: JSON.stringify({ main: mappingValue(resolvedChannelStreamMap.main), sub: mappingValue(resolvedChannelStreamMap.sub) }) }
         await api.patch(`/api/v1/admin/cameras/${camera.id}`, body)
       } else if (sourceType === 'direct') {
         await api.post('/api/v1/admin/cameras', {
           ...common, sourceType: 'direct', recorderId: null, inputChannelNumber: 1, streamingChannelMap: null, supportsPtz: false,
           devicePluginId: form.get('devicePluginId'), ...directConnection, mainStreamUrl: form.get('mainStreamUrl'),
-          subStreamUrl: form.get('subStreamUrl'), timeZoneId: form.get('timeZoneId')
+          subStreamUrl: submittedSubStreamUrl, timeZoneId: form.get('timeZoneId')
         })
       } else {
         await api.post('/api/v1/admin/cameras', {
           ...common, sourceType: 'recorder-channel', recorderId: form.get('recorderId'), inputChannelNumber: Number(form.get('channel')),
-          supportsPtz: form.get('ptz') === 'on', streamingChannelMap: JSON.stringify({ main: mappingValue(form.get('mainMapping')), sub: mappingValue(form.get('subMapping')) })
+          supportsPtz: form.get('ptz') === 'on', streamingChannelMap: JSON.stringify({ main: mappingValue(resolvedChannelStreamMap.main), sub: mappingValue(resolvedChannelStreamMap.sub) })
         })
       }
       await onSaved(camera ? '摄像头信息已更新' : '摄像头已创建')
@@ -336,7 +367,7 @@ function CameraDialog({ open, camera, recorders, regions, plugins, edgeAgents, c
       notify('请先选择边缘节点和设备凭据，并填写主码流地址。', 'bad')
       return
     }
-    if (hasEmbeddedUrlCredentials(mainStreamUrl) || hasEmbeddedUrlCredentials(subStreamUrl)) {
+    if (hasEmbeddedUrlCredentials(mainStreamUrl) || (useCustomSubStreamUrl && hasEmbeddedUrlCredentials(subStreamUrl))) {
       notify('码流地址不能包含账号或密码，请使用已登记的设备凭据。', 'bad')
       return
     }
@@ -346,7 +377,7 @@ function CameraDialog({ open, camera, recorders, regions, plugins, edgeAgents, c
         edgeAgentId: selectedAgentId,
         credentialId: selectedCredential.id,
         mainStreamUrl: mainStreamUrl.trim(),
-        subStreamUrl: subStreamUrl.trim() || null
+        subStreamUrl: useCustomSubStreamUrl ? subStreamUrl.trim() || null : null
       })
       notify('连接预检已提交，结果将由边缘节点回传。')
     } catch (reason) {
@@ -369,16 +400,17 @@ function CameraDialog({ open, camera, recorders, regions, plugins, edgeAgents, c
 
         {sourceType === 'recorder-channel' ? <Fragment key="recorder-channel">
           {!camera && <Field label="所属接入设备"><Select name="recorderId" required defaultValue=""><option value="" disabled>请选择</option>{recorders.filter(item => item.recorder.deviceKind !== 'camera').map(item => <option key={item.recorder.id} value={item.recorder.id}>{item.recorder.name}</option>)}</Select></Field>}
-          <Field label="输入通道"><Input name="channel" type="number" min="1" defaultValue={camera?.inputChannelNumber ?? 1} required /></Field>
-          <Field label="主码流映射" hint="可填写通道流号、绝对 RTSP 地址或以 / 开头的路径"><Input name="mainMapping" defaultValue={streamMap.main} required /></Field>
-          <Field label="子码流映射"><Input name="subMapping" defaultValue={streamMap.sub} required /></Field>
+          <Field label="输入通道"><Input name="channel" type="number" min="1" value={inputChannel} onChange={event => setInputChannel(event.target.value)} required /></Field>
+          <Field label="自定义码流映射" hint={`默认主码流 ${channelStreamDefaults.main || '—'}，子码流 ${channelStreamDefaults.sub || '—'}`}><label className="check"><input type="checkbox" checked={useCustomChannelStreamMap} onChange={event => setUseCustomChannelStreamMap(event.target.checked)} />启用自定义映射</label></Field>
+          <Field label="主码流映射" hint="仅在设备默认流号不适用时修改"><Input name="mainMapping" value={resolvedChannelStreamMap.main} readOnly={!useCustomChannelStreamMap} onChange={event => setMainMapping(event.target.value)} required /></Field>
+          <Field label="子码流映射"><Input name="subMapping" value={resolvedChannelStreamMap.sub} readOnly={!useCustomChannelStreamMap} onChange={event => setSubMapping(event.target.value)} required /></Field>
           <Field label="云台能力"><label className="check"><input name="ptz" type="checkbox" defaultChecked={camera?.supportsPtz} />支持 PTZ</label></Field>
         </Fragment> : <Fragment key="direct">
           {!directReady && !camera && <div className="form-notice field-wide">需先启用支持摄像头的 direct-rtsp 插件，并配对至少一个可用边缘节点和设备凭据。</div>}
           <Field label="协议插件"><Select name="devicePluginId" required defaultValue={camera?.devicePluginId ?? ''}><option value="" disabled>请选择</option>{directPlugins.map(item => <option key={item.id} value={item.id}>{item.name} · {item.version}</option>)}</Select></Field>
           <Field label="边缘节点"><Select name="edgeAgentId" required={!camera || !!selectedAgentId} value={selectedAgentId} onChange={event => setSelectedAgentId(event.target.value)}><option value="">{camera?.workerId && !camera?.edgeAgentId && !camera?.agentId ? '保留原节点分配' : '请选择'}</option>{availableAgents.map(item => <option key={item.id} value={item.id}>{item.name}{isActiveEdgeAgent(item) ? '' : ' · 不可用'}</option>)}</Select></Field>
           <Field label="主码流地址"><Input name="mainStreamUrl" type="url" value={mainStreamUrl} onChange={event => setMainStreamUrl(event.target.value)} placeholder="rtsp://10.0.0.20:554/live/main" required /></Field>
-          <Field label="子码流地址" hint="留空时复用主码流"><Input name="subStreamUrl" type="url" value={subStreamUrl} onChange={event => setSubStreamUrl(event.target.value)} placeholder="rtsp://10.0.0.20:554/live/sub" /></Field>
+          <Field label="子码流地址" hint={useCustomSubStreamUrl ? '使用与主码流相同的主机、端口和协议' : '默认复用主码流地址'}><label className="check"><input type="checkbox" checked={useCustomSubStreamUrl} onChange={event => setUseCustomSubStreamUrl(event.target.checked)} />启用独立子码流地址</label><Input name="subStreamUrl" type="url" value={useCustomSubStreamUrl ? subStreamUrl : mainStreamUrl} readOnly={!useCustomSubStreamUrl} onChange={event => setSubStreamUrl(event.target.value)} placeholder="rtsp://10.0.0.20:554/live/sub" required={useCustomSubStreamUrl} /></Field>
           <Field label="设备凭据" hint="仅显示凭据名称，码流地址中禁止包含用户名和密码"><Select name="credentialId" required={!camera} value={selectedCredentialId} onChange={event => setSelectedCredentialId(event.target.value)}><option value="">{camera?.credentialReference ? `保留旧凭据引用 · ${camera.credentialReference}` : '请选择已登记凭据'}</option>{selectableCredentials.map(item => <option key={item.id} value={item.id}>{item.name} · {credentialVersionLabel(item)}</option>)}</Select></Field>
           <Field label="设备时区"><Input name="timeZoneId" defaultValue={camera?.timeZoneId ?? 'Asia/Shanghai'} required /></Field>
         </Fragment>}

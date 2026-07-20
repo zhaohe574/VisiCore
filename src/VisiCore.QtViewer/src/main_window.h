@@ -1,6 +1,7 @@
 #pragma once
 
 #include "models.h"
+#include "bookmark_store.h"
 #include "viewer_startup_state.h"
 #include "viewer_ui_types.h"
 
@@ -14,6 +15,8 @@
 class ApiClient;
 class CameraTreeWidget;
 class DockLayoutController;
+class ExportController;
+class ExportTasksPanel;
 class PlaybackController;
 class PreviewController;
 class PtzController;
@@ -158,6 +161,7 @@ private:
     QWidget *buildPlaybackWorkspace();
     QWidget *buildPlaybackSearchPanel();
     QWidget *buildRecordingTimelinePanel();
+    QWidget *buildExportTasksPanel();
     QWidget *buildToolbar();
     QWidget *buildControlStrip();
     QWidget *buildPtzPanel();
@@ -210,6 +214,15 @@ private:
     void beginPtzPulse(int action);
     void endPtzPulse(int action);
     void stopActivePtzPulse();
+    void captureTileScreenshot(VideoTileWidget *tile);
+    void addPlaybackBookmark(VideoTileWidget *tile);
+    void openPlaybackBookmark(int bookmarkIndex);
+    void deletePlaybackBookmark(int bookmarkIndex);
+    void loadPlaybackBookmarks();
+    void savePlaybackBookmarks();
+    void refreshPlaybackExports();
+    void requestPlaybackExport();
+    void downloadPlaybackExport(const QUuid &exportId);
     void loadFavorites();
     void saveFavorites() const;
     void rebuildCatalog();
@@ -277,6 +290,7 @@ private:
     QFrame *ptzPanel_ = nullptr;
     QWidget *playbackSearchPanel_ = nullptr;
     QWidget *recordingTimelinePanel_ = nullptr;
+    ExportTasksPanel *exportTasksPanel_ = nullptr;
     QLabel *ptzStatusLabel_ = nullptr;
     QSlider *ptzSpeedSlider_ = nullptr;
     QMenu *dockPanelsMenu_ = nullptr;
@@ -289,10 +303,12 @@ private:
     PreviewController *previewController_ = nullptr;
     PlaybackController *playbackController_ = nullptr;
     PtzController *ptzController_ = nullptr;
+    ExportController *exportController_ = nullptr;
     QList<QWidget *> previewCompactWidgets_;
     QList<RegionInfo> regions_;
     QList<CameraInfo> cameras_;
     QList<SavedView> savedViews_;
+    QList<PlaybackBookmark> playbackBookmarks_;
     QSet<QUuid> favoriteCameraIds_;
     QList<VideoTileWidget *> tiles_;
     QList<VideoTileWidget *> playbackTiles_;
@@ -345,4 +361,7 @@ private:
     QTimer *playbackCursorTimer_ = nullptr;
     QTimer *playbackTransportRefreshTimer_ = nullptr;
     QTimer *cameraStatusRefreshTimer_ = nullptr;
+    QTimer *exportRefreshTimer_ = nullptr;
+    QDateTime pendingBookmarkSeekPosition_;
+    VideoTileWidget *pendingBookmarkSeekTile_ = nullptr;
 };

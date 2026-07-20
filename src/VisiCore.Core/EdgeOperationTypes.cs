@@ -2,6 +2,8 @@ namespace VisiCore.Core;
 
 public static class EdgeOperationTypes
 {
+    public const string DeviceHealth = "device.health";
+    public const string DeviceInventory = "device.inventory";
     public const string OnvifRecordingSearch = "onvif.recording-search";
     public const string OnvifPlaybackRelay = "onvif.playback-relay";
     public const string OnvifPtz = "onvif.ptz";
@@ -12,6 +14,8 @@ public static class EdgeOperationTypes
 
     public static readonly IReadOnlySet<string> KnownTypes = new HashSet<string>(StringComparer.Ordinal)
     {
+        DeviceHealth,
+        DeviceInventory,
         OnvifRecordingSearch,
         OnvifPlaybackRelay,
         OnvifPtz,

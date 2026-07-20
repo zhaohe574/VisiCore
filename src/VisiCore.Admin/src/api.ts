@@ -51,7 +51,7 @@ async function readErrorMessage(response: Response, fallback: string) {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers)
-  if (init?.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  if (init?.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   const token = session.token()
   if (token) headers.set('Authorization', `Bearer ${token}`)
   const response = await fetch(path, { ...init, headers })
@@ -90,7 +90,64 @@ async function publicRequest<T>(path: string): Promise<T> {
   }
 }
 
+async function anonymousRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers)
+  if (init?.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  const response = await fetch(path, { ...init, headers, cache: 'no-store' })
+  if (!response.ok) {
+    const message = await readErrorMessage(response, `请求失败（${response.status}）`)
+    throw new ApiError(response.status, message)
+  }
+  if (response.status === 204) return undefined as T
+  if (!isJsonResponse(response)) throw new ApiError(response.status, nonJsonResponseMessage(response.status))
+  try {
+    return await response.json() as T
+  } catch {
+    throw new ApiError(response.status, '中心服务返回了无效 JSON，请检查中心服务状态。')
+  }
+}
+
+export type SetupDefaults = {
+  databasePort: number
+  postgresTlsMode: string
+  databaseName: string
+  mediaMode: 'same-host' | 'remote'
+  mediaApiBaseUri: string
+  mediaHlsBaseUri: string
+  platformAdministratorUsername: string
+}
+
+export type SetupStatus = {
+  state: 'unconfigured' | 'initializing' | 'completed'
+  defaults: SetupDefaults
+}
+
+export type SetupRequest = {
+  databaseHost: string
+  databasePort: number
+  postgresTlsMode: string
+  databaseAdministratorUsername: string
+  databaseAdministratorPassword: string
+  databaseName: string
+  publicBaseUri: string
+  mediaMode: 'same-host' | 'remote'
+  mediaApiBaseUri: string
+  mediaHlsBaseUri: string
+  platformAdministratorUsername: string
+  platformAdministratorPassword: string
+  allowInsecureLanHttp: boolean
+}
+
+export type PostgreSqlTestRequest = Pick<SetupRequest,
+  'databaseHost' | 'databasePort' | 'postgresTlsMode' | 'databaseAdministratorUsername' | 'databaseAdministratorPassword' | 'databaseName'>
+
+export type MediaMtxTestRequest = Pick<SetupRequest, 'mediaMode' | 'mediaApiBaseUri' | 'mediaHlsBaseUri'>
+
 export const api = {
+  setupStatus: () => anonymousRequest<SetupStatus>('/api/v1/setup/status'),
+  testPostgreSql: (body: PostgreSqlTestRequest) => anonymousRequest<{ message: string }>('/api/v1/setup/test-postgres', { method: 'POST', body: JSON.stringify(body) }),
+  testMediaMtx: (body: MediaMtxTestRequest) => anonymousRequest<{ message: string }>('/api/v1/setup/test-mediamtx', { method: 'POST', body: JSON.stringify(body) }),
+  initialize: (body: SetupRequest) => anonymousRequest<{ state: string }>('/api/v1/setup/initialize', { method: 'POST', body: JSON.stringify(body) }),
   login: (username: string, password: string) => request<LoginResponse>('/api/v1/auth/login', {
     method: 'POST', body: JSON.stringify({ username, password })
   }),
@@ -100,6 +157,7 @@ export const api = {
   logout: () => request<void>('/api/v1/auth/logout', { method: 'POST' }),
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) }),
+  upload: <T>(path: string, body: FormData) => request<T>(path, { method: 'POST', body }),
   put: <T>(path: string, body: unknown) => request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) => request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),

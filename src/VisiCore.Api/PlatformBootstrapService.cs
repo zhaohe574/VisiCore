@@ -14,7 +14,7 @@ public sealed class PlatformBootstrapService(
         var dbContext = scope.ServiceProvider.GetRequiredService<PlatformDbContext>();
         if (configuration.GetValue("Database:ApplyMigrationsOnStartup", false))
         {
-            throw new InvalidOperationException("开源版不支持运行时迁移。请先运行 Docker setup 容器创建全新数据库。 ");
+            throw new InvalidOperationException("开源版不支持运行时迁移。请通过浏览器初始化页面创建全新数据库。 ");
         }
 
         var pluginService = scope.ServiceProvider.GetRequiredService<DevicePluginService>();
@@ -26,7 +26,11 @@ public sealed class PlatformBootstrapService(
             return;
         }
 
-        var username = configuration["Bootstrap:Username"] ?? "admin";
+        var configuredUsername = configuration["Bootstrap:Username"] ?? "admin";
+        if (!PlatformUsernamePolicy.TryNormalize(configuredUsername, out var username, out var validationError))
+        {
+            throw new InvalidOperationException($"Bootstrap:Username 无效：{validationError}");
+        }
         var hasher = scope.ServiceProvider.GetRequiredService<Argon2PasswordHasher>();
         dbContext.Users.Add(new UserEntity
         {

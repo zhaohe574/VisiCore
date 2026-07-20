@@ -1,8 +1,22 @@
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using VisiCore.EdgeAgent;
+using VisiCore.DeviceWorker;
 
 var builder = WebApplication.CreateBuilder(args);
+var managedConfigurationPath = Environment.GetEnvironmentVariable("VISICORE_EDGE_AGENT_CONFIG")
+    ?? (OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "VisiCore", "EdgeAgent", "edge-agent.json")
+        : "/var/lib/visicore/edge-agent/edge-agent.json");
+if (File.Exists(managedConfigurationPath))
+{
+    builder.Configuration.AddJsonFile(managedConfigurationPath, optional: false, reloadOnChange: true);
+}
+if (OperatingSystem.IsWindows())
+{
+    builder.Services.AddWindowsService(options => options.ServiceName = "VisiCore Edge Agent");
+}
 builder.Logging.ClearProviders();
 builder.Logging.AddSimpleConsole(options => options.SingleLine = true);
 
@@ -11,11 +25,26 @@ var hostAgentOptions = builder.Configuration.GetSection("HostAgent").Get<HostAge
 builder.Services.AddSingleton(edgeAgentOptions);
 builder.Services.AddSingleton(hostAgentOptions);
 builder.Services.AddSingleton<EdgeAgentRuntimeState>();
+builder.Services.AddSingleton<EdgeAgentRuntimeSettings>();
 builder.Services.AddSingleton<HostOperationState>();
 builder.Services.AddSingleton<EdgeAgentIdentityStore>();
-builder.Services.AddSingleton<DockerComposeHostOperationExecutor>();
-builder.Services.AddSingleton<VerifiedDeploymentStore>();
-builder.Services.AddSingleton<HostOperationWorker>();
+builder.Services.AddSingleton<EdgeAgentBootstrapStore>();
+builder.Services.AddSingleton<HostOperationExchange>();
+builder.Services.Configure<OnvifReadOnlyOptions>(builder.Configuration.GetSection("Onvif"));
+var onvifOptions = builder.Configuration.GetSection("Onvif").Get<OnvifReadOnlyOptions>() ?? new OnvifReadOnlyOptions();
+if (!onvifOptions.TryValidate(out var onvifValidationError))
+{
+    throw new InvalidOperationException(onvifValidationError);
+}
+builder.Services.AddSingleton(onvifOptions);
+builder.Services.AddSingleton<EdgeAgentCredentialResolver>();
+builder.Services.AddSingleton<IRecorderCredentialResolver>(provider => provider.GetRequiredService<EdgeAgentCredentialResolver>());
+builder.Services.AddSingleton<OnvifReadOnlyClient>(provider => new OnvifReadOnlyClient(
+    provider.GetRequiredService<IRecorderCredentialResolver>(),
+    provider.GetRequiredService<OnvifReadOnlyOptions>()));
+builder.Services.AddSingleton<OnvifDeviceCollector>();
+builder.Services.AddSingleton<DirectRtspDeviceCollector>();
+builder.Services.AddSingleton<EdgeAgentDeviceSynchronizer>();
 
 if (edgeAgentOptions.TryGetControlPlaneBaseUri(out var controlPlaneBaseUri, out _))
 {
@@ -32,7 +61,7 @@ else
 }
 
 builder.Services.AddHostedService<EdgeAgentRuntimeWorker>();
-builder.Services.AddHostedService(provider => provider.GetRequiredService<HostOperationWorker>());
+// 宿主升级器必须独立运行，业务 Agent 不取得 Docker、shell 或系统写入权限。
 builder.Services.AddHealthChecks()
     .AddCheck<EdgeAgentLivenessHealthCheck>("edge_agent_liveness", HealthStatus.Unhealthy)
     .AddCheck<EdgeAgentReadinessHealthCheck>("edge_agent_control_plane", HealthStatus.Degraded);

@@ -26,3 +26,7 @@ data/
 exports/
 logs/
 artifacts/
+
+# 本地打包压缩包与 Python 测试缓存不属于源码。
+*.zip
+__pycache__/

@@ -3,6 +3,7 @@
 #include "models.h"
 
 #include <QFrame>
+#include <QImage>
 #include <QList>
 #include <QString>
 #include <optional>
@@ -48,6 +49,7 @@ public:
     [[nodiscard]] QUuid requestId() const;
     [[nodiscard]] QUuid sessionId() const;
     [[nodiscard]] std::optional<CameraInfo> camera() const;
+    [[nodiscard]] QImage captureFrame();
 
 signals:
     void activated(VideoTileWidget *tile);
@@ -55,6 +57,8 @@ signals:
     void restartRequested(VideoTileWidget *tile);
     void profileChangeRequested(VideoTileWidget *tile, const QString &profile);
     void instantPlaybackRequested(VideoTileWidget *tile, int seconds);
+    void screenshotRequested(VideoTileWidget *tile);
+    void bookmarkRequested(VideoTileWidget *tile);
     void syncMembershipChanged(VideoTileWidget *tile, bool synchronized);
     void syncMembershipChangeRequested(VideoTileWidget *tile, bool synchronized);
     void clearRequested(VideoTileWidget *tile);

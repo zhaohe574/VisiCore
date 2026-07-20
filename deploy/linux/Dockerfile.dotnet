@@ -6,12 +6,17 @@ COPY src ./src
 RUN dotnet restore "${PROJECT}"
 RUN dotnet publish "${PROJECT}" --configuration Release --no-restore --output /app/publish
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0-alpine AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:8.0-bookworm-slim AS runtime
 ARG ASSEMBLY
+ARG APP_UID=1654
 WORKDIR /app
 USER root
-RUN mkdir -p /var/lib/visicore/edge-agent /var/lib/visicore/exports /var/lib/visicore/host-agent/state \
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/visicore/edge-agent /var/lib/visicore/exports /var/lib/visicore/host-agent/state \
     && chown -R "${APP_UID}:${APP_UID}" /var/lib/visicore
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
 COPY --from=build /app/publish ./
 ENV APP_ASSEMBLY=${ASSEMBLY}
 USER ${APP_UID}

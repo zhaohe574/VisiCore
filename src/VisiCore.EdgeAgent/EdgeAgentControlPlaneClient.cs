@@ -12,9 +12,10 @@ public sealed class EdgeAgentControlPlaneClient(HttpClient httpClient)
     public async Task<EnrollmentResult> EnrollAsync(
         EdgeAgentIdentityMaterial identity,
         EdgeAgentOptions options,
+        string enrollmentCode,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(options.EnrollmentCode))
+        if (string.IsNullOrWhiteSpace(enrollmentCode))
         {
             throw new InvalidOperationException("Edge Agent 尚未配置注册码。 ");
         }
@@ -29,7 +30,7 @@ public sealed class EdgeAgentControlPlaneClient(HttpClient httpClient)
             identity.Identity.KeyId,
             identity.PrivateKey);
         var payload = new EnrollmentRequest(
-            options.EnrollmentCode,
+            enrollmentCode,
             options.GetAgentVersion(),
             options.GetPlatform(),
             options.GetCapabilitiesJson(),
@@ -90,7 +91,24 @@ public sealed class EdgeAgentControlPlaneClient(HttpClient httpClient)
         using var document = await ReadDocumentAsync(response, cancellationToken);
         return new ConfigurationResult(
             ReadOptionalScalarString(document.RootElement, "version"),
-            ReadOptionalString(document.RootElement, "configurationJson"));
+            ReadOptionalString(document.RootElement, "configurationJson"),
+            ReadOptionalString(document.RootElement, "status"));
+    }
+
+    public async Task ReportConfigurationStatusAsync(
+        EdgeAgentIdentity identity,
+        string configurationVersion,
+        bool applied,
+        string? failureKind,
+        CancellationToken cancellationToken)
+    {
+        using var response = await SendAuthenticatedAsync(
+            HttpMethod.Post,
+            $"api/v1/edge-agents/{identity.AgentId}/configuration-status",
+            identity,
+            JsonContent.Create(new ConfigurationStatusRequest(configurationVersion, applied, failureKind), options: SerializerOptions),
+            cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
     }
 
     public async Task<IReadOnlyList<EdgeCredentialEnvelope>> GetCredentialEnvelopesAsync(
@@ -124,6 +142,7 @@ public sealed class EdgeAgentControlPlaneClient(HttpClient httpClient)
                 throw new EdgeControlPlaneException("credential_envelope_invalid");
             }
 
+            var credentialName = ReadOptionalString(item, "credentialName");
             var encryptedKey = ReadOptionalString(item, "encryptedKeyBase64");
             var initializationVector = ReadOptionalString(item, "initializationVectorBase64");
             var ciphertext = ReadOptionalString(item, "ciphertextBase64");
@@ -131,7 +150,7 @@ public sealed class EdgeAgentControlPlaneClient(HttpClient httpClient)
             var keyId = ReadOptionalString(item, "keyId");
             var keyEncryptionAlgorithm = ReadOptionalString(item, "keyEncryptionAlgorithm");
             var contentEncryptionAlgorithm = ReadOptionalString(item, "contentEncryptionAlgorithm");
-            if (string.IsNullOrWhiteSpace(encryptedKey) || string.IsNullOrWhiteSpace(initializationVector) ||
+            if (string.IsNullOrWhiteSpace(credentialName) || string.IsNullOrWhiteSpace(encryptedKey) || string.IsNullOrWhiteSpace(initializationVector) ||
                 string.IsNullOrWhiteSpace(ciphertext) || string.IsNullOrWhiteSpace(authenticationTag) ||
                 string.IsNullOrWhiteSpace(keyId) || string.IsNullOrWhiteSpace(keyEncryptionAlgorithm) ||
                 string.IsNullOrWhiteSpace(contentEncryptionAlgorithm))
@@ -141,6 +160,7 @@ public sealed class EdgeAgentControlPlaneClient(HttpClient httpClient)
 
             result.Add(new EdgeCredentialEnvelope(
                 credentialId,
+                credentialName,
                 credentialVersionId,
                 new AgentCredentialEnvelope(
                     AgentCredentialEnvelopeAlgorithms.CurrentSchemaVersion,
@@ -156,6 +176,46 @@ public sealed class EdgeAgentControlPlaneClient(HttpClient httpClient)
         }
         return result;
     }
+
+    public async Task<IReadOnlyList<WorkerRecorderAssignment>> GetWorkerAssignmentsAsync(
+        EdgeAgentIdentity identity,
+        CancellationToken cancellationToken)
+    {
+        if (!identity.IsEnrolled)
+        {
+            throw new EdgeControlPlaneException("agent_not_enrolled");
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "api/v1/device-worker/assignments");
+        request.Headers.TryAddWithoutValidation("X-Device-Worker-Token", identity.WorkerToken);
+        using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<List<WorkerRecorderAssignment>>(SerializerOptions, cancellationToken) ?? [];
+    }
+
+    public async Task ReportInventoryAsync(
+        EdgeAgentIdentity identity,
+        WorkerInventoryReport report,
+        CancellationToken cancellationToken) =>
+        await SendWorkerReportAsync(identity, HttpMethod.Post, "api/v1/device-worker/inventory", report, cancellationToken);
+
+    public async Task ReportHealthAsync(
+        EdgeAgentIdentity identity,
+        WorkerHealthReport report,
+        CancellationToken cancellationToken) =>
+        await SendWorkerReportAsync(identity, HttpMethod.Post, "api/v1/device-worker/health", report, cancellationToken);
+
+    public async Task ReportClockAsync(
+        EdgeAgentIdentity identity,
+        WorkerClockReport report,
+        CancellationToken cancellationToken) =>
+        await SendWorkerReportAsync(identity, HttpMethod.Post, "api/v1/device-worker/clock", report, cancellationToken);
+
+    public async Task ReportOperationStatusesAsync(
+        EdgeAgentIdentity identity,
+        WorkerOperationStatusReport report,
+        CancellationToken cancellationToken) =>
+        await SendWorkerReportAsync(identity, HttpMethod.Put, "api/v1/device-worker/operation-statuses", report, cancellationToken);
 
     public async Task<IReadOnlyList<EdgeOperation>> GetOperationsAsync(
         EdgeAgentIdentity identity,
@@ -231,6 +291,27 @@ public sealed class EdgeAgentControlPlaneClient(HttpClient httpClient)
         return await httpClient.SendAsync(request, cancellationToken);
     }
 
+    private async Task SendWorkerReportAsync<TReport>(
+        EdgeAgentIdentity identity,
+        HttpMethod method,
+        string relativeUri,
+        TReport report,
+        CancellationToken cancellationToken)
+    {
+        if (!identity.IsEnrolled)
+        {
+            throw new EdgeControlPlaneException("agent_not_enrolled");
+        }
+
+        using var request = new HttpRequestMessage(method, relativeUri)
+        {
+            Content = JsonContent.Create(report, options: SerializerOptions)
+        };
+        request.Headers.TryAddWithoutValidation("X-Device-Worker-Token", identity.WorkerToken);
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+    }
+
     private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
         if (!response.IsSuccessStatusCode)
@@ -280,11 +361,12 @@ public sealed class EdgeAgentControlPlaneClient(HttpClient httpClient)
 
     private sealed record HeartbeatRequest(string AgentVersion, string CapabilitiesJson, string ServiceStatusJson);
     private sealed record DiagnosticRequest(string Kind, string ResultJson, bool Succeeded, Guid? OperationId);
+    private sealed record ConfigurationStatusRequest(string Version, bool Applied, string? FailureKind);
 }
 
 public sealed record EnrollmentResult(string AgentId, string WorkerId, string WorkerToken, string? ConfigurationVersion);
-public sealed record ConfigurationResult(string? Version, string? ConfigurationJson);
-public sealed record EdgeCredentialEnvelope(Guid CredentialId, Guid CredentialVersionId, AgentCredentialEnvelope Envelope);
+public sealed record ConfigurationResult(string? Version, string? ConfigurationJson, string? Status);
+public sealed record EdgeCredentialEnvelope(Guid CredentialId, string CredentialName, Guid CredentialVersionId, AgentCredentialEnvelope Envelope);
 public sealed record EdgeOperation(Guid Id, string OperationType, string? DetailsJson);
 public sealed record EdgeDiagnostic(string Kind, string ResultJson, bool Succeeded, Guid? OperationId = null);
 

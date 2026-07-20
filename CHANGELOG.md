@@ -2,6 +2,12 @@
 
 本项目遵循语义化版本。
 
+## 0.3.0
+
+- 新增统一 Edge Agent 协议，支持 Linux Docker 与 Windows x64 Service 使用同一配对、公钥凭据、设备同步、预检和配置回执链路。
+- 新增独立 Edge Host Agent、受签名发行清单、最小回执、Docker 固定 Compose 升级与 Windows MSI 固定安装器执行边界。
+- 发布流程新增多架构 Linux Edge 镜像、Windows MSI、SBOM、SHA-256 和离线 RSA 签名发行清单。
+
 ## 0.2.0
 
 - 项目正式定名为“视枢（VisiCore）”，统一源码工程、程序集、管理端、查看端、Compose、数据库默认标识和发布镜像名称。

@@ -44,12 +44,147 @@ jobs:
           dotnet-version: 8.0.x
       - run: dotnet restore src/VisiCore.Api/VisiCore.Api.csproj
       - run: dotnet restore src/VisiCore.Setup/VisiCore.Setup.csproj
+      - run: dotnet restore src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj
+      - run: dotnet restore src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj
+      - run: dotnet restore src/VisiCore.EdgeNodeConfig/VisiCore.EdgeNodeConfig.csproj
+      - run: dotnet restore tests/VisiCore.EdgeAgent.Tests/VisiCore.EdgeAgent.Tests.csproj
       - run: dotnet restore tests/VisiCore.Api.Tests/VisiCore.Api.Tests.csproj
       - run: dotnet restore tests/VisiCore.OnvifEdgeWorker.Tests/VisiCore.OnvifEdgeWorker.Tests.csproj
       - run: dotnet build src/VisiCore.Api/VisiCore.Api.csproj --configuration Release --no-restore
       - run: dotnet build src/VisiCore.Setup/VisiCore.Setup.csproj --configuration Release --no-restore
+      - run: dotnet build src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj --configuration Release --no-restore
+      - run: dotnet build src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj --configuration Release --no-restore
+      - run: dotnet build src/VisiCore.EdgeNodeConfig/VisiCore.EdgeNodeConfig.csproj --configuration Release --no-restore
       - run: dotnet test tests/VisiCore.Api.Tests/VisiCore.Api.Tests.csproj --configuration Release --no-restore
+      - run: dotnet test tests/VisiCore.EdgeAgent.Tests/VisiCore.EdgeAgent.Tests.csproj --configuration Release --no-restore
       - run: dotnet test tests/VisiCore.OnvifEdgeWorker.Tests/VisiCore.OnvifEdgeWorker.Tests.csproj --configuration Release
+
+  windows-edge-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet publish src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-agent
+      - run: dotnet publish src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-host-agent
+      - run: dotnet publish src/VisiCore.EdgeBootstrap/VisiCore.EdgeBootstrap.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-bootstrap
+      - run: dotnet build deploy/windows/VisiCore.EdgeNode.Installer.wixproj --configuration Release -p:ProductVersion=0.3.0 -p:EdgeAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-agent -p:EdgeHostAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-host-agent -p:EdgeBootstrapPublishDir=${{ github.workspace }}\artifacts\windows\edge-bootstrap
+      - run: |
+          $msi = Get-ChildItem deploy\windows\bin\x64\Release\*.msi | Select-Object -First 1
+          if ($null -eq $msi -or $msi.Length -le 0) { throw '未生成 Windows MSI 安装包。' }
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', $msi.FullName, '/qn', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -notin 0, 3010) { throw "MSI 安装失败：$($install.ExitCode)" }
+          try {
+            $services = Get-Service 'VisiCore Edge Agent', 'VisiCore Edge Host Agent' -ErrorAction Stop
+            if ($services | Where-Object Status -ne Stopped) { throw '首次安装后边缘服务必须保持停止，等待本机配置页确认生效。' }
+            if (-not (Test-Path "$env:ProgramFiles\VisiCore\EdgeNode\VisiCore.EdgeBootstrap.exe")) { throw 'MSI 未部署配对向导。' }
+          } finally {
+            $uninstall = Start-Process msiexec.exe -ArgumentList @('/x', $msi.FullName, '/qn', '/norestart') -Wait -PassThru
+          if ($uninstall.ExitCode -notin 0, 3010) { throw "MSI 卸载失败：$($uninstall.ExitCode)" }
+          }
+
+  windows-viewer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          arch: 'win64_mingw'
+          modules: 'qtsvg'
+          tools: 'tools_mingw1310'
+      - shell: pwsh
+        run: |
+          $qtConfig = Get-ChildItem 'C:\Qt' -Recurse -Filter Qt6Config.cmake | Select-Object -First 1
+          if ($null -eq $qtConfig) { throw '未找到 Qt6Config.cmake。' }
+          $qtRoot = $qtConfig.Directory.Parent.Parent.Parent.FullName
+          $mingwBin = Get-ChildItem 'C:\Qt\Tools' -Directory -Filter 'mingw*_64' | Select-Object -First 1
+          if ($null -eq $mingwBin) { throw '未找到 Qt MinGW 工具链。' }
+          $env:QT_ROOT = $qtRoot
+          $env:Path = "$($mingwBin.FullName)\bin;$env:Path"
+          cmake --preset windows-release
+          cmake --build --preset windows-release --parallel 1
+          ctest --test-dir src\VisiCore.QtViewer\build\release --output-on-failure
+
+  windows-viewer-package:
+    if: ${{ vars.VISICORE_MPV_RUNTIME_URL != '' && vars.VISICORE_MPV_RUNTIME_SHA256 != '' && vars.VISICORE_MPV_RUNTIME_VERSION != '' && vars.VISICORE_MPV_RUNTIME_LICENSE_URL != '' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          arch: 'win64_mingw'
+          modules: 'qtsvg'
+          tools: 'tools_mingw1310'
+      - shell: pwsh
+        env:
+          VISICORE_MPV_RUNTIME_URL: ${{ vars.VISICORE_MPV_RUNTIME_URL }}
+          VISICORE_MPV_RUNTIME_SHA256: ${{ vars.VISICORE_MPV_RUNTIME_SHA256 }}
+          VISICORE_MPV_RUNTIME_VERSION: ${{ vars.VISICORE_MPV_RUNTIME_VERSION }}
+          VISICORE_MPV_RUNTIME_LICENSE_URL: ${{ vars.VISICORE_MPV_RUNTIME_LICENSE_URL }}
+        run: |
+          $qtConfig = Get-ChildItem 'C:\Qt' -Recurse -Filter Qt6Config.cmake | Select-Object -First 1
+          $qtRoot = $qtConfig.Directory.Parent.Parent.Parent.FullName
+          $mingwBin = Get-ChildItem 'C:\Qt\Tools' -Directory -Filter 'mingw*_64' | Select-Object -First 1
+          $env:Path = "$($mingwBin.FullName)\bin;$env:Path"
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP 'visicore-mpv-runtime'
+          New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
+          Invoke-WebRequest -Uri $env:VISICORE_MPV_RUNTIME_URL -OutFile (Join-Path $runtimeRoot 'libmpv-2.dll')
+          Invoke-WebRequest -Uri $env:VISICORE_MPV_RUNTIME_LICENSE_URL -OutFile (Join-Path $runtimeRoot 'LICENSE.txt')
+          $actualHash = (Get-FileHash -LiteralPath (Join-Path $runtimeRoot 'libmpv-2.dll') -Algorithm SHA256).Hash
+          if ($actualHash -ne $env:VISICORE_MPV_RUNTIME_SHA256.ToUpperInvariant()) { throw 'libmpv SHA-256 不匹配。' }
+          .\tools\Build-VisiCoreViewerWindows.ps1 `
+            -QtRoot $qtRoot `
+            -MpvRoot $runtimeRoot `
+            -MpvVersion $env:VISICORE_MPV_RUNTIME_VERSION `
+            -MpvSource $env:VISICORE_MPV_RUNTIME_URL `
+            -MpvSha256 $env:VISICORE_MPV_RUNTIME_SHA256 `
+            -MpvLicenseFile (Join-Path $runtimeRoot 'LICENSE.txt')
+          $msi = Get-Item artifacts\windows\viewer\visicore-viewer-v*.msi
+          $install = Start-Process msiexec.exe -ArgumentList @('/i', $msi.FullName, '/qn', '/norestart') -Wait -PassThru
+          if ($install.ExitCode -notin 0, 3010) { throw "Viewer MSI 安装失败：$($install.ExitCode)" }
+          try {
+            $viewer = "$env:ProgramFiles\VisiCore\Viewer\VisiCoreQtViewer.exe"
+            if (-not (Test-Path $viewer)) { throw 'Viewer MSI 未部署可执行文件。' }
+            & $viewer --verify-mpv-runtime
+            if ($LASTEXITCODE -ne 0) { throw '安装态 libmpv 校验失败。' }
+            & $viewer --verify-login-shell
+            if ($LASTEXITCODE -ne 0) { throw '安装态登录壳验证失败。' }
+          } finally {
+            $uninstall = Start-Process msiexec.exe -ArgumentList @('/x', $msi.FullName, '/qn', '/norestart') -Wait -PassThru
+            if ($uninstall.ExitCode -notin 0, 3010) { throw "Viewer MSI 卸载失败：$($uninstall.ExitCode)" }
+          }
+
+  edge-agent-docker-smoke:
+    runs-on: ubuntu-latest
+    env:
+      EDGE_STATE_DIRECTORY: ${{ github.workspace }}/artifacts/edge-agent-smoke-state
+      EDGE_HOST_EXCHANGE_DIRECTORY: ${{ github.workspace }}/artifacts/edge-agent-smoke-host-exchange
+      EDGE_HOST_CONFIG_DIRECTORY: ${{ github.workspace }}/artifacts/edge-agent-smoke-host-config
+      EDGE_AGENT_SMOKE_TEST_DIRECTORY: ${{ github.workspace }}/tests/edge-agent-smoke
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p artifacts/edge-agent-smoke-state artifacts/edge-agent-smoke-host-exchange artifacts/edge-agent-smoke-host-config
+      - run: docker compose -p visicore-edge-agent-smoke -f deploy/linux/edge-agent.compose.yaml -f tests/edge-agent-smoke/compose.override.yaml up --build --detach
+      - run: |
+          retry() {
+            for _ in $(seq 1 45); do
+              if "$@"; then return 0; fi
+              sleep 2
+            done
+            return 1
+          }
+          retry docker compose -p visicore-edge-agent-smoke -f deploy/linux/edge-agent.compose.yaml -f tests/edge-agent-smoke/compose.override.yaml exec -T edge-agent wget -q -O /dev/null http://127.0.0.1:8080/readyz
+          docker compose -p visicore-edge-agent-smoke -f deploy/linux/edge-agent.compose.yaml -f tests/edge-agent-smoke/compose.override.yaml exec -T edge-agent wget -q -O - http://127.0.0.1:8080/api/v1/edge-agent/identity | grep -q '"isEnrolled":true'
+          curl --fail http://127.0.0.1:18081/
+      - if: always()
+        run: docker compose -p visicore-edge-agent-smoke -f deploy/linux/edge-agent.compose.yaml -f tests/edge-agent-smoke/compose.override.yaml down --volumes --remove-orphans
 
   admin:
     runs-on: ubuntu-latest
@@ -72,11 +207,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: cp .env.example .env
-      - run: sed -i 's/POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-only-long-password/' .env
-      - run: SETUP_USERNAME=ciadmin SETUP_PASSWORD=ci-only-admin-password docker compose --profile setup run --rm setup
       - run: docker compose up --build --detach
+      - run: docker run --detach --name ci-postgres --network visicore-network --env POSTGRES_PASSWORD=ci-bootstrap-postgres-password postgres:18.4
+      - run: docker run --detach --name ci-mediamtx --network visicore-network --volume "$PWD/deploy/linux/mediamtx.yml:/mediamtx.yml:ro" bluenviron/mediamtx:1.19.2
       - run: curl --fail --retry 20 --retry-delay 2 http://127.0.0.1:8080/healthz
       - run: |
-          curl --fail --request POST --header 'Content-Type: application/json' --data '{"username":"ciadmin","password":"ci-only-admin-password"}' http://127.0.0.1:8080/api/v1/auth/login
+          retry() {
+            for _ in $(seq 1 30); do
+              if "$@"; then return 0; fi
+              sleep 2
+            done
+            return 1
+          }
+          retry docker exec ci-postgres pg_isready --username postgres
+      - run: |
+          curl --fail --retry 20 --retry-delay 2 http://127.0.0.1:8080/api/v1/setup/status
+          curl --fail --request POST --header 'Content-Type: application/json' --data '{"databaseHost":"ci-postgres","databasePort":5432,"postgresTlsMode":"disable","databaseAdministratorUsername":"postgres","databaseAdministratorPassword":"ci-bootstrap-postgres-password","databaseName":"visicore"}' http://127.0.0.1:8080/api/v1/setup/test-postgres
+          curl --fail --request POST --header 'Content-Type: application/json' --data '{"mediaMode":"same-host","mediaApiBaseUri":"http://ci-mediamtx:9997/","mediaHlsBaseUri":"http://ci-mediamtx:8888/"}' http://127.0.0.1:8080/api/v1/setup/test-mediamtx
+          curl --fail --request POST --header 'Origin: https://visicore.example.test' --header 'Content-Type: application/json' --data '{"databaseHost":"ci-postgres","databasePort":5432,"postgresTlsMode":"disable","databaseAdministratorUsername":"postgres","databaseAdministratorPassword":"ci-bootstrap-postgres-password","databaseName":"visicore","publicBaseUri":"https://visicore.example.test/","mediaMode":"same-host","mediaApiBaseUri":"http://ci-mediamtx:9997/","mediaHlsBaseUri":"http://ci-mediamtx:8888/","platformAdministratorUsername":"ciadmin@example.test","platformAdministratorPassword":"ci-bootstrap-platform-password","allowInsecureLanHttp":false}' http://127.0.0.1:8080/api/v1/setup/initialize
+      - run: |
+          retry() {
+            for _ in $(seq 1 30); do
+              if "$@"; then return 0; fi
+              sleep 2
+            done
+            return 1
+          }
+          retry curl --silent --show-error --fail --request POST --header 'Content-Type: application/json' --data '{"username":"CIADMIN@EXAMPLE.TEST","password":"ci-bootstrap-platform-password"}' http://127.0.0.1:8080/api/v1/auth/login
+      - run: |
+          retry() {
+            for _ in $(seq 1 30); do
+              if "$@"; then return 0; fi
+              sleep 2
+            done
+            return 1
+          }
+          retry curl --silent --show-error --fail http://127.0.0.1:8080/readyz
+          retry curl --silent --show-error --fail --header 'X-Forwarded-Proto: https' http://127.0.0.1:8080/stream/readyz
       - if: always()
-        run: docker compose down --volumes --remove-orphans
+        run: docker compose down --volumes --remove-orphans && docker rm --force ci-postgres ci-mediamtx || true

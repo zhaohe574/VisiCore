@@ -153,7 +153,7 @@ public sealed class NotificationDispatcherTests
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => dispatcher.SendAsync(channel, CreateIncident(), NotificationEventType.Opened, CancellationToken.None));
 
-        Assert.Contains("尚未在数据库保存完整 Webhook 地址", exception.Message);
+        Assert.Contains("Webhook 地址缺失", exception.Message);
         Assert.Equal(0, handler.RequestCount);
     }
 
@@ -190,7 +190,7 @@ public sealed class NotificationDispatcherTests
 
         var exception = Assert.Throws<InvalidOperationException>(() => WebhookAddressProtector.Unprotect(copied));
 
-        Assert.Contains("不能由当前 Windows 主机解密", exception.Message);
+        Assert.Contains("无法由当前核心配置卷中的密钥解密", exception.Message);
     }
 
     [Fact(DisplayName = "通知锁定时长必须覆盖投递超时和释放余量")]

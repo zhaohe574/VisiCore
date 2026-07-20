@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace VisiCore.EdgeAgent;
@@ -30,18 +31,18 @@ public sealed class EdgeAgentIdentityStore(EdgeAgentOptions options)
                 null,
                 null,
                 null);
-            WriteRestrictedText(privateKeyPath, generated.ExportPkcs8PrivateKeyPem());
-            WriteRestrictedText(identityPath, JsonSerializer.Serialize(identity));
+            WriteRestrictedSecret(privateKeyPath, generated.ExportPkcs8PrivateKeyPem());
+            WriteRestrictedSecret(identityPath, JsonSerializer.Serialize(identity));
         }
 
-        var persistedIdentity = JsonSerializer.Deserialize<EdgeAgentIdentity>(File.ReadAllText(identityPath))
+        var persistedIdentity = JsonSerializer.Deserialize<EdgeAgentIdentity>(ReadRestrictedSecret(identityPath))
             ?? throw new InvalidOperationException("Edge Agent 身份状态格式无效。 ");
         persistedIdentity.Validate();
 
         var rsa = RSA.Create();
         try
         {
-            rsa.ImportFromPem(File.ReadAllText(privateKeyPath));
+            rsa.ImportFromPem(ReadRestrictedSecret(privateKeyPath));
             return new EdgeAgentIdentityMaterial(this, persistedIdentity, rsa);
         }
         catch
@@ -55,10 +56,10 @@ public sealed class EdgeAgentIdentityStore(EdgeAgentOptions options)
     {
         identity.Validate();
         var identityPath = Path.Combine(Path.GetFullPath(options.StateDirectory), IdentityFileName);
-        WriteRestrictedText(identityPath, JsonSerializer.Serialize(identity));
+        WriteRestrictedSecret(identityPath, JsonSerializer.Serialize(identity));
     }
 
-    private static void WriteRestrictedText(string path, string value)
+    private static void WriteRestrictedSecret(string path, string value)
     {
         var directory = Path.GetDirectoryName(path)
             ?? throw new InvalidOperationException("Edge Agent 状态文件路径无效。 ");
@@ -66,7 +67,7 @@ public sealed class EdgeAgentIdentityStore(EdgeAgentOptions options)
         var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
         try
         {
-            File.WriteAllText(temporaryPath, value);
+            File.WriteAllText(temporaryPath, ProtectForCurrentPlatform(value));
             TryRestrictFilePermissions(temporaryPath);
             File.Move(temporaryPath, path, overwrite: true);
             TryRestrictFilePermissions(path);
@@ -77,6 +78,67 @@ public sealed class EdgeAgentIdentityStore(EdgeAgentOptions options)
             {
                 File.Delete(temporaryPath);
             }
+        }
+    }
+
+    private static string ReadRestrictedSecret(string path)
+    {
+        var stored = File.ReadAllText(path);
+        if (!OperatingSystem.IsWindows())
+        {
+            return stored;
+        }
+        const string prefix = "dpapi-local-machine:";
+        if (!stored.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("Windows Edge Agent 身份状态未受 DPAPI 保护。 ");
+        }
+        try
+        {
+            var protectedBytes = Convert.FromBase64String(stored[prefix.Length..]);
+            var clearBytes = ProtectedData.Unprotect(protectedBytes, optionalEntropy: null, DataProtectionScope.LocalMachine);
+            try
+            {
+                return Encoding.UTF8.GetString(clearBytes);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(protectedBytes);
+                CryptographicOperations.ZeroMemory(clearBytes);
+            }
+        }
+        catch (FormatException exception)
+        {
+            throw new InvalidOperationException("Windows Edge Agent 身份状态格式无效。 ", exception);
+        }
+        catch (CryptographicException exception)
+        {
+            throw new InvalidOperationException("Windows Edge Agent 身份状态无法在当前机器解封。 ", exception);
+        }
+    }
+
+    private static string ProtectForCurrentPlatform(string value)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return value;
+        }
+        var clearBytes = Encoding.UTF8.GetBytes(value);
+        try
+        {
+            var protectedBytes = ProtectedData.Protect(clearBytes, optionalEntropy: null, DataProtectionScope.LocalMachine);
+            try
+            {
+                return "dpapi-local-machine:" + Convert.ToBase64String(protectedBytes);
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(protectedBytes);
+            }
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(clearBytes);
         }
     }
 

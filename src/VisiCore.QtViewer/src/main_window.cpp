@@ -6,11 +6,15 @@
 #include "change_password_dialog.h"
 #include "crash_reporter.h"
 #include "dock_layout_controller.h"
+#include "export_controller.h"
+#include "export_download_verifier.h"
+#include "export_tasks_panel.h"
 #include "icon_provider.h"
 #include "playback_controller.h"
 #include "preview_controller.h"
 #include "ptz_controller.h"
 #include "recording_timeline_widget.h"
+#include "screenshot_service.h"
 #include "video_tile_widget.h"
 #include "viewer_action_registry.h"
 #include "viewer_logic.h"
@@ -31,9 +35,12 @@
 #include <QCloseEvent>
 #include <QCryptographicHash>
 #include <QDateTimeEdit>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QEvent>
+#include <QFileDialog>
 #include <QFrame>
 #include <QFormLayout>
 #include <QGridLayout>
@@ -48,17 +55,20 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QNetworkReply>
 #include <QPainter>
 #include <QPushButton>
 #include <QPixmap>
 #include <QSettings>
 #include <QScreen>
 #include <QScrollArea>
+#include <QSaveFile>
 #include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStandardPaths>
 #include <QStatusBar>
 #include <QSlider>
 #include <QTabBar>
@@ -67,7 +77,9 @@
 #include <QTreeWidget>
 #include <QTreeWidgetItemIterator>
 #include <QTimeZone>
+#include <QUrl>
 #include <QTextCharFormat>
+#include <QTextEdit>
 #include <QVBoxLayout>
 
 namespace {
@@ -124,7 +136,8 @@ QString cameraToolTip(const CameraInfo &camera) {
     const QStringList capabilities{
         camera.canLiveView ? QStringLiteral("可预览") : QStringLiteral("无预览权限"),
         camera.canPlayback ? QStringLiteral("可回放") : QStringLiteral("无回放权限"),
-        camera.canControlPtz ? QStringLiteral("可控制云台") : QStringLiteral("无云台控制权限或能力")};
+        camera.canControlPtz ? QStringLiteral("可控制云台") : QStringLiteral("无云台控制权限或能力"),
+        camera.canExport ? QStringLiteral("可导出录像") : QStringLiteral("无录像导出权限或导出服务未就绪")};
     return QStringLiteral("%1\n编号：%2\n状态：%3\n%4")
         .arg(camera.alias, camera.code, connectivityLabel(camera.connectivity), capabilities.join(QStringLiteral("；")));
 }
@@ -233,6 +246,7 @@ MainWindow::MainWindow(ApiClient *apiClient, ViewerStartupMode startupMode, QWid
     previewController_ = new PreviewController(this);
     playbackController_ = new PlaybackController(this);
     ptzController_ = new PtzController(this);
+    exportController_ = new ExportController(this);
     connect(workspaceController_, &WorkspaceController::stateChanged,
             this, &MainWindow::refreshControllerActionStates);
     connect(previewController_, &PreviewController::stateChanged,
@@ -289,6 +303,7 @@ MainWindow::MainWindow(ApiClient *apiClient, ViewerStartupMode startupMode, QWid
     dockPanels.ptz = buildPtzPanel();
     dockPanels.playbackSearch = buildPlaybackSearchPanel();
     dockPanels.recordingTimeline = buildRecordingTimelinePanel();
+    dockPanels.exportTasks = buildExportTasksPanel();
 
     dockLayoutController_ = new DockLayoutController(this, this);
     dockLayoutController_->initialize(centralWorkspace, dockPanels, ptzPanelVisible_);
@@ -320,6 +335,7 @@ MainWindow::MainWindow(ApiClient *apiClient, ViewerStartupMode startupMode, QWid
         dockPanelsMenu_->addAction(actionRegistry_->action(ViewerActionId::ShowPtz));
         dockPanelsMenu_->addAction(actionRegistry_->action(ViewerActionId::ShowPlaybackSearch));
         dockPanelsMenu_->addAction(actionRegistry_->action(ViewerActionId::ShowRecordingTimeline));
+        dockPanelsMenu_->addAction(actionRegistry_->action(ViewerActionId::ShowExportTasks));
         dockPanelsMenu_->addSeparator();
         dockLayoutLockAction_ = actionRegistry_->action(ViewerActionId::LockDockLayout);
         dockPanelsMenu_->addAction(dockLayoutLockAction_);
@@ -329,6 +345,7 @@ MainWindow::MainWindow(ApiClient *apiClient, ViewerStartupMode startupMode, QWid
     if (QMenu *accountMenu = titleBar_->accountMenu()) {
         accountMenu->clear();
         accountMenu->addAction(actionRegistry_->action(ViewerActionId::ChangePassword));
+        accountMenu->addAction(actionRegistry_->action(ViewerActionId::OpenScreenshotFolder));
         accountMenu->addSeparator();
         accountMenu->addAction(actionRegistry_->action(ViewerActionId::Logout));
         accountMenu->addAction(actionRegistry_->action(ViewerActionId::ExitApplication));
@@ -353,6 +370,9 @@ MainWindow::MainWindow(ApiClient *apiClient, ViewerStartupMode startupMode, QWid
     actionRegistry_->bindAction(
         ViewerActionId::ShowRecordingTimeline,
         dockLayoutController_->dockPanelAction(DockPanelId::RecordingTimeline));
+    actionRegistry_->bindAction(
+        ViewerActionId::ShowExportTasks,
+        dockLayoutController_->dockPanelAction(DockPanelId::ExportTasks));
 
     for (int index = 0; index < 64; ++index) {
         auto *tile = new VideoTileWidget(index, videoGrid_->parentWidget());
@@ -379,6 +399,7 @@ MainWindow::MainWindow(ApiClient *apiClient, ViewerStartupMode startupMode, QWid
             }
         });
         connect(tile, &VideoTileWidget::instantPlaybackRequested, this, &MainWindow::openInstantPlayback);
+        connect(tile, &VideoTileWidget::screenshotRequested, this, &MainWindow::captureTileScreenshot);
         connect(tile, &VideoTileWidget::cameraIdsDropped, this, [this](VideoTileWidget *target, const QList<QUuid> &cameraIds) {
             assignCameraIds(target, cameraIds, cameraIds.size() > 1);
         });
@@ -422,6 +443,8 @@ MainWindow::MainWindow(ApiClient *apiClient, ViewerStartupMode startupMode, QWid
             updatePlaybackTimeline();
             updatePlaybackControlState();
         });
+        connect(tile, &VideoTileWidget::screenshotRequested, this, &MainWindow::captureTileScreenshot);
+        connect(tile, &VideoTileWidget::bookmarkRequested, this, &MainWindow::addPlaybackBookmark);
         connect(tile, &VideoTileWidget::syncMembershipChangeRequested, this, [this](VideoTileWidget *target, bool synchronized) {
             if (target != nullptr && ensureWorkspaceInteraction(WorkspaceMode::Playback, QStringLiteral("切换同步组"))) {
                 target->setSyncMember(synchronized);
@@ -516,8 +539,17 @@ MainWindow::MainWindow(ApiClient *apiClient, ViewerStartupMode startupMode, QWid
     cameraStatusRefreshTimer_->setInterval(15000);
     connect(cameraStatusRefreshTimer_, &QTimer::timeout, apiClient_, &ApiClient::refreshCameraStatuses);
     cameraStatusRefreshTimer_->start();
+    exportRefreshTimer_ = new QTimer(this);
+    exportRefreshTimer_->setInterval(2000);
+    connect(exportRefreshTimer_, &QTimer::timeout, this, [this]() {
+        if (exportController_ != nullptr && exportController_->hasActiveExports()) {
+            refreshPlaybackExports();
+        }
+    });
+    exportRefreshTimer_->start();
     loadFavorites();
     loadSavedViews();
+    loadPlaybackBookmarks();
 
     connect(apiClient_, &ApiClient::catalogLoaded, this, &MainWindow::populateCatalog);
     connect(apiClient_, &ApiClient::cameraStatusesLoaded, this, &MainWindow::applyCameraStatuses);
@@ -574,6 +606,41 @@ MainWindow::MainWindow(ApiClient *apiClient, ViewerStartupMode startupMode, QWid
     });
     connect(apiClient_, &ApiClient::sessionRevocationFailed, this, [this](const QUuid &, const QString &message) {
         statusBar()->showMessage(message, 8000);
+    });
+    connect(apiClient_, &ApiClient::playbackExportsLoaded, this, [this](const QList<PlaybackExportInfo> &exports) {
+        if (exportController_ != nullptr) {
+            exportController_->setExports(exports);
+        }
+    });
+    connect(apiClient_, &ApiClient::playbackExportsFailed, this, [this](const QString &message) {
+        if (playbackStatusLabel_ != nullptr) {
+            playbackStatusLabel_->setText(QStringLiteral("刷新导出任务失败：%1").arg(message));
+        }
+    });
+    connect(apiClient_, &ApiClient::playbackExportCreated, this, [this](const PlaybackExportInfo &exportInfo) {
+        if (exportController_ != nullptr) {
+            exportController_->upsert(exportInfo);
+        }
+        showDockPanel(DockPanelId::ExportTasks, true);
+        if (playbackStatusLabel_ != nullptr) {
+            playbackStatusLabel_->setText(QStringLiteral("录像导出任务已提交，可在导出任务面板查看进度。"));
+        }
+    });
+    connect(apiClient_, &ApiClient::playbackExportCreateFailed, this, [this](const QString &message) {
+        if (playbackStatusLabel_ != nullptr) {
+            playbackStatusLabel_->setText(QStringLiteral("提交录像导出失败：%1").arg(message));
+        }
+    });
+    connect(apiClient_, &ApiClient::playbackExportCancelled, this, [this](const QUuid &exportId) {
+        if (exportController_ != nullptr) {
+            exportController_->markCancelled(exportId);
+        }
+        refreshPlaybackExports();
+    });
+    connect(apiClient_, &ApiClient::playbackExportCancelFailed, this, [this](const QUuid &, const QString &message) {
+        if (playbackStatusLabel_ != nullptr) {
+            playbackStatusLabel_->setText(QStringLiteral("取消录像导出失败：%1").arg(message));
+        }
     });
 
     auto *escapeAction = new QAction(this);
@@ -642,10 +709,15 @@ void MainWindow::initializeActions() {
         {ViewerActionId::PlaybackPause, QStringLiteral("暂停回放"), ViewerIcon::Pause},
         {ViewerActionId::PlaybackResume, QStringLiteral("继续回放"), ViewerIcon::Play},
         {ViewerActionId::PlaybackSync, QStringLiteral("同步组"), ViewerIcon::None, {}, true},
+        {ViewerActionId::ExportPlayback, QStringLiteral("导出当前回放范围"), ViewerIcon::Save},
+        {ViewerActionId::CaptureScreenshot, QStringLiteral("保存当前画面截图"), ViewerIcon::Save},
+        {ViewerActionId::AddBookmark, QStringLiteral("添加本地书签"), ViewerIcon::Star},
+        {ViewerActionId::OpenScreenshotFolder, QStringLiteral("打开截图目录"), ViewerIcon::Folder},
         {ViewerActionId::ShowResourceCatalog, QStringLiteral("资源面板"), ViewerIcon::PanelLeft, {}, true},
         {ViewerActionId::ShowPtz, QStringLiteral("云台控制面板"), ViewerIcon::PanelRight, {}, true},
         {ViewerActionId::ShowPlaybackSearch, QStringLiteral("回放检索面板"), ViewerIcon::CalendarSearch, {}, true},
         {ViewerActionId::ShowRecordingTimeline, QStringLiteral("录像时间轴面板"), ViewerIcon::PanelBottom, {}, true},
+        {ViewerActionId::ShowExportTasks, QStringLiteral("导出任务面板"), ViewerIcon::PanelBottom, {}, true},
         {ViewerActionId::LockDockLayout, QStringLiteral("锁定面板布局"), ViewerIcon::Lock, {}, true},
         {ViewerActionId::RestoreDefaultLayout, QStringLiteral("恢复当前工作区默认布局"), ViewerIcon::Restore},
         {ViewerActionId::ChangePassword, QStringLiteral("修改密码"), ViewerIcon::Password},
@@ -775,6 +847,24 @@ void MainWindow::initializeActions() {
                 updatePlaybackControlState();
                 savePreferences();
                 break;
+            case ViewerActionId::ExportPlayback:
+                requestPlaybackExport();
+                break;
+            case ViewerActionId::CaptureScreenshot: {
+                VideoTileWidget *tile = activeWorkspace_ == 0 ? selectedTile_ : selectedPlaybackTile_;
+                captureTileScreenshot(tile);
+                break;
+            }
+            case ViewerActionId::AddBookmark:
+                addPlaybackBookmark(selectedPlaybackTile_);
+                break;
+            case ViewerActionId::OpenScreenshotFolder: {
+                const QString directory = ScreenshotService::directoryForUser(apiClient_->username());
+                if (!QDir().mkpath(directory) || !QDesktopServices::openUrl(QUrl::fromLocalFile(directory))) {
+                    statusBar()->showMessage(QStringLiteral("无法打开截图目录。"), 8000);
+                }
+                break;
+            }
             case ViewerActionId::ShowResourceCatalog:
                 if (ensureWorkspaceInteraction(
                         activeWorkspace_ == 0 ? WorkspaceMode::Preview : WorkspaceMode::Playback,
@@ -795,6 +885,11 @@ void MainWindow::initializeActions() {
             case ViewerActionId::ShowRecordingTimeline:
                 if (ensureWorkspaceInteraction(WorkspaceMode::Playback, QStringLiteral("显示录像时间轴面板"))) {
                     showDockPanel(DockPanelId::RecordingTimeline, checked);
+                }
+                break;
+            case ViewerActionId::ShowExportTasks:
+                if (ensureWorkspaceInteraction(WorkspaceMode::Playback, QStringLiteral("显示导出任务面板"))) {
+                    showDockPanel(DockPanelId::ExportTasks, checked);
                 }
                 break;
             case ViewerActionId::LockDockLayout:
@@ -841,7 +936,9 @@ void MainWindow::refreshControllerActionStates() {
     const auto isPlaybackAction = [](ViewerActionId id) {
         return id == ViewerActionId::ChangePlaybackLayout || id == ViewerActionId::StopAllPlayback ||
                id == ViewerActionId::PlaybackPause ||
-               id == ViewerActionId::PlaybackResume || id == ViewerActionId::PlaybackSync;
+               id == ViewerActionId::PlaybackResume || id == ViewerActionId::PlaybackSync ||
+               id == ViewerActionId::ShowExportTasks || id == ViewerActionId::ExportPlayback ||
+               id == ViewerActionId::AddBookmark;
     };
 
     const bool canvasPresentationBusy = isCanvasPresentationBusy();
@@ -870,13 +967,28 @@ void MainWindow::refreshControllerActionStates() {
         if (id == ViewerActionId::ShowPtz) {
             enabled = globalInteractionEnabled && workspaceController_->mode() == WorkspaceMode::Preview;
         } else if (id == ViewerActionId::ShowPlaybackSearch ||
-                   id == ViewerActionId::ShowRecordingTimeline) {
+                   id == ViewerActionId::ShowRecordingTimeline || id == ViewerActionId::ShowExportTasks) {
             enabled = globalInteractionEnabled && workspaceController_->mode() == WorkspaceMode::Playback;
         }
         if (id == ViewerActionId::ClearSelectedTile) {
             enabled = enabled && (workspaceController_->mode() == WorkspaceMode::Preview
                 ? previewController_->isActionEnabled(id)
                 : selectedPlaybackTile_ != nullptr && selectedPlaybackTile_->camera().has_value());
+        }
+        if (id == ViewerActionId::CaptureScreenshot) {
+            VideoTileWidget *tile = workspaceController_->mode() == WorkspaceMode::Preview
+                ? selectedTile_
+                : selectedPlaybackTile_;
+            enabled = enabled && tile != nullptr && tile->camera().has_value();
+        }
+        if (id == ViewerActionId::AddBookmark) {
+            enabled = enabled && selectedPlaybackTile_ != nullptr && selectedPlaybackTile_->camera().has_value() &&
+                playbackCursor_.isValid();
+        }
+        if (id == ViewerActionId::ExportPlayback) {
+            enabled = enabled && selectedPlaybackTile_ != nullptr && selectedPlaybackTile_->camera().has_value() &&
+                selectedPlaybackTile_->camera()->canExport && playbackStartedAt_ != nullptr && playbackEndedAt_ != nullptr &&
+                playbackStartedAt_->dateTime() < playbackEndedAt_->dateTime();
         }
 
         bool checked = false;
@@ -902,6 +1014,9 @@ void MainWindow::refreshControllerActionStates() {
                 case ViewerActionId::ShowRecordingTimeline:
                     checked = dockLayoutController_->isPanelVisible(DockPanelId::RecordingTimeline);
                     break;
+                case ViewerActionId::ShowExportTasks:
+                    checked = dockLayoutController_->isPanelVisible(DockPanelId::ExportTasks);
+                    break;
                 default:
                     break;
             }
@@ -923,6 +1038,14 @@ void MainWindow::refreshControllerActionStates() {
                 reason = QStringLiteral("请先切换到录像回放工作区，再显示回放检索面板。");
             } else if (id == ViewerActionId::ShowRecordingTimeline) {
                 reason = QStringLiteral("请先切换到录像回放工作区，再显示录像时间轴面板。");
+            } else if (id == ViewerActionId::ShowExportTasks) {
+                reason = QStringLiteral("请先切换到录像回放工作区，再显示导出任务面板。");
+            } else if (id == ViewerActionId::ExportPlayback) {
+                reason = QStringLiteral("请先选择具备导出权限的回放窗格，并设置有效时间范围。");
+            } else if (id == ViewerActionId::CaptureScreenshot) {
+                reason = QStringLiteral("请先选择已打开的预览或回放窗格。");
+            } else if (id == ViewerActionId::AddBookmark) {
+                reason = QStringLiteral("请先选择正在播放且已定位的录像回放窗格。");
             } else if (isPreviewAction(id)) {
                 reason = QStringLiteral("仅可在实时预览工作区执行，且需要满足当前窗格条件。");
             } else if (isPlaybackAction(id)) {
@@ -1146,6 +1269,7 @@ QWidget *MainWindow::buildSidebar() {
     resourceTabs_->addTab(QStringLiteral("监控点"));
     resourceTabs_->addTab(QStringLiteral("收藏"));
     resourceTabs_->addTab(QStringLiteral("我的视图"));
+    resourceTabs_->addTab(QStringLiteral("书签"));
     resourceTabs_->setCurrentIndex(catalogMode_);
     resourceTabs_->setAccessibleName(QStringLiteral("设备资源类型"));
 
@@ -1372,6 +1496,24 @@ QWidget *MainWindow::buildPlaybackWorkspace() {
     fullScreenButton->setAccessibleName(QStringLiteral("切换视频画布全屏"));
     fullScreenButton->setFixedSize(34, 31);
     toolbarLayout->addWidget(fullScreenButton);
+    auto *screenshotButton = new QToolButton;
+    screenshotButton->setDefaultAction(actionRegistry_->action(ViewerActionId::CaptureScreenshot));
+    screenshotButton->setToolTip(QStringLiteral("保存当前回放画面截图"));
+    screenshotButton->setAccessibleName(QStringLiteral("保存当前回放画面截图"));
+    screenshotButton->setFixedSize(34, 31);
+    toolbarLayout->addWidget(screenshotButton);
+    auto *bookmarkButton = new QToolButton;
+    bookmarkButton->setDefaultAction(actionRegistry_->action(ViewerActionId::AddBookmark));
+    bookmarkButton->setToolTip(QStringLiteral("将当前位置添加为本地书签"));
+    bookmarkButton->setAccessibleName(QStringLiteral("添加本地书签"));
+    bookmarkButton->setFixedSize(34, 31);
+    toolbarLayout->addWidget(bookmarkButton);
+    auto *exportButton = new QToolButton;
+    exportButton->setDefaultAction(actionRegistry_->action(ViewerActionId::ExportPlayback));
+    exportButton->setToolTip(QStringLiteral("导出当前回放时间范围"));
+    exportButton->setAccessibleName(QStringLiteral("导出当前回放时间范围"));
+    exportButton->setFixedSize(34, 31);
+    toolbarLayout->addWidget(exportButton);
     layout->addWidget(toolbar);
 
     auto *videoHost = new QFrame;
@@ -1505,6 +1647,18 @@ QWidget *MainWindow::buildPlaybackSearchPanel() {
 QWidget *MainWindow::buildRecordingTimelinePanel() {
     recordingTimelinePanel_->setParent(nullptr);
     return recordingTimelinePanel_;
+}
+
+QWidget *MainWindow::buildExportTasksPanel() {
+    exportTasksPanel_ = new ExportTasksPanel(exportController_);
+    connect(exportTasksPanel_, &ExportTasksPanel::refreshRequested, this, &MainWindow::refreshPlaybackExports);
+    connect(exportTasksPanel_, &ExportTasksPanel::cancelRequested, this, [this](const QUuid &exportId) {
+        if (!exportId.isNull()) {
+            apiClient_->cancelPlaybackExport(exportId);
+        }
+    });
+    connect(exportTasksPanel_, &ExportTasksPanel::downloadRequested, this, &MainWindow::downloadPlaybackExport);
+    return exportTasksPanel_;
 }
 
 void MainWindow::switchWorkspace(int index) {
@@ -2581,6 +2735,20 @@ QWidget *MainWindow::buildPtzPanel() {
 void MainWindow::populateCatalog(const QList<RegionInfo> &regions, const QList<CameraInfo> &cameras) {
     regions_ = regions;
     cameras_ = cameras;
+    QHash<QUuid, QString> cameraLabels;
+    bool canExport = false;
+    for (const CameraInfo &camera : cameras_) {
+        cameraLabels.insert(camera.id, QStringLiteral("%1  [%2]").arg(camera.alias, camera.code));
+        canExport = canExport || camera.canExport;
+    }
+    if (exportTasksPanel_ != nullptr) {
+        exportTasksPanel_->setCameraLabels(cameraLabels);
+    }
+    if (canExport) {
+        refreshPlaybackExports();
+    } else if (exportController_ != nullptr) {
+        exportController_->setExports({});
+    }
     syncAssignedCameraStatuses();
     QSet<QUuid> visibleCameraIds;
     for (const auto &camera : cameras_) {
@@ -2630,6 +2798,7 @@ void MainWindow::rebuildCatalog() {
         resourceTabs_->setTabText(0, QStringLiteral("监控点 %1").arg(cameras_.size()));
         resourceTabs_->setTabText(1, QStringLiteral("收藏 %1").arg(favoriteCameraIds_.size()));
         resourceTabs_->setTabText(2, QStringLiteral("我的视图 %1").arg(savedViews_.size()));
+        resourceTabs_->setTabText(3, QStringLiteral("书签 %1").arg(playbackBookmarks_.size()));
     }
 
     const auto addCameraItem = [this](QTreeWidgetItem *parent, const CameraInfo &camera) {
@@ -2642,6 +2811,30 @@ void MainWindow::rebuildCatalog() {
         else catalogTree_->addTopLevelItem(item);
         return item;
     };
+
+    if (catalogMode_ == 3) {
+        for (int index = 0; index < playbackBookmarks_.size(); ++index) {
+            const PlaybackBookmark &bookmark = playbackBookmarks_.at(index);
+            const auto camera = std::find_if(cameras_.cbegin(), cameras_.cend(), [&bookmark](const CameraInfo &item) {
+                return item.id == bookmark.cameraId;
+            });
+            const bool available = camera != cameras_.cend() && camera->canPlayback;
+            const QString title = bookmark.title.isEmpty() ? QStringLiteral("未命名书签") : bookmark.title;
+            const QString cameraName = camera == cameras_.cend() ? bookmark.cameraLabel : camera->alias;
+            auto *item = new QTreeWidgetItem(QStringList{
+                QStringLiteral("%1 · %2").arg(title, bookmark.position.toLocalTime().toString(QStringLiteral("MM-dd HH:mm:ss")))});
+            item->setData(0, CatalogRoles::ResourceKind, QStringLiteral("bookmark"));
+            item->setData(0, CatalogRoles::BookmarkIndex, index);
+            item->setIcon(0, IconProvider::instance().icon(ViewerIcon::Save, QSize(16, 16)));
+            item->setToolTip(0, available
+                ? QStringLiteral("%1\n%2").arg(cameraName, bookmark.note)
+                : QStringLiteral("%1\n该摄像头已不在当前回放授权范围。\n%2").arg(cameraName, bookmark.note));
+            item->setDisabled(!available);
+            catalogTree_->addTopLevelItem(item);
+        }
+        updateCatalogSummary();
+        return;
+    }
 
     if (catalogMode_ == 2) {
         for (int index = 0; index < savedViews_.size(); ++index) {
@@ -2711,6 +2904,10 @@ void MainWindow::assignCameraFromTree(QTreeWidgetItem *item, int) {
     const QString kind = item->data(0, CatalogRoles::ResourceKind).toString();
     if (kind == QStringLiteral("view")) {
         applySavedView(item->data(0, CatalogRoles::ViewIndex).toInt());
+        return;
+    }
+    if (kind == QStringLiteral("bookmark")) {
+        openPlaybackBookmark(item->data(0, CatalogRoles::BookmarkIndex).toInt());
         return;
     }
     const QList<QUuid> cameraIds = cameraIdsForItem(item);
@@ -2881,6 +3078,15 @@ void MainWindow::handleCatalogContextMenu(const QPoint &position) {
         else if (selected == deleteAction) deleteSavedView(viewIndex);
         return;
     }
+    if (kind == QStringLiteral("bookmark")) {
+        const int bookmarkIndex = item->data(0, CatalogRoles::BookmarkIndex).toInt();
+        auto *openAction = menu.addAction(QStringLiteral("打开此书签"));
+        auto *deleteAction = menu.addAction(QStringLiteral("删除本地书签"));
+        const QAction *selected = menu.exec(catalogTree_->viewport()->mapToGlobal(position));
+        if (selected == openAction) openPlaybackBookmark(bookmarkIndex);
+        else if (selected == deleteAction) deletePlaybackBookmark(bookmarkIndex);
+        return;
+    }
     const QList<QUuid> cameraIds = cameraIdsForItem(item);
     if (cameraIds.isEmpty()) return;
     auto *openAction = menu.addAction(cameraIds.size() > 1
@@ -2916,6 +3122,9 @@ void MainWindow::updateCatalogSummary() {
                                           .arg(cameraStatusSummaryText(ViewerLogic::summarizeCameraConnectivity(favoriteCameras()))));
     } else if (catalogMode_ == 2) {
         catalogSummaryLabel_->setText(QStringLiteral("已保存 %1 个本地视图").arg(savedViews_.size()));
+    } else if (catalogMode_ == 3) {
+        catalogSummaryLabel_->setText(QStringLiteral("本地书签：%1 个；书签不会同步到中心。")
+                                          .arg(playbackBookmarks_.size()));
     } else {
         catalogSummaryLabel_->setText(QStringLiteral("%1 · 可拖放到窗格")
                                           .arg(cameraStatusSummaryText(ViewerLogic::summarizeCameraConnectivity(cameras_))));
@@ -3050,7 +3259,7 @@ void MainWindow::loadPreferences() {
     if (playbackController_ != nullptr) {
         playbackController_->setSyncEnabled(settings.value(prefix + QStringLiteral("playbackSync"), true).toBool());
     }
-    catalogMode_ = std::clamp(settings.value(prefix + QStringLiteral("catalogMode"), 0).toInt(), 0, 2);
+    catalogMode_ = std::clamp(settings.value(prefix + QStringLiteral("catalogMode"), 0).toInt(), 0, 3);
 }
 
 void MainWindow::savePreferences() const {
@@ -3156,6 +3365,245 @@ void MainWindow::saveSavedViews() const {
     settings.setValue(
         accountSettingsPrefix(apiClient_->username()) + QStringLiteral("savedViews"),
         QJsonDocument(values).toJson(QJsonDocument::Compact));
+}
+
+void MainWindow::loadPlaybackBookmarks() {
+    QString errorMessage;
+    playbackBookmarks_ = BookmarkStore(apiClient_->username()).load(&errorMessage);
+    if (!errorMessage.isEmpty()) {
+        statusBar()->showMessage(errorMessage, 8000);
+    }
+}
+
+void MainWindow::savePlaybackBookmarks() {
+    QString errorMessage;
+    if (!BookmarkStore(apiClient_->username()).save(playbackBookmarks_, &errorMessage)) {
+        statusBar()->showMessage(errorMessage, 8000);
+    }
+}
+
+void MainWindow::captureTileScreenshot(VideoTileWidget *tile) {
+    if (tile == nullptr || !tile->camera().has_value()) {
+        statusBar()->showMessage(QStringLiteral("请先选择已打开的预览或回放窗格。"), 6000);
+        return;
+    }
+    const ScreenshotSaveResult result = ScreenshotService::savePng(
+        apiClient_->username(), tile->camera()->id, tile->captureFrame());
+    QLabel *targetLabel = playbackTiles_.contains(tile) ? playbackStatusLabel_ : statusLabel_;
+    if (!result.succeeded()) {
+        if (targetLabel != nullptr) targetLabel->setText(result.errorMessage);
+        return;
+    }
+    if (targetLabel != nullptr) {
+        targetLabel->setText(QStringLiteral("已保存当前画面截图。"));
+    }
+    statusBar()->showMessage(QStringLiteral("截图已保存到 %1").arg(QDir::toNativeSeparators(result.filePath)), 10000);
+}
+
+void MainWindow::addPlaybackBookmark(VideoTileWidget *tile) {
+    if (tile == nullptr || !tile->camera().has_value() || !playbackCursor_.isValid()) {
+        if (playbackStatusLabel_ != nullptr) {
+            playbackStatusLabel_->setText(QStringLiteral("请先选择正在播放且已定位的录像回放窗格。"));
+        }
+        return;
+    }
+    AppDialog dialog(QStringLiteral("添加本地书签"), this);
+    dialog.setModal(true);
+    dialog.setMinimumWidth(460);
+    auto *titleLabel = new QLabel(QStringLiteral("书签标题（可选）"), &dialog);
+    titleLabel->setObjectName(QStringLiteral("panelTitle"));
+    auto *titleEdit = new QLineEdit(&dialog);
+    titleEdit->setMaxLength(80);
+    titleEdit->setPlaceholderText(QStringLiteral("例如：异常人员出现"));
+    auto *noteLabel = new QLabel(QStringLiteral("备注（可选）"), &dialog);
+    noteLabel->setObjectName(QStringLiteral("panelTitle"));
+    auto *noteEdit = new QTextEdit(&dialog);
+    noteEdit->setPlaceholderText(QStringLiteral("仅保存到当前 Windows 用户的本地书签。"));
+    noteEdit->setMaximumHeight(110);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
+    if (auto *saveButton = buttons->button(QDialogButtonBox::Save)) {
+        saveButton->setText(QStringLiteral("保存书签"));
+        saveButton->setDefault(true);
+    }
+    if (auto *cancelButton = buttons->button(QDialogButtonBox::Cancel)) {
+        cancelButton->setText(QStringLiteral("取消"));
+    }
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    dialog.contentLayout()->addWidget(titleLabel);
+    dialog.contentLayout()->addWidget(titleEdit);
+    dialog.contentLayout()->addWidget(noteLabel);
+    dialog.contentLayout()->addWidget(noteEdit);
+    dialog.contentLayout()->addWidget(buttons);
+    titleEdit->setFocus();
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const CameraInfo camera = *tile->camera();
+    playbackBookmarks_.prepend({
+        QUuid::createUuid(),
+        camera.id,
+        QStringLiteral("%1  [%2]").arg(camera.alias, camera.code),
+        playbackCursor_.toUTC(),
+        QDateTime::currentDateTimeUtc(),
+        titleEdit->text().trimmed(),
+        noteEdit->toPlainText().trimmed().left(500)});
+    savePlaybackBookmarks();
+    rebuildCatalog();
+    if (playbackStatusLabel_ != nullptr) {
+        playbackStatusLabel_->setText(QStringLiteral("已添加本地书签。"));
+    }
+}
+
+void MainWindow::openPlaybackBookmark(int bookmarkIndex) {
+    if (bookmarkIndex < 0 || bookmarkIndex >= playbackBookmarks_.size()) {
+        return;
+    }
+    const PlaybackBookmark bookmark = playbackBookmarks_.at(bookmarkIndex);
+    const auto camera = std::find_if(cameras_.cbegin(), cameras_.cend(), [&bookmark](const CameraInfo &item) {
+        return item.id == bookmark.cameraId;
+    });
+    if (camera == cameras_.cend() || !camera->canPlayback) {
+        statusBar()->showMessage(QStringLiteral("该书签摄像头已不在当前回放授权范围。"), 8000);
+        return;
+    }
+    const QDateTime position = bookmark.position.toLocalTime();
+    const QDateTime startedAt = position.addSecs(-300);
+    const QDateTime endedAt = position.addSecs(300);
+    playbackStartedAt_->setDateTime(startedAt);
+    playbackEndedAt_->setDateTime(endedAt);
+    VideoTileWidget *target = selectedPlaybackTile_ != nullptr ? selectedPlaybackTile_ : playbackTiles_.first();
+    pendingBookmarkSeekPosition_ = position;
+    pendingBookmarkSeekTile_ = target;
+    if (activeWorkspace_ != 1) {
+        playbackTileToSkipOnNextRestore_ = target;
+        pendingInstantPlayback_ = PendingInstantPlayback{target, *camera, startedAt, endedAt};
+        switchWorkspace(1);
+        return;
+    }
+    selectPlaybackTile(target);
+    requestPlayback(target, *camera, startedAt, endedAt);
+    playbackStatusLabel_->setText(QStringLiteral("正在打开书签对应的录像回放。"));
+}
+
+void MainWindow::deletePlaybackBookmark(int bookmarkIndex) {
+    if (bookmarkIndex < 0 || bookmarkIndex >= playbackBookmarks_.size()) {
+        return;
+    }
+    const QString title = playbackBookmarks_.at(bookmarkIndex).title.isEmpty()
+        ? QStringLiteral("未命名书签")
+        : playbackBookmarks_.at(bookmarkIndex).title;
+    if (AppDialog::question(
+            this,
+            QStringLiteral("删除本地书签"),
+            QStringLiteral("确定删除书签“%1”吗？此操作不会影响中心录像。").arg(title)) != QDialogButtonBox::Yes) {
+        return;
+    }
+    playbackBookmarks_.removeAt(bookmarkIndex);
+    savePlaybackBookmarks();
+    rebuildCatalog();
+}
+
+void MainWindow::refreshPlaybackExports() {
+    apiClient_->loadPlaybackExports();
+}
+
+void MainWindow::requestPlaybackExport() {
+    if (!ensureWorkspaceInteraction(WorkspaceMode::Playback, QStringLiteral("导出录像")) ||
+        selectedPlaybackTile_ == nullptr || !selectedPlaybackTile_->camera().has_value()) {
+        return;
+    }
+    const CameraInfo camera = *selectedPlaybackTile_->camera();
+    if (!camera.canExport) {
+        playbackStatusLabel_->setText(QStringLiteral("当前账号没有此摄像头的录像导出权限，或导出边缘服务尚未就绪。"));
+        return;
+    }
+    const QDateTime startedAt = playbackStartedAt_->dateTime();
+    const QDateTime endedAt = playbackEndedAt_->dateTime();
+    if (!startedAt.isValid() || !endedAt.isValid() || startedAt >= endedAt) {
+        playbackStatusLabel_->setText(QStringLiteral("请先设置有效的录像导出时间范围。"));
+        return;
+    }
+    if (AppDialog::question(
+            this,
+            QStringLiteral("提交录像导出"),
+            QStringLiteral("将导出 %1 从 %2 至 %3 的录像。导出完成后可在“导出任务”面板下载。")
+                .arg(camera.alias,
+                     startedAt.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
+                     endedAt.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))) != QDialogButtonBox::Yes) {
+        return;
+    }
+    apiClient_->createPlaybackExport(camera.id, startedAt, endedAt);
+}
+
+void MainWindow::downloadPlaybackExport(const QUuid &exportId) {
+    const std::optional<PlaybackExportInfo> exportInfo = exportController_ != nullptr
+        ? exportController_->find(exportId)
+        : std::nullopt;
+    if (!exportInfo.has_value() || !exportInfo->artifact.has_value()) {
+        playbackStatusLabel_->setText(QStringLiteral("所选导出文件不可下载，请先刷新任务状态。"));
+        return;
+    }
+    const QString downloads = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    const QString defaultPath = QDir(downloads).filePath(
+        QStringLiteral("VisiCore/%1").arg(exportInfo->artifact->fileName));
+    const QString targetPath = QFileDialog::getSaveFileName(
+        this,
+        QStringLiteral("保存录像导出"),
+        defaultPath,
+        QStringLiteral("MP4 视频 (*.mp4)"));
+    if (targetPath.isEmpty()) {
+        return;
+    }
+    QNetworkReply *reply = apiClient_->downloadPlaybackExport(exportId);
+    if (reply == nullptr) {
+        playbackStatusLabel_->setText(QStringLiteral("当前登录状态已失效，请重新登录。"));
+        return;
+    }
+    auto *file = new QSaveFile(targetPath);
+    if (!file->open(QIODevice::WriteOnly)) {
+        delete file;
+        reply->abort();
+        reply->deleteLater();
+        playbackStatusLabel_->setText(QStringLiteral("无法创建导出文件，请检查目标目录权限。"));
+        return;
+    }
+    auto *hash = new QCryptographicHash(QCryptographicHash::Sha256);
+    auto *writeFailed = new bool(false);
+    connect(reply, &QNetworkReply::readyRead, this, [reply, file, hash, writeFailed]() {
+        const QByteArray chunk = reply->readAll();
+        if (chunk.isEmpty()) {
+            return;
+        }
+        hash->addData(chunk);
+        if (file->write(chunk) != chunk.size()) {
+            *writeFailed = true;
+            reply->abort();
+        }
+    });
+    connect(reply, &QNetworkReply::finished, this, [this, reply, file, hash, writeFailed, expected = exportInfo->artifact->sha256]() {
+        const QByteArray remainder = reply->readAll();
+        if (!remainder.isEmpty()) {
+            hash->addData(remainder);
+            if (file->write(remainder) != remainder.size()) {
+                *writeFailed = true;
+            }
+        }
+        const bool validHash = ExportDownloadVerifier::matchesSha256(expected, *hash);
+        const bool succeeded = reply->error() == QNetworkReply::NoError && !*writeFailed && validHash && file->commit();
+        if (succeeded) {
+            playbackStatusLabel_->setText(QStringLiteral("录像导出已校验并保存。"));
+            statusBar()->showMessage(QStringLiteral("已保存到 %1").arg(QDir::toNativeSeparators(file->fileName())), 10000);
+        } else if (!validHash) {
+            playbackStatusLabel_->setText(QStringLiteral("导出文件校验失败，已放弃保存。"));
+        } else {
+            playbackStatusLabel_->setText(QStringLiteral("下载录像导出失败，请稍后重试。"));
+        }
+        delete writeFailed;
+        delete hash;
+        delete file;
+        reply->deleteLater();
+    });
 }
 
 void MainWindow::saveCurrentView() {
@@ -4044,6 +4492,18 @@ void MainWindow::handleSessionCreated(const QUuid &requestId, const StreamSessio
             }
             anchorPlaybackClock(session.id, transport, false);
             playbackStatusLabel_->setText(QStringLiteral("回放会话已建立，正在接入录像流。"));
+            if (pendingBookmarkSeekTile_ == tile && pendingBookmarkSeekPosition_.isValid()) {
+                const QDateTime bookmarkPosition = pendingBookmarkSeekPosition_;
+                pendingBookmarkSeekTile_ = nullptr;
+                pendingBookmarkSeekPosition_ = {};
+                QTimer::singleShot(350, this, [this, tile, sessionId = session.id, bookmarkPosition]() {
+                    if (tile == nullptr || tile->sessionId() != sessionId) {
+                        return;
+                    }
+                    selectPlaybackTile(tile);
+                    seekPlayback(bookmarkPosition);
+                });
+            }
             updatePlaybackControlState();
         } else {
             statusLabel_->setText(QStringLiteral("播放会话已建立。"));

@@ -12,6 +12,7 @@ enum class DockPanelId {
     Ptz = 1,
     PlaybackSearch = 2,
     RecordingTimeline = 3,
+    ExportTasks = 4,
 };
 
 enum class ViewerConnectionState {
@@ -45,6 +46,11 @@ enum class ViewerActionId {
     ShowPtz,
     ShowPlaybackSearch,
     ShowRecordingTimeline,
+    ShowExportTasks,
+    ExportPlayback,
+    CaptureScreenshot,
+    AddBookmark,
+    OpenScreenshotFolder,
     LockDockLayout,
     RestoreDefaultLayout,
     ChangePassword,

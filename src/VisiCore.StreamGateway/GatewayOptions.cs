@@ -12,6 +12,11 @@ public sealed class GatewayOptions
     public string? DeviceWorkerAccessToken { get; init; }
     public string? CommandToken { get; init; }
     public bool AllowInsecureCenterHttpForDevelopment { get; init; }
+    public bool AllowInsecureLoopbackCenterHttpForInternalRuntime { get; init; }
+    public bool AllowInsecureClientHttpForDevelopment { get; init; }
+    public bool EnableDeviceAssignments { get; init; } = true;
+    public string[] TrustedDevelopmentHttpHosts { get; init; } = [];
+    public string[] TrustedInsecureHttpOrigins { get; init; } = [];
     public int AssignmentRefreshSeconds { get; init; } = 30;
     public int SessionInspectionSeconds { get; init; } = 5;
     public int MaxReadersPerPath { get; init; } = 100;
@@ -23,10 +28,10 @@ public sealed class GatewayOptions
             string.IsNullOrWhiteSpace(CenterBaseUri) ||
             !Uri.TryCreate(CenterBaseUri, UriKind.Absolute, out var centerBaseUri) ||
             (!centerBaseUri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
-             !(AllowInsecureCenterHttpForDevelopment && centerBaseUri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) && centerBaseUri.IsLoopback)) ||
-            string.IsNullOrWhiteSpace(CenterControlToken) || CenterControlToken.Length < 32 ||
-            string.IsNullOrWhiteSpace(DeviceWorkerAccessToken) || DeviceWorkerAccessToken.Length < 32 ||
-            string.IsNullOrWhiteSpace(CommandToken) || CommandToken.Length < 32 ||
+             !(IsAllowedCenterHttpForInternalOrDevelopment(centerBaseUri))) ||
+            !HasValidToken(CenterControlToken) ||
+            (EnableDeviceAssignments && !HasValidToken(DeviceWorkerAccessToken)) ||
+            !HasValidToken(CommandToken) ||
             string.Equals(CenterControlToken, CommandToken, StringComparison.Ordinal) ||
             AssignmentRefreshSeconds is < 5 or > 300 || SessionInspectionSeconds is < 1 or > 30 ||
             MaxReadersPerPath is < 1 or > 1000 ||
@@ -84,6 +89,39 @@ public sealed class GatewayOptions
             SHA256.HashData(Encoding.UTF8.GetBytes(CommandToken)),
             SHA256.HashData(Encoding.UTF8.GetBytes(presentedToken)));
     }
+
+    public bool IsTrustedInsecureClientOrigin(HostString host)
+    {
+        if (host.HasValue && Uri.TryCreate($"http://{host.Value}/", UriKind.Absolute, out var origin) &&
+            IsTrustedInsecureHttpOrigin(origin))
+        {
+            return true;
+        }
+
+        return host.HasValue && (host.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+                                 IPAddress.TryParse(host.Host, out var address) && IPAddress.IsLoopback(address));
+    }
+
+    private bool IsTrustedDevelopmentHttpHost(string host) =>
+        TrustedDevelopmentHttpHosts.Any(value =>
+            !string.IsNullOrWhiteSpace(value) &&
+            string.Equals(value.Trim(), host, StringComparison.OrdinalIgnoreCase));
+
+    private bool IsTrustedInsecureHttpOrigin(Uri uri) =>
+        TrustedInsecureHttpOrigins.Any(value =>
+            Uri.TryCreate(value, UriKind.Absolute, out var trustedOrigin) &&
+            trustedOrigin.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(trustedOrigin.GetLeftPart(UriPartial.Authority), uri.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase));
+
+    private bool IsAllowedCenterHttpForInternalOrDevelopment(Uri uri) =>
+        uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+        ((AllowInsecureLoopbackCenterHttpForInternalRuntime && uri.IsLoopback) ||
+         (AllowInsecureCenterHttpForDevelopment &&
+          (uri.IsLoopback || IsTrustedDevelopmentHttpHost(uri.Host))));
+
+    private bool HasValidToken(string? token) =>
+        !string.IsNullOrWhiteSpace(token) &&
+        token.Length >= (AllowInsecureCenterHttpForDevelopment ? 24 : 32);
 }
 
 public sealed class MediaMtxOptions

@@ -25,6 +25,9 @@ bool isPlaybackAction(ViewerActionId actionId) {
         case ViewerActionId::PlaybackPause:
         case ViewerActionId::PlaybackResume:
         case ViewerActionId::PlaybackSync:
+        case ViewerActionId::ShowExportTasks:
+        case ViewerActionId::ExportPlayback:
+        case ViewerActionId::AddBookmark:
             return true;
         default:
             return false;
@@ -129,6 +132,11 @@ QList<ViewerActionId> WorkspaceController::allActionIds() {
         ViewerActionId::ShowPtz,
         ViewerActionId::ShowPlaybackSearch,
         ViewerActionId::ShowRecordingTimeline,
+        ViewerActionId::ShowExportTasks,
+        ViewerActionId::ExportPlayback,
+        ViewerActionId::CaptureScreenshot,
+        ViewerActionId::AddBookmark,
+        ViewerActionId::OpenScreenshotFolder,
         ViewerActionId::LockDockLayout,
         ViewerActionId::RestoreDefaultLayout,
         ViewerActionId::ChangePassword,

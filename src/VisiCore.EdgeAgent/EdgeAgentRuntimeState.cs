@@ -10,6 +10,7 @@ public sealed class EdgeAgentRuntimeState
         null,
         null,
         0,
+        0,
         null,
         null,
         DateTimeOffset.UtcNow);
@@ -49,7 +50,7 @@ public sealed class EdgeAgentRuntimeState
         }
     }
 
-    public void SetRunning(string? configurationVersion, int credentialEnvelopeCount)
+    public void SetRunning(string? configurationVersion, int credentialEnvelopeCount, int assignedRecorderCount)
     {
         lock (gate)
         {
@@ -58,6 +59,7 @@ public sealed class EdgeAgentRuntimeState
                 Status = "running",
                 ConfigurationVersion = configurationVersion ?? snapshot.ConfigurationVersion,
                 CredentialEnvelopeCount = credentialEnvelopeCount,
+                AssignedRecorderCount = assignedRecorderCount,
                 LastHeartbeatAt = DateTimeOffset.UtcNow,
                 LastFailureKind = null,
                 UpdatedAt = DateTimeOffset.UtcNow
@@ -86,6 +88,7 @@ public sealed record EdgeAgentRuntimeSnapshot(
     string? ConfigurationVersion,
     DateTimeOffset? LastHeartbeatAt,
     int CredentialEnvelopeCount,
+    int AssignedRecorderCount,
     string? LastFailureKind,
     DateTimeOffset? LastDiagnosticAt,
     DateTimeOffset UpdatedAt);

@@ -9,33 +9,169 @@ permissions:
   packages: write
 
 jobs:
+  windows-msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet publish src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-agent
+      - run: dotnet publish src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-host-agent
+      - run: dotnet publish src/VisiCore.EdgeBootstrap/VisiCore.EdgeBootstrap.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-bootstrap
+      - run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          dotnet build deploy/windows/VisiCore.EdgeNode.Installer.wixproj --configuration Release "-p:ProductVersion=$version" "-p:EdgeAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-agent" "-p:EdgeHostAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-host-agent" "-p:EdgeBootstrapPublishDir=${{ github.workspace }}\artifacts\windows\edge-bootstrap"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: visicore-edge-node-msi
+          path: deploy/windows/bin/x64/Release/VisiCore.EdgeNode.Installer.msi
+
+  windows-viewer-msi:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          arch: 'win64_mingw'
+          modules: 'qtsvg'
+          tools: 'tools_mingw1310'
+      - shell: pwsh
+        env:
+          VISICORE_MPV_RUNTIME_URL: ${{ vars.VISICORE_MPV_RUNTIME_URL }}
+          VISICORE_MPV_RUNTIME_SHA256: ${{ vars.VISICORE_MPV_RUNTIME_SHA256 }}
+          VISICORE_MPV_RUNTIME_VERSION: ${{ vars.VISICORE_MPV_RUNTIME_VERSION }}
+          VISICORE_MPV_RUNTIME_LICENSE_URL: ${{ vars.VISICORE_MPV_RUNTIME_LICENSE_URL }}
+        run: |
+          $required = @($env:VISICORE_MPV_RUNTIME_URL, $env:VISICORE_MPV_RUNTIME_SHA256, $env:VISICORE_MPV_RUNTIME_VERSION, $env:VISICORE_MPV_RUNTIME_LICENSE_URL)
+          if ($required | Where-Object { [string]::IsNullOrWhiteSpace($_) }) { throw '缺少受控 libmpv 发行变量，拒绝制作 Viewer MSI。' }
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $repositoryVersion = (Get-Content VERSION -Raw).Trim()
+          if ($version -ne $repositoryVersion) { throw "标签版本 $version 与 VERSION $repositoryVersion 不一致。" }
+          $qtConfig = Get-ChildItem 'C:\Qt' -Recurse -Filter Qt6Config.cmake | Select-Object -First 1
+          if ($null -eq $qtConfig) { throw '未找到 Qt6Config.cmake。' }
+          $qtRoot = $qtConfig.Directory.Parent.Parent.Parent.FullName
+          $mingwBin = Get-ChildItem 'C:\Qt\Tools' -Directory -Filter 'mingw*_64' | Select-Object -First 1
+          if ($null -eq $mingwBin) { throw '未找到 Qt MinGW 工具链。' }
+          $env:Path = "$($mingwBin.FullName)\bin;$env:Path"
+          $runtimeRoot = Join-Path $env:RUNNER_TEMP 'visicore-mpv-runtime'
+          New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
+          Invoke-WebRequest -Uri $env:VISICORE_MPV_RUNTIME_URL -OutFile (Join-Path $runtimeRoot 'libmpv-2.dll')
+          Invoke-WebRequest -Uri $env:VISICORE_MPV_RUNTIME_LICENSE_URL -OutFile (Join-Path $runtimeRoot 'LICENSE.txt')
+          $actualHash = (Get-FileHash -LiteralPath (Join-Path $runtimeRoot 'libmpv-2.dll') -Algorithm SHA256).Hash
+          if ($actualHash -ne $env:VISICORE_MPV_RUNTIME_SHA256.ToUpperInvariant()) { throw 'libmpv SHA-256 不匹配。' }
+          .\tools\Build-VisiCoreViewerWindows.ps1 `
+            -QtRoot $qtRoot `
+            -MpvRoot $runtimeRoot `
+            -MpvVersion $env:VISICORE_MPV_RUNTIME_VERSION `
+            -MpvSource $env:VISICORE_MPV_RUNTIME_URL `
+            -MpvSha256 $env:VISICORE_MPV_RUNTIME_SHA256 `
+            -MpvLicenseFile (Join-Path $runtimeRoot 'LICENSE.txt')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: visicore-viewer-msi
+          path: |
+            artifacts/windows/viewer/visicore-viewer-v*.msi
+            artifacts/windows/viewer/viewer-sha256.txt
+            artifacts/windows/viewer/visicore-viewer-runtime.json
+
   publish:
+    needs: [windows-msi, windows-viewer-msi]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: visicore-edge-node-msi
+          path: artifacts/release
+      - uses: actions/download-artifact@v4
+        with:
+          name: visicore-viewer-msi
+          path: artifacts/release
+      - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.Setup/VisiCore.Setup.csproj --build-arg ASSEMBLY=VisiCore.Setup.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-setup:${{ github.ref_name }} --push .
-      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.Api/VisiCore.Api.csproj --build-arg ASSEMBLY=VisiCore.Api.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-api:${{ github.ref_name }} --push .
-      - run: docker build --file src/VisiCore.Admin/Dockerfile --tag ghcr.io/${{ github.repository_owner }}/visicore-admin:${{ github.ref_name }} --push src/VisiCore.Admin
-      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.NotificationWorker/VisiCore.NotificationWorker.csproj --build-arg ASSEMBLY=VisiCore.NotificationWorker.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-notification-worker:${{ github.ref_name }} --push .
-      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.StreamGateway/VisiCore.StreamGateway.csproj --build-arg ASSEMBLY=VisiCore.StreamGateway.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-stream-gateway:${{ github.ref_name }} --push .
-      - run: docker build --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.OnvifEdgeWorker/VisiCore.OnvifEdgeWorker.csproj --build-arg ASSEMBLY=VisiCore.OnvifEdgeWorker.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-onvif-edge-worker:${{ github.ref_name }} --push .
+      - run: docker build --file deploy/core/Dockerfile --tag ghcr.io/${{ github.repository_owner }}/visicore-core:${{ github.ref_name }} --push .
+      - run: dotnet publish src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/linux-host-agent/linux-x64
+      - run: dotnet publish src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj --configuration Release --runtime linux-arm64 --self-contained true -p:PublishSingleFile=true --output artifacts/linux-host-agent/linux-arm64
+      - run: mkdir -p artifacts && docker buildx build --platform linux/amd64,linux/arm64 --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj --build-arg ASSEMBLY=VisiCore.EdgeAgent.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-edge-agent:${{ github.ref_name }} --metadata-file artifacts/edge-agent-image-metadata.json --push .
+      - run: docker buildx build --platform linux/amd64,linux/arm64 --file deploy/linux/Dockerfile.dotnet --build-arg PROJECT=src/VisiCore.EdgeNodeConfig/VisiCore.EdgeNodeConfig.csproj --build-arg ASSEMBLY=VisiCore.EdgeNodeConfig.dll --tag ghcr.io/${{ github.repository_owner }}/visicore-edge-node-config:${{ github.ref_name }} --metadata-file artifacts/edge-node-config-image-metadata.json --push .
+      - run: |
+          mkdir -p artifacts/release/linux-edge-agent
+          cp deploy/linux/edge-agent.compose.yaml artifacts/release/linux-edge-agent/compose.yaml
+          cp deploy/linux/edge-agent.env.example artifacts/release/linux-edge-agent/.env.example
+          cp deploy/edge-host-agent/install-linux-host-agent.sh artifacts/release/linux-edge-agent/install-host-agent.sh
+          cp deploy/edge-host-agent/visicore-edge-host-agent.service artifacts/release/linux-edge-agent/visicore-edge-host-agent.service
+          cp deploy/edge-host-agent/host-agent.linux.json.example artifacts/release/linux-edge-agent/host-agent.linux.json.example
+          mkdir -p artifacts/release/linux-edge-agent/host-agent/linux-x64 artifacts/release/linux-edge-agent/host-agent/linux-arm64
+          cp artifacts/linux-host-agent/linux-x64/VisiCore.EdgeHostAgent artifacts/release/linux-edge-agent/host-agent/linux-x64/
+          cp artifacts/linux-host-agent/linux-arm64/VisiCore.EdgeHostAgent artifacts/release/linux-edge-agent/host-agent/linux-arm64/
+          chmod +x artifacts/release/linux-edge-agent/install-host-agent.sh
+          chmod +x artifacts/release/linux-edge-agent/host-agent/linux-x64/VisiCore.EdgeHostAgent artifacts/release/linux-edge-agent/host-agent/linux-arm64/VisiCore.EdgeHostAgent
+          image_digest=$(jq -r '."containerimage.digest"' artifacts/edge-agent-image-metadata.json)
+          config_image_digest=$(jq -r '."containerimage.digest"' artifacts/edge-node-config-image-metadata.json)
+          test -n "$image_digest" && test "$image_digest" != "null"
+          test -n "$config_image_digest" && test "$config_image_digest" != "null"
+          sed -i "s#visicore/edge-agent:v0.3.0#ghcr.io/${{ github.repository_owner }}/visicore-edge-agent@$image_digest#" artifacts/release/linux-edge-agent/compose.yaml
+          sed -i "s#visicore/edge-node-config:v0.3.0#ghcr.io/${{ github.repository_owner }}/visicore-edge-node-config@$config_image_digest#" artifacts/release/linux-edge-agent/compose.yaml
+          tar --sort=name --mtime='UTC 2020-01-01' -czf artifacts/release/visicore-edge-agent-${{ github.ref_name }}-linux.tar.gz -C artifacts/release/linux-edge-agent .
       - uses: anchore/sbom-action@v0
         with:
           artifact-name: visicore-sbom.spdx.json
-          output-file: visicore-sbom.spdx.json
+          output-file: artifacts/release/visicore-sbom.spdx.json
           path: .
-      - run: sha256sum compose.yaml NOTICE THIRD_PARTY_NOTICES.md visicore-sbom.spdx.json > release-sha256.txt
+      - run: |
+          mv artifacts/release/VisiCore.EdgeNode.Installer.msi artifacts/release/visicore-edge-node-${{ github.ref_name }}.msi
+      - name: 生成并签名发行清单
+        env:
+          EDGE_RELEASE_SIGNING_KEY_BASE64: ${{ secrets.EDGE_RELEASE_SIGNING_KEY_BASE64 }}
+          EDGE_RELEASE_SIGNING_KEY_ID: ${{ vars.EDGE_RELEASE_SIGNING_KEY_ID }}
+        run: |
+          test -n "$EDGE_RELEASE_SIGNING_KEY_BASE64"
+          test -n "$EDGE_RELEASE_SIGNING_KEY_ID"
+          printf '%s' "$EDGE_RELEASE_SIGNING_KEY_BASE64" | base64 --decode > /tmp/edge-release-signing-key.pem
+          windows_hash=$(sha256sum artifacts/release/visicore-edge-node-${{ github.ref_name }}.msi | cut -d ' ' -f1)
+          linux_hash=$(sha256sum artifacts/release/visicore-edge-agent-${{ github.ref_name }}-linux.tar.gz | cut -d ' ' -f1)
+          cat > artifacts/release/edge-release-windows-x64.json <<EOF
+          {"releaseId":"${{ github.ref_name }}-windows-x64","operationType":"deployment","targetPlatform":"windows","targetArchitecture":"x64","artifactUrl":"https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/visicore-edge-node-${{ github.ref_name }}.msi","artifactSha256":"$windows_hash","minimumHostAgentVersion":"0.3.0","signingPublicKeyId":"$EDGE_RELEASE_SIGNING_KEY_ID","issuedAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","expiresAt":"$(date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ)"}
+          EOF
+          cat > artifacts/release/edge-release-linux-amd64.json <<EOF
+          {"releaseId":"${{ github.ref_name }}-linux-amd64","operationType":"deployment","targetPlatform":"linux","targetArchitecture":"amd64","artifactUrl":"https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/visicore-edge-agent-${{ github.ref_name }}-linux.tar.gz","artifactSha256":"$linux_hash","minimumHostAgentVersion":"0.3.0","signingPublicKeyId":"$EDGE_RELEASE_SIGNING_KEY_ID","issuedAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","expiresAt":"$(date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ)"}
+          EOF
+          cat > artifacts/release/edge-release-linux-arm64.json <<EOF
+          {"releaseId":"${{ github.ref_name }}-linux-arm64","operationType":"deployment","targetPlatform":"linux","targetArchitecture":"arm64","artifactUrl":"https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/visicore-edge-agent-${{ github.ref_name }}-linux.tar.gz","artifactSha256":"$linux_hash","minimumHostAgentVersion":"0.3.0","signingPublicKeyId":"$EDGE_RELEASE_SIGNING_KEY_ID","issuedAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","expiresAt":"$(date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ)"}
+          EOF
+          openssl dgst -sha256 -sign /tmp/edge-release-signing-key.pem -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 artifacts/release/edge-release-windows-x64.json | base64 -w 0 > artifacts/release/edge-release-windows-x64.signature.base64
+          openssl dgst -sha256 -sign /tmp/edge-release-signing-key.pem -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 artifacts/release/edge-release-linux-amd64.json | base64 -w 0 > artifacts/release/edge-release-linux-amd64.signature.base64
+          openssl dgst -sha256 -sign /tmp/edge-release-signing-key.pem -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 artifacts/release/edge-release-linux-arm64.json | base64 -w 0 > artifacts/release/edge-release-linux-arm64.signature.base64
+          sha256sum artifacts/release/visicore-edge-node-${{ github.ref_name }}.msi artifacts/release/visicore-viewer-${{ github.ref_name }}.msi artifacts/release/viewer-sha256.txt artifacts/release/visicore-viewer-runtime.json artifacts/release/visicore-edge-agent-${{ github.ref_name }}-linux.tar.gz artifacts/release/visicore-sbom.spdx.json artifacts/release/edge-release-windows-x64.json artifacts/release/edge-release-windows-x64.signature.base64 artifacts/release/edge-release-linux-amd64.json artifacts/release/edge-release-linux-amd64.signature.base64 artifacts/release/edge-release-linux-arm64.json artifacts/release/edge-release-linux-arm64.signature.base64 > artifacts/release/release-sha256.txt
+          rm -f /tmp/edge-release-signing-key.pem
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            compose.yaml
-            release-sha256.txt
+            artifacts/release/visicore-edge-node-${{ github.ref_name }}.msi
+            artifacts/release/visicore-viewer-${{ github.ref_name }}.msi
+            artifacts/release/viewer-sha256.txt
+            artifacts/release/visicore-viewer-runtime.json
+            artifacts/release/visicore-edge-agent-${{ github.ref_name }}-linux.tar.gz
+            artifacts/release/release-sha256.txt
+            artifacts/release/visicore-sbom.spdx.json
+            artifacts/release/edge-release-windows-x64.json
+            artifacts/release/edge-release-windows-x64.signature.base64
+            artifacts/release/edge-release-linux-amd64.json
+            artifacts/release/edge-release-linux-amd64.signature.base64
+            artifacts/release/edge-release-linux-arm64.json
+            artifacts/release/edge-release-linux-arm64.signature.base64
             NOTICE
             THIRD_PARTY_NOTICES.md
-            visicore-sbom.spdx.json

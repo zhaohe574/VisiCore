@@ -11,9 +11,9 @@ using VisiCore.Persistence;
 namespace VisiCore.Api;
 
 /// <summary>
-/// Linux 边缘 Agent 的配对、配置和受控运维控制面。设备凭据的可解封内容不会进入此服务。
+/// 双形态边缘 Agent 的配对、配置和受控运维控制面。设备凭据的可解封内容不会进入此服务。
 /// </summary>
-public sealed class LinuxEdgeAgentControlService(PlatformDbContext dbContext)
+public class EdgeAgentControlService(PlatformDbContext dbContext)
 {
     public async Task<CreatedEdgeAgentEnrollment> CreateEnrollmentAsync(
         string name,
@@ -46,7 +46,7 @@ public sealed class LinuxEdgeAgentControlService(PlatformDbContext dbContext)
         if (string.IsNullOrWhiteSpace(request.EnrollmentCode) ||
             string.IsNullOrWhiteSpace(request.AgentVersion) ||
             request.PublicKey is null ||
-            !IsLinuxPlatform(request.Platform))
+            !TryNormalizePlatform(request.Platform, out var platform))
         {
             throw new ArgumentException("边缘节点注册请求无效。", nameof(request));
         }
@@ -83,7 +83,7 @@ public sealed class LinuxEdgeAgentControlService(PlatformDbContext dbContext)
             Id = request.PublicKey.AgentId,
             DeviceWorkerId = worker.Id,
             Name = enrollment.Name,
-            Platform = "linux",
+            Platform = platform,
             AgentVersion = request.AgentVersion.Trim(),
             PublicKeyId = request.PublicKey.KeyId.Trim(),
             SubjectPublicKeyInfoBase64 = request.PublicKey.SubjectPublicKeyInfoBase64.Trim(),
@@ -171,6 +171,32 @@ public sealed class LinuxEdgeAgentControlService(PlatformDbContext dbContext)
         return configuration is null
             ? new EdgeAgentConfigurationResponse(agent.ConfigurationVersion, "{}", "applied")
             : new EdgeAgentConfigurationResponse(configuration.Version, configuration.ConfigurationJson, configuration.Status);
+    }
+
+    public async Task ReportConfigurationStatusAsync(
+        EdgeAgentEntity agent,
+        EdgeAgentConfigurationStatusReport report,
+        CancellationToken cancellationToken)
+    {
+        if (report.Version < 1 ||
+            (!report.Applied && (string.IsNullOrWhiteSpace(report.FailureKind) ||
+                                !Regex.IsMatch(report.FailureKind, "^[a-z0-9_]{3,64}$"))))
+        {
+            throw new ArgumentException("边缘节点配置回执无效。", nameof(report));
+        }
+
+        var configuration = await dbContext.EdgeAgentConfigurations.SingleOrDefaultAsync(
+            item => item.EdgeAgentId == agent.Id && item.Version == report.Version,
+            cancellationToken);
+        if (configuration is null)
+        {
+            throw new ArgumentException("边缘节点配置版本不存在。", nameof(report));
+        }
+
+        configuration.Status = report.Applied ? "applied" : "rejected";
+        configuration.AppliedAt = report.Applied ? DateTimeOffset.UtcNow : null;
+        configuration.FailureSummary = report.Applied ? null : report.FailureKind!.Trim();
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<EdgeAgentCredentialEnvelopeResponse>> GetCredentialEnvelopesAsync(
@@ -462,10 +488,26 @@ public sealed class LinuxEdgeAgentControlService(PlatformDbContext dbContext)
         return normalized;
     }
 
-    private static bool IsLinuxPlatform(string? platform) =>
-        !string.IsNullOrWhiteSpace(platform) &&
-        (string.Equals(platform, "linux", StringComparison.OrdinalIgnoreCase) ||
-         platform.StartsWith("linux-", StringComparison.OrdinalIgnoreCase));
+    private static bool TryNormalizePlatform(string? platform, out string normalized)
+    {
+        normalized = string.Empty;
+        if (string.IsNullOrWhiteSpace(platform))
+        {
+            return false;
+        }
+        var value = platform.Trim().ToLowerInvariant();
+        if (value == "linux" || value.StartsWith("linux-", StringComparison.Ordinal))
+        {
+            normalized = "linux";
+            return true;
+        }
+        if (value == "windows" || value.StartsWith("windows-", StringComparison.Ordinal))
+        {
+            normalized = "windows";
+            return true;
+        }
+        return false;
+    }
 
     private static string GetWorkerName(string agentName) => $"edge-agent-{agentName}";
 
@@ -489,6 +531,7 @@ public sealed record EnrollEdgeAgentRequest(
 public sealed record EnrolledEdgeAgent(Guid AgentId, Guid WorkerId, string WorkerToken, int ConfigurationVersion);
 public sealed record EdgeAgentHeartbeatRequest(string AgentVersion, string? CapabilitiesJson, string? ServiceStatusJson);
 public sealed record EdgeAgentConfigurationResponse(int Version, string ConfigurationJson, string Status);
+public sealed record EdgeAgentConfigurationStatusReport(int Version, bool Applied, string? FailureKind);
 public sealed record EdgeAgentCredentialEnvelopeResponse(
     Guid CredentialId,
     string CredentialName,
@@ -515,3 +558,9 @@ public sealed record DeviceCredentialEnvelopeInput(
     string CiphertextBase64,
     string AuthenticationTagBase64,
     int SchemaVersion = AgentCredentialEnvelopeAlgorithms.CurrentSchemaVersion);
+
+/// <summary>
+/// 旧服务名称仅保留给现有扩展和测试；新代码必须使用 <see cref="EdgeAgentControlService"/>。
+/// </summary>
+[Obsolete("请改用 EdgeAgentControlService。")]
+public sealed class LinuxEdgeAgentControlService(PlatformDbContext dbContext) : EdgeAgentControlService(dbContext);

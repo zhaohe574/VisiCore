@@ -6,6 +6,7 @@ namespace VisiCore.StreamGateway;
 
 public interface IMediaMtxClient
 {
+    Task ProbeAsync(CancellationToken cancellationToken);
     Task ApplyPullPathAsync(string pathName, Uri sourceUri, CancellationToken cancellationToken);
     Task ApplyPublisherPathAsync(string pathName, CancellationToken cancellationToken);
     Task<bool> IsPathReadyAsync(string pathName, CancellationToken cancellationToken);
@@ -14,6 +15,12 @@ public interface IMediaMtxClient
 
 public sealed class MediaMtxClient(HttpClient httpClient, MediaMtxOptions options, GatewayOptions gatewayOptions) : IMediaMtxClient
 {
+    public async Task ProbeAsync(CancellationToken cancellationToken)
+    {
+        using var response = await httpClient.GetAsync("v3/config/global/get", cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
     public async Task ApplyPathAsync(
         string pathName,
         Uri sourceUri,

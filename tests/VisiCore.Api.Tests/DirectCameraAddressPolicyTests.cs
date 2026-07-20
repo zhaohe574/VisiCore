@@ -7,6 +7,27 @@ namespace VisiCore.Api.Tests;
 
 public sealed class DirectCameraAddressPolicyTests
 {
+    [Theory(DisplayName = "设备通道会生成默认主子码流映射")]
+    [InlineData(1, 101, 102)]
+    [InlineData(12, 1201, 1202)]
+    public void DefaultChannelStreamMapUsesChannelStreamNumbers(int inputChannel, int expectedMain, int expectedSub)
+    {
+        var valid = DirectCameraAddressPolicy.TryCreateDefaultStreamingMap(inputChannel, out var mapping);
+
+        Assert.True(valid);
+        using var document = JsonDocument.Parse(mapping);
+        Assert.Equal(expectedMain, document.RootElement.GetProperty("main").GetInt32());
+        Assert.Equal(expectedSub, document.RootElement.GetProperty("sub").GetInt32());
+    }
+
+    [Fact(DisplayName = "超出整数范围的设备通道不能生成默认映射")]
+    public void DefaultChannelStreamMapRejectsUnsupportedChannel()
+    {
+        var valid = DirectCameraAddressPolicy.TryCreateDefaultStreamingMap(21_474_837, out _);
+
+        Assert.False(valid);
+    }
+
     [Fact(DisplayName = "单个 RTSP 地址会安全复用为主子码流")]
     public void SingleAddressCreatesMainAndSubMappings()
     {

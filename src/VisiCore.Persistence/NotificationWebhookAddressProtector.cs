@@ -3,11 +3,36 @@ using System.Text;
 
 namespace VisiCore.Persistence;
 
+/// <summary>
+/// 使用仅保存在核心配置卷中的运行期主密钥保护通知 Webhook 地址。
+/// 数据库只保存 AES-GCM 密文，核心运行环境不依赖 Windows DPAPI。
+/// </summary>
 public sealed class NotificationWebhookAddressProtector
 {
-    public const string CurrentKeyVersion = "dpapi-local-machine-v1";
-    public const NotificationChannelWebhookProtectionMode CurrentProtectionMode = NotificationChannelWebhookProtectionMode.WindowsDpapiLocalMachine;
-    private const string EntropyPurpose = "VisiCore.NotificationWebhookAddress";
+    public const string CurrentKeyVersion = "runtime-config-aes-gcm-v1";
+    public const NotificationChannelWebhookProtectionMode CurrentProtectionMode = NotificationChannelWebhookProtectionMode.AesGcmRuntimeKey;
+    private const int NonceSize = 12;
+    private const int TagSize = 16;
+    private static readonly byte[] TestOnlyKey = SHA256.HashData(Encoding.UTF8.GetBytes("VisiCore.NotificationWebhookAddress.Tests"));
+    private readonly byte[] masterKey;
+
+    // 仅保留给单元测试和脱离宿主的开发验证；生产运行必须注入 setup 写入的主密钥。
+    public NotificationWebhookAddressProtector() : this(TestOnlyKey)
+    {
+    }
+
+    public NotificationWebhookAddressProtector(string masterKeyBase64) : this(ParseMasterKey(masterKeyBase64))
+    {
+    }
+
+    private NotificationWebhookAddressProtector(byte[] masterKey)
+    {
+        if (masterKey.Length != 32)
+        {
+            throw new ArgumentException("通知 Webhook 主密钥必须是 32 字节。", nameof(masterKey));
+        }
+        this.masterKey = masterKey.ToArray();
+    }
 
     public void Protect(NotificationChannelEntity channel, string webhookAddress)
     {
@@ -20,23 +45,27 @@ public sealed class NotificationWebhookAddressProtector
         {
             throw new ArgumentException("Webhook 地址不能为空。", nameof(webhookAddress));
         }
-        if (!OperatingSystem.IsWindows())
-        {
-            throw new PlatformNotSupportedException("当前通知 Webhook 的数据库加密仅支持 Windows DPAPI。请在受控 Windows 主机上保存地址。 ");
-        }
 
         var plaintext = Encoding.UTF8.GetBytes(webhookAddress);
-        var entropy = CreateEntropy(channel.Id);
+        var nonce = RandomNumberGenerator.GetBytes(NonceSize);
+        var ciphertext = new byte[plaintext.Length];
+        var tag = new byte[TagSize];
+        var aad = CreateAssociatedData(channel.Id);
         try
         {
-            channel.WebhookCiphertext = ProtectedData.Protect(plaintext, entropy, DataProtectionScope.LocalMachine);
+            using var aes = new AesGcm(masterKey, TagSize);
+            aes.Encrypt(nonce, plaintext, ciphertext, tag, aad);
+            channel.WebhookCiphertext = nonce.Concat(ciphertext).Concat(tag).ToArray();
             channel.WebhookProtectionMode = CurrentProtectionMode;
             channel.WebhookKeyVersion = CurrentKeyVersion;
         }
         finally
         {
             CryptographicOperations.ZeroMemory(plaintext);
-            CryptographicOperations.ZeroMemory(entropy);
+            CryptographicOperations.ZeroMemory(nonce);
+            CryptographicOperations.ZeroMemory(ciphertext);
+            CryptographicOperations.ZeroMemory(tag);
+            CryptographicOperations.ZeroMemory(aad);
         }
     }
 
@@ -47,56 +76,56 @@ public sealed class NotificationWebhookAddressProtector
         {
             throw new ArgumentException("通知渠道标识无效。", nameof(channel));
         }
-        if (channel.WebhookCiphertext is null || channel.WebhookCiphertext.Length == 0 ||
-            channel.WebhookProtectionMode is null || string.IsNullOrWhiteSpace(channel.WebhookKeyVersion))
+        if (channel.WebhookCiphertext is null || channel.WebhookCiphertext.Length <= NonceSize + TagSize ||
+            channel.WebhookProtectionMode != CurrentProtectionMode ||
+            !string.Equals(channel.WebhookKeyVersion, CurrentKeyVersion, StringComparison.Ordinal))
         {
-            throw new InvalidOperationException("企业微信群机器人尚未在数据库保存完整 Webhook 地址，请在后台编辑渠道并保存地址。 ");
-        }
-        if (channel.WebhookProtectionMode != CurrentProtectionMode ||
-            !channel.WebhookKeyVersion.Equals(CurrentKeyVersion, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException("企业微信群机器人 Webhook 地址使用了当前服务不支持的保护方式或密钥版本。 ");
-        }
-        if (!OperatingSystem.IsWindows())
-        {
-            throw new PlatformNotSupportedException("当前通知 Webhook 的数据库解密仅支持保存地址的受控 Windows 主机。 ");
+            throw new InvalidOperationException("企业微信群机器人 Webhook 地址缺失，或使用了当前核心不支持的保护方式。请在后台重新保存地址。 ");
         }
 
-        var entropy = CreateEntropy(channel.Id);
-        byte[] plaintext;
+        var payload = channel.WebhookCiphertext;
+        var ciphertextLength = payload.Length - NonceSize - TagSize;
+        var plaintext = new byte[ciphertextLength];
+        var aad = CreateAssociatedData(channel.Id);
         try
         {
-            plaintext = ProtectedData.Unprotect(channel.WebhookCiphertext, entropy, DataProtectionScope.LocalMachine);
+            using var aes = new AesGcm(masterKey, TagSize);
+            aes.Decrypt(
+                payload.AsSpan(0, NonceSize),
+                payload.AsSpan(NonceSize, ciphertextLength),
+                payload.AsSpan(NonceSize + ciphertextLength, TagSize),
+                plaintext,
+                aad);
+            return Encoding.UTF8.GetString(plaintext);
         }
         catch (CryptographicException exception)
         {
-            throw new InvalidOperationException("企业微信群机器人 Webhook 地址不能由当前 Windows 主机解密。迁移到新主机后请在后台重新保存地址。 ", exception);
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(entropy);
-        }
-
-        try
-        {
-            return Encoding.UTF8.GetString(plaintext);
+            throw new InvalidOperationException("企业微信群机器人 Webhook 地址无法由当前核心配置卷中的密钥解密。", exception);
         }
         finally
         {
             CryptographicOperations.ZeroMemory(plaintext);
+            CryptographicOperations.ZeroMemory(aad);
         }
     }
 
-    private static byte[] CreateEntropy(Guid channelId)
+    private static byte[] ParseMasterKey(string masterKeyBase64)
     {
-        var material = Encoding.UTF8.GetBytes($"{EntropyPurpose}:{CurrentKeyVersion}:{channelId:N}");
         try
         {
-            return SHA256.HashData(material);
+            var key = Convert.FromBase64String(masterKeyBase64);
+            if (key.Length == 32)
+            {
+                return key;
+            }
+            CryptographicOperations.ZeroMemory(key);
         }
-        finally
+        catch (FormatException)
         {
-            CryptographicOperations.ZeroMemory(material);
         }
+        throw new ArgumentException("通知 Webhook 主密钥格式无效。", nameof(masterKeyBase64));
     }
+
+    private static byte[] CreateAssociatedData(Guid channelId) =>
+        Encoding.UTF8.GetBytes($"VisiCore.NotificationWebhookAddress:{CurrentKeyVersion}:{channelId:N}");
 }

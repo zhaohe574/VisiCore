@@ -10,11 +10,53 @@ namespace VisiCore.Api.Tests;
 
 public sealed class LinuxEdgeAgentControlServiceTests
 {
+    [Fact(DisplayName = "Windows Edge Agent 使用同一配对协议并能回传配置拒绝状态")]
+    public async Task WindowsAgentCanEnrollAndRejectInvalidConfiguration()
+    {
+        await using var dbContext = CreateContext();
+        var service = new EdgeAgentControlService(dbContext);
+        var enrollment = await service.CreateEnrollmentAsync("Windows 边缘节点", 15, CancellationToken.None);
+        using var rsa = RSA.Create(3072);
+        var agentId = Guid.NewGuid();
+        var publicKey = AgentCredentialEnvelopeCryptography.CreatePublicKey(agentId, "windows-key", rsa);
+
+        var enrolled = await service.EnrollAsync(new EnrollEdgeAgentRequest(
+            enrollment.EnrollmentCode,
+            "0.3.0",
+            "windows-x64",
+            "{\"declared\":[\"configuration-v1\"],\"architecture\":\"x64\"}",
+            new EdgeAgentPublicKeyRequest(publicKey.AgentId, publicKey.KeyId, publicKey.KeyEncryptionAlgorithm, publicKey.SubjectPublicKeyInfoBase64)),
+            CancellationToken.None);
+
+        var agent = await dbContext.EdgeAgents.SingleAsync(item => item.Id == enrolled.AgentId);
+        Assert.Equal("windows", agent.Platform);
+        dbContext.EdgeAgentConfigurations.Add(new EdgeAgentConfigurationEntity
+        {
+            Id = Guid.NewGuid(),
+            EdgeAgentId = agent.Id,
+            Version = 2,
+            ConfigurationJson = "{\"schemaVersion\":99}",
+            Status = "published",
+            PublishedAt = DateTimeOffset.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+
+        await service.ReportConfigurationStatusAsync(agent, new EdgeAgentConfigurationStatusReport(
+            2,
+            false,
+            "configuration_schema_invalid"), CancellationToken.None);
+
+        var configuration = await dbContext.EdgeAgentConfigurations.SingleAsync(item => item.EdgeAgentId == agent.Id && item.Version == 2);
+        Assert.Equal("rejected", configuration.Status);
+        Assert.Equal("configuration_schema_invalid", configuration.FailureSummary);
+        Assert.Null(configuration.AppliedAt);
+    }
+
     [Fact]
     public async Task 配对后仅目标节点能取得其凭据信封并可完成预检状态回传()
     {
         await using var dbContext = CreateContext();
-        var service = new LinuxEdgeAgentControlService(dbContext);
+        var service = new EdgeAgentControlService(dbContext);
         var enrollment = await service.CreateEnrollmentAsync("园区 Linux 节点", 15, CancellationToken.None);
         using var rsa = RSA.Create(2048);
         var agentId = Guid.NewGuid();
@@ -102,7 +144,7 @@ public sealed class LinuxEdgeAgentControlServiceTests
     public async Task 凭据轮换和停用后不会向节点下发旧版或已撤销信封()
     {
         await using var dbContext = CreateContext();
-        var service = new LinuxEdgeAgentControlService(dbContext);
+        var service = new EdgeAgentControlService(dbContext);
         var enrollment = await service.CreateEnrollmentAsync("轮换测试节点", 15, CancellationToken.None);
         using var rsa = RSA.Create(2048);
         var agentId = Guid.NewGuid();

@@ -616,12 +616,12 @@ public sealed class StreamSessionOrchestrator(
     public bool IsGatewayControlTokenValid(string? presentedToken)
     {
         var settings = options.Value;
-        if (string.IsNullOrWhiteSpace(settings.ControlToken) || settings.ControlToken.Length < 32 || string.IsNullOrWhiteSpace(presentedToken))
+        if (!settings.HasValidToken(settings.ControlToken) || string.IsNullOrWhiteSpace(presentedToken))
         {
             return false;
         }
         return CryptographicOperations.FixedTimeEquals(
-            SHA256.HashData(Encoding.UTF8.GetBytes(settings.ControlToken)),
+            SHA256.HashData(Encoding.UTF8.GetBytes(settings.ControlToken!)),
             SHA256.HashData(Encoding.UTF8.GetBytes(presentedToken)));
     }
 
@@ -1185,6 +1185,9 @@ public sealed class StreamGatewayOptions
     public string? CommandBaseUri { get; init; }
     public string? CommandToken { get; init; }
     public bool AllowInsecureLoopbackHttpForDevelopment { get; init; }
+    public bool AllowInsecureLoopbackHttpForInternalRuntime { get; init; }
+    public string[] TrustedDevelopmentHttpHosts { get; init; } = [];
+    public string[] TrustedInsecureHttpOrigins { get; init; } = [];
     public int CommandPollIntervalSeconds { get; init; } = 1;
     public int CommandLockSeconds { get; init; } = 30;
     public int CommandMaxAttempts { get; init; } = 12;
@@ -1199,7 +1202,7 @@ public sealed class StreamGatewayOptions
             error = "流网关必须配置合法的 HTTPS 公共地址，或显式启用仅限本机回环的开发 HTTP。";
             return false;
         }
-        if (string.IsNullOrWhiteSpace(GatewayName) || GatewayName.Length > 64 || string.IsNullOrWhiteSpace(ControlToken) || ControlToken.Length < 32 ||
+        if (string.IsNullOrWhiteSpace(GatewayName) || GatewayName.Length > 64 || !HasValidToken(ControlToken) ||
             TicketLifetimeSeconds is < 10 or > 60 || LeaseLifetimeSeconds is < 60 or > 300 ||
             RenewAfterSeconds is < 15 || RenewAfterSeconds >= LeaseLifetimeSeconds - 15 ||
             MaxActiveSessionsPerClient is < 1 or > 64 || MaxActiveSessionsPerUser < MaxActiveSessionsPerClient ||
@@ -1236,8 +1239,8 @@ public sealed class StreamGatewayOptions
     {
         if (string.IsNullOrWhiteSpace(CommandBaseUri) ||
             !Uri.TryCreate(CommandBaseUri, UriKind.Absolute, out var commandBaseUri) ||
-            !IsAllowedGatewayUri(commandBaseUri) ||
-            string.IsNullOrWhiteSpace(CommandToken) || CommandToken.Length < 32 ||
+            !IsAllowedGatewayCommandUri(commandBaseUri) ||
+            !HasValidToken(CommandToken) ||
             (!string.IsNullOrWhiteSpace(ControlToken) && string.Equals(ControlToken, CommandToken, StringComparison.Ordinal)) ||
             CommandPollIntervalSeconds is < 1 or > 30 || CommandLockSeconds is < 30 or > 300 ||
             CommandMaxAttempts is < 1 or > 50 || CommandRetentionDays is < 1 or > 90)
@@ -1249,7 +1252,7 @@ public sealed class StreamGatewayOptions
 
         settings = new ValidatedStreamGatewayCommandSettings(
             new Uri(commandBaseUri.ToString().TrimEnd('/') + "/", UriKind.Absolute),
-            CommandToken,
+            CommandToken!,
             CommandPollIntervalSeconds,
             CommandLockSeconds,
             CommandMaxAttempts,
@@ -1262,7 +1265,28 @@ public sealed class StreamGatewayOptions
         uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
         (AllowInsecureLoopbackHttpForDevelopment &&
          uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+         (uri.IsLoopback || IsTrustedDevelopmentHttpHost(uri.Host) || IsTrustedInsecureHttpOrigin(uri)));
+
+    private bool IsAllowedGatewayCommandUri(Uri uri) =>
+        IsAllowedGatewayUri(uri) ||
+        (AllowInsecureLoopbackHttpForInternalRuntime &&
+         uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
          uri.IsLoopback);
+
+    private bool IsTrustedDevelopmentHttpHost(string host) =>
+        TrustedDevelopmentHttpHosts.Any(value =>
+            !string.IsNullOrWhiteSpace(value) &&
+            string.Equals(value.Trim(), host, StringComparison.OrdinalIgnoreCase));
+
+    private bool IsTrustedInsecureHttpOrigin(Uri uri) =>
+        TrustedInsecureHttpOrigins.Any(value =>
+            Uri.TryCreate(value, UriKind.Absolute, out var trustedOrigin) &&
+            trustedOrigin.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(trustedOrigin.GetLeftPart(UriPartial.Authority), uri.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase));
+
+    public bool HasValidToken(string? token) =>
+        !string.IsNullOrWhiteSpace(token) &&
+        token.Length >= (AllowInsecureLoopbackHttpForDevelopment ? 24 : 32);
 }
 
 public sealed record ValidatedStreamGatewaySettings(

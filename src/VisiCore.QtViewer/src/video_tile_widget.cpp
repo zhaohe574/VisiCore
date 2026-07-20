@@ -416,6 +416,7 @@ QString VideoTileWidget::profile() const { return profile_; }
 QUuid VideoTileWidget::requestId() const { return requestId_; }
 QUuid VideoTileWidget::sessionId() const { return sessionId_; }
 std::optional<CameraInfo> VideoTileWidget::camera() const { return camera_; }
+QImage VideoTileWidget::captureFrame() { return player_ != nullptr ? player_->captureFrame() : QImage{}; }
 
 void VideoTileWidget::enterEvent(QEnterEvent *event) {
     QFrame::enterEvent(event);
@@ -466,11 +467,18 @@ void VideoTileWidget::contextMenuEvent(QContextMenuEvent *event) {
     auto *restartAction = menu.addAction(QStringLiteral("重新连接"));
     restartAction->setObjectName(QStringLiteral("videoTileAction.restart"));
     restartAction->setEnabled(!isEmpty());
+    auto *screenshotAction = menu.addAction(QStringLiteral("保存当前画面截图"));
+    screenshotAction->setObjectName(QStringLiteral("videoTileAction.screenshot"));
+    screenshotAction->setEnabled(!isEmpty() && player_ != nullptr && player_->isReady());
     QAction *mainStreamAction = nullptr;
     QAction *subStreamAction = nullptr;
     QAction *syncAction = nullptr;
+    QAction *bookmarkAction = nullptr;
     QList<QPair<QAction *, int>> instantActions;
     if (profile_ == QStringLiteral("playback")) {
+        bookmarkAction = menu.addAction(QStringLiteral("添加本地书签"));
+        bookmarkAction->setObjectName(QStringLiteral("videoTileAction.bookmark"));
+        bookmarkAction->setEnabled(!isEmpty() && playing_);
         syncAction = menu.addAction(QStringLiteral("加入同步组"));
         syncAction->setObjectName(QStringLiteral("videoTileAction.sync"));
         syncAction->setCheckable(true);
@@ -520,6 +528,10 @@ void VideoTileWidget::contextMenuEvent(QContextMenuEvent *event) {
         emit maximizeRequested(this);
     } else if (selectedAction == restartAction) {
         emit restartRequested(this);
+    } else if (selectedAction == screenshotAction) {
+        emit screenshotRequested(this);
+    } else if (bookmarkAction != nullptr && selectedAction == bookmarkAction) {
+        emit bookmarkRequested(this);
     } else if (mainStreamAction != nullptr && selectedAction == mainStreamAction) {
         emit profileChangeRequested(this, QStringLiteral("main"));
     } else if (subStreamAction != nullptr && selectedAction == subStreamAction) {

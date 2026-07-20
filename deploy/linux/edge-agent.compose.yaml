@@ -1,0 +1,60 @@
+name: visicore-edge-agent
+
+services:
+  edge-agent:
+    image: ${VISICORE_EDGE_AGENT_IMAGE:-visicore/edge-agent:v0.3.0}
+    build:
+      context: ../..
+      dockerfile: deploy/linux/Dockerfile.dotnet
+      args:
+        PROJECT: src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj
+        ASSEMBLY: VisiCore.EdgeAgent.dll
+    restart: unless-stopped
+    environment:
+      EdgeAgent__BootstrapFilePath: /var/lib/visicore/edge-agent/bootstrap/bootstrap.json
+      EdgeAgent__HeartbeatIntervalSeconds: ${EDGE_HEARTBEAT_INTERVAL_SECONDS:-30}
+    volumes:
+      - ${EDGE_STATE_DIRECTORY:?请配置固定宿主状态目录}:/var/lib/visicore/edge-agent
+      - ${EDGE_HOST_EXCHANGE_DIRECTORY:?请配置 Host Agent 交换目录}:/var/lib/visicore/edge-host-agent
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  edge-node-config:
+    image: ${VISICORE_EDGE_CONFIG_IMAGE:-visicore/edge-node-config:v0.3.0}
+    build:
+      context: ../..
+      dockerfile: deploy/linux/Dockerfile.dotnet
+      args:
+        PROJECT: src/VisiCore.EdgeNodeConfig/VisiCore.EdgeNodeConfig.csproj
+        ASSEMBLY: VisiCore.EdgeNodeConfig.dll
+    restart: unless-stopped
+    user: "${EDGE_CONFIG_UID:-1654}:${EDGE_CONFIG_GID:-1654}"
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      VISICORE_CONFIG_SOCKET_PATH: /var/run/visicore-config/host-agent.sock
+      VISICORE_CONFIG_TOKEN_PATH: /var/run/visicore-config/access.token
+    ports:
+      - "127.0.0.1:${EDGE_CONFIG_PORT:-18081}:8080"
+    volumes:
+      - ${EDGE_HOST_CONFIG_DIRECTORY:?请配置 Host Agent 配置通道目录}:/var/run/visicore-config
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/api/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    depends_on:
+      edge-agent:
+        condition: service_started
