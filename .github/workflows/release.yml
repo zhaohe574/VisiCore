@@ -169,7 +169,7 @@ jobs:
           openssl dgst -sha256 -sign /tmp/edge-release-signing-key.pem -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 artifacts/release/edge-release-linux-arm64.json | base64 -w 0 > artifacts/release/edge-release-linux-arm64.signature.base64
           sha256sum artifacts/release/visicore-edge-node-${{ github.ref_name }}.msi artifacts/release/visicore-viewer-${{ github.ref_name }}.msi artifacts/release/viewer-sha256.txt artifacts/release/visicore-viewer-runtime.json artifacts/release/visicore-edge-agent-${{ github.ref_name }}-linux.tar.gz artifacts/release/visicore-sbom.spdx.json artifacts/release/visicore-edge-release-public-key.pem artifacts/release/edge-release-windows-x64.json artifacts/release/edge-release-windows-x64.signature.base64 artifacts/release/edge-release-linux-amd64.json artifacts/release/edge-release-linux-amd64.signature.base64 artifacts/release/edge-release-linux-arm64.json artifacts/release/edge-release-linux-arm64.signature.base64 > artifacts/release/release-sha256.txt
           rm -f /tmp/edge-release-signing-key.pem
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: |
