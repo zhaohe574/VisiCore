@@ -1,0 +1,15 @@
+{
+  "CoreHostAgent": {
+    "Enabled": false,
+    "ExchangeDirectory": "/opt/visicore/upgrade-exchange",
+    "SigningPublicKeyPath": "/etc/visicore/release-public-key.pem",
+    "SigningPublicKeyId": "replace-with-release-key-id",
+    "DockerExecutablePath": "/usr/bin/docker",
+    "ComposeFilePath": "/opt/visicore/compose.yaml",
+    "ComposeOverridePath": "/opt/visicore/compose.release.yaml",
+    "CoreServiceName": "visicore-core",
+    "HealthUrl": "http://127.0.0.1:8080/healthz",
+    "ExecutionTimeoutSeconds": 900,
+    "HealthTimeoutSeconds": 300
+  }
+}

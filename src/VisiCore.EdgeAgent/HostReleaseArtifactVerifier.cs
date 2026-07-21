@@ -149,12 +149,61 @@ public sealed class HostReleaseArtifactVerifier(HostAgentOptions options)
         }
     }
 
+    /// <summary>
+    /// 统一发行描述中的 Docker 制品是不可变 OCI digest，不下载为本地文件；Windows 仍以受控 MSI 文件方式校验。
+    /// </summary>
+    public Task<HostArtifactVerificationResult> DownloadAndVerifyAsync(
+        ReleaseArtifactDescriptor artifact,
+        string productVersion,
+        CancellationToken cancellationToken)
+    {
+        if (artifact.Component == "edge-docker")
+        {
+            var requiredDigest = $"@sha256:{artifact.ArtifactSha256}";
+            return Task.FromResult(
+                artifact.ArtifactReference.Contains(requiredDigest, StringComparison.OrdinalIgnoreCase)
+                    ? HostArtifactVerificationResult.Success(new HostVerifiedReleaseArtifact(
+                        null,
+                        null,
+                        artifact.ArtifactSha256,
+                        artifact.ArtifactReference,
+                        productVersion))
+                    : HostArtifactVerificationResult.Failed("oci_digest_mismatch"));
+        }
+
+        if (artifact.Component != "edge-windows")
+        {
+            return Task.FromResult(HostArtifactVerificationResult.Failed("release_component_unsupported"));
+        }
+
+        return DownloadAndVerifyAsync(new EdgeReleaseManifest(
+            $"v{productVersion}-windows-{artifact.Architecture}",
+            "deployment",
+            artifact.Platform,
+            artifact.Architecture,
+            artifact.ArtifactReference,
+            artifact.ArtifactSha256,
+            artifact.MinimumHostAgentVersion,
+            "descriptor",
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow.AddHours(1)), cancellationToken);
+    }
+
     public async Task<bool> VerifyPersistedAsync(
         HostVerifiedReleaseArtifact artifact,
         CancellationToken cancellationToken)
     {
-        if (!File.Exists(artifact.ArtifactPath) ||
-            string.IsNullOrWhiteSpace(artifact.ArtifactSha256) ||
+        if (string.IsNullOrWhiteSpace(artifact.ArtifactSha256))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(artifact.OciImageReference))
+        {
+            return artifact.OciImageReference.Contains($"@sha256:{artifact.ArtifactSha256}", StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (string.IsNullOrWhiteSpace(artifact.ArtifactPath) || !File.Exists(artifact.ArtifactPath) ||
             (artifact.ComposeFilePath is not null && !File.Exists(artifact.ComposeFilePath)))
         {
             return false;
@@ -300,9 +349,11 @@ public sealed class HostReleaseArtifactVerifier(HostAgentOptions options)
 }
 
 public sealed record HostVerifiedReleaseArtifact(
-    string ArtifactPath,
+    string? ArtifactPath,
     string? ComposeFilePath,
-    string ArtifactSha256);
+    string ArtifactSha256,
+    string? OciImageReference = null,
+    string? ProductVersion = null);
 
 public sealed record HostArtifactVerificationResult(
     bool Succeeded,

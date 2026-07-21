@@ -2,7 +2,7 @@ name: visicore
 
 services:
   visicore-core:
-    image: ${VISICORE_CORE_IMAGE:-visicore/visicore-core:0.1.0}
+    image: ${VISICORE_CORE_IMAGE:-ghcr.io/zhaohe574/visicore-core:v0.1.1}
     build:
       context: .
       dockerfile: deploy/core/Dockerfile
@@ -16,11 +16,14 @@ services:
       VISICORE_HTTPS_ENABLED: ${VISICORE_HTTPS_ENABLED:-false}
       VISICORE_TLS_CERTIFICATE_FILE: ${VISICORE_TLS_CERTIFICATE_FILE:-/run/visicore/tls/tls.crt}
       VISICORE_TLS_PRIVATE_KEY_FILE: ${VISICORE_TLS_PRIVATE_KEY_FILE:-/run/visicore/tls/tls.key}
+      CoreUpgrade__Enabled: ${VISICORE_CORE_UPGRADE_ENABLED:-false}
+      CoreUpgrade__ExchangeDirectory: /var/lib/visicore/upgrade-exchange
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - visicore-config:/var/lib/visicore/config
       - api-exports:/var/lib/visicore/exports
       - visicore-backups:/var/lib/visicore/backups
+      - "${VISICORE_UPGRADE_EXCHANGE_DIRECTORY:-./data/upgrade-exchange}:/var/lib/visicore/upgrade-exchange"
       - "${VISICORE_TLS_DIRECTORY:-./deploy/core/tls}:/run/visicore/tls:ro"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]

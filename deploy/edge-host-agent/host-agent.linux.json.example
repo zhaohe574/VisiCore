@@ -12,11 +12,16 @@
     "SigningPublicKeyId": "replace-with-release-key-id",
     "DockerComposeExecutablePath": "/usr/bin/docker",
     "ComposeFilePath": "/opt/visicore/edge/edge-agent.compose.yaml",
+    "ActiveReleaseComposeOverridePath": "/opt/visicore/edge/compose.release.yaml",
+    "ResourcePolicyComposeOverridePath": "/opt/visicore/edge/compose.resources.yaml",
+    "ComposeEnvironmentFilePath": "/opt/visicore/edge/.env",
     "ConfigurationSocketPath": "/var/lib/visicore/edge-node/config/host-agent.sock",
     "ConfigurationTokenPath": "/var/lib/visicore/edge-node/config/access.token",
     "ManagedEdgeAgentConfigurationPath": "/var/lib/visicore/edge-node/state/edge-agent.json",
     "ManagedEdgeAgentBootstrapPath": "/var/lib/visicore/edge-node/state/bootstrap/bootstrap.json",
     "ManagedHostAgentConfigurationPath": "/etc/visicore/edge-host-agent/edge-host-agent.json",
+    "ManagedResourcePolicyStatusPath": "/var/lib/visicore/edge-node/state/resource-policy-status.json",
+    "ResourcePolicy": { "DiskWarningPercent": 85 },
     "ExecutionTimeoutSeconds": 600
   }
 }

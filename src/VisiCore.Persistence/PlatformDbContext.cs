@@ -22,6 +22,9 @@ public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> option
     public DbSet<EdgeAgentEnrollmentEntity> EdgeAgentEnrollments => Set<EdgeAgentEnrollmentEntity>();
     public DbSet<EdgeAgentConfigurationEntity> EdgeAgentConfigurations => Set<EdgeAgentConfigurationEntity>();
     public DbSet<PlatformOperationEntity> PlatformOperations => Set<PlatformOperationEntity>();
+    public DbSet<ReleaseCatalogEntity> ReleaseCatalog => Set<ReleaseCatalogEntity>();
+    public DbSet<UpgradePlanEntity> UpgradePlans => Set<UpgradePlanEntity>();
+    public DbSet<UpgradeTargetEntity> UpgradeTargets => Set<UpgradeTargetEntity>();
     public DbSet<DeviceWorkerAssignmentEntity> DeviceWorkerAssignments => Set<DeviceWorkerAssignmentEntity>();
     public DbSet<DeviceWorkerOperationStatusEntity> DeviceWorkerOperationStatuses => Set<DeviceWorkerOperationStatusEntity>();
     public DbSet<CameraEntity> Cameras => Set<CameraEntity>();
@@ -262,11 +265,13 @@ public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> option
             entity.ToTable("edge_agent_enrollments");
             entity.HasKey(item => item.Id);
             entity.HasIndex(item => item.CodeHash).IsUnique();
+            entity.HasIndex(item => item.UsedByAgentId);
             entity.Property(item => item.Name).HasMaxLength(128);
             entity.Property(item => item.CodeHash).HasMaxLength(128);
             entity.Property(item => item.CreatedAt).HasColumnType("timestamp with time zone");
             entity.Property(item => item.ExpiresAt).HasColumnType("timestamp with time zone");
             entity.Property(item => item.UsedAt).HasColumnType("timestamp with time zone");
+            entity.HasOne<EdgeAgentEntity>().WithMany().HasForeignKey(item => item.UsedByAgentId).OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<EdgeAgentConfigurationEntity>(entity =>
@@ -293,6 +298,59 @@ public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> option
             entity.Property(item => item.DetailsJson).HasColumnType("jsonb");
             entity.Property(item => item.RequestedAt).HasColumnType("timestamp with time zone");
             entity.Property(item => item.CompletedAt).HasColumnType("timestamp with time zone");
+            entity.HasOne<EdgeAgentEntity>().WithMany().HasForeignKey(item => item.EdgeAgentId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<ReleaseCatalogEntity>(entity =>
+        {
+            entity.ToTable("release_catalog");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.ProductVersion, item.Channel }).IsUnique();
+            entity.HasIndex(item => new { item.Status, item.PublishedAt });
+            entity.Property(item => item.ProductVersion).HasMaxLength(64);
+            entity.Property(item => item.Channel).HasMaxLength(32);
+            entity.Property(item => item.Status).HasMaxLength(32);
+            entity.Property(item => item.SigningPublicKeyId).HasMaxLength(128);
+            entity.Property(item => item.DescriptorJson).HasColumnType("jsonb");
+            entity.Property(item => item.SignatureBase64).HasMaxLength(32768);
+            entity.Property(item => item.PublishedAt).HasColumnType("timestamp with time zone");
+            entity.Property(item => item.ExpiresAt).HasColumnType("timestamp with time zone");
+            entity.Property(item => item.CreatedAt).HasColumnType("timestamp with time zone");
+        });
+
+        modelBuilder.Entity<UpgradePlanEntity>(entity =>
+        {
+            entity.ToTable("upgrade_plans");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.Status, item.RequestedAt });
+            entity.Property(item => item.TargetScope).HasMaxLength(32);
+            entity.Property(item => item.Status).HasMaxLength(32);
+            entity.Property(item => item.RequestedBy).HasMaxLength(128);
+            entity.Property(item => item.FailureSummary).HasMaxLength(512);
+            entity.Property(item => item.RequestedAt).HasColumnType("timestamp with time zone");
+            entity.Property(item => item.StartedAt).HasColumnType("timestamp with time zone");
+            entity.Property(item => item.CompletedAt).HasColumnType("timestamp with time zone");
+            entity.HasOne<ReleaseCatalogEntity>().WithMany().HasForeignKey(item => item.ReleaseCatalogId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<UpgradeTargetEntity>(entity =>
+        {
+            entity.ToTable("upgrade_targets");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.UpgradePlanId, item.Batch, item.Status });
+            entity.HasIndex(item => item.EdgeAgentId);
+            entity.Property(item => item.Component).HasMaxLength(32);
+            entity.Property(item => item.TargetType).HasMaxLength(32);
+            entity.Property(item => item.Status).HasMaxLength(32);
+            entity.Property(item => item.ExpectedVersion).HasMaxLength(64);
+            entity.Property(item => item.PreviousVersion).HasMaxLength(64);
+            entity.Property(item => item.PreviousArtifactJson).HasColumnType("jsonb");
+            entity.Property(item => item.FailureSummary).HasMaxLength(512);
+            entity.Property(item => item.RequestedAt).HasColumnType("timestamp with time zone");
+            entity.Property(item => item.StartedAt).HasColumnType("timestamp with time zone");
+            entity.Property(item => item.StableSince).HasColumnType("timestamp with time zone");
+            entity.Property(item => item.CompletedAt).HasColumnType("timestamp with time zone");
+            entity.HasOne<UpgradePlanEntity>().WithMany().HasForeignKey(item => item.UpgradePlanId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<EdgeAgentEntity>().WithMany().HasForeignKey(item => item.EdgeAgentId).OnDelete(DeleteBehavior.SetNull);
         });
 
@@ -901,6 +959,7 @@ public sealed class EdgeAgentEnrollmentEntity
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset? UsedAt { get; set; }
+    public Guid? UsedByAgentId { get; set; }
 }
 
 public sealed class EdgeAgentConfigurationEntity
@@ -1131,6 +1190,53 @@ public sealed class ExportDownloadAuditEntity
     public long BytesServed { get; set; }
     public ExportDownloadResult Result { get; set; }
     public DateTimeOffset StartedAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+}
+
+public sealed class ReleaseCatalogEntity
+{
+    public Guid Id { get; set; }
+    public string ProductVersion { get; set; } = string.Empty;
+    public string Channel { get; set; } = "stable";
+    public string Status { get; set; } = "available";
+    public string DescriptorJson { get; set; } = "{}";
+    public string SignatureBase64 { get; set; } = string.Empty;
+    public string SigningPublicKeyId { get; set; } = string.Empty;
+    public DateTimeOffset PublishedAt { get; set; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset CreatedAt { get; set; }
+}
+
+public sealed class UpgradePlanEntity
+{
+    public Guid Id { get; set; }
+    public Guid ReleaseCatalogId { get; set; }
+    public string TargetScope { get; set; } = "edge";
+    public string Status { get; set; } = "draft";
+    public string RequestedBy { get; set; } = string.Empty;
+    public string? FailureSummary { get; set; }
+    public DateTimeOffset RequestedAt { get; set; }
+    public DateTimeOffset? StartedAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+}
+
+public sealed class UpgradeTargetEntity
+{
+    public Guid Id { get; set; }
+    public Guid UpgradePlanId { get; set; }
+    public Guid? EdgeAgentId { get; set; }
+    public Guid? PlatformOperationId { get; set; }
+    public string TargetType { get; set; } = "edge";
+    public string Component { get; set; } = string.Empty;
+    public int Batch { get; set; }
+    public string Status { get; set; } = "pending";
+    public string ExpectedVersion { get; set; } = string.Empty;
+    public string? PreviousVersion { get; set; }
+    public string? PreviousArtifactJson { get; set; }
+    public string? FailureSummary { get; set; }
+    public DateTimeOffset RequestedAt { get; set; }
+    public DateTimeOffset? StartedAt { get; set; }
+    public DateTimeOffset? StableSince { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
 }
 

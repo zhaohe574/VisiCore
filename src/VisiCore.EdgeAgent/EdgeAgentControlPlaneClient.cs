@@ -71,7 +71,8 @@ public sealed class EdgeAgentControlPlaneClient(HttpClient httpClient)
                     runtime.Status,
                     runtime.ConfigurationVersion,
                     runtime.CredentialEnvelopeCount,
-                    runtime.LastFailureKind
+                    runtime.LastFailureKind,
+                    runtime.Resource
                 }, SerializerOptions)), options: SerializerOptions),
             cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);

@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -98,6 +99,22 @@ public sealed class HostConfigurationSocketWorker(
             }
             return new EdgeNodeConfigurationCommandResult(true);
         }
+
+        if (command.Action.Equals("resource-test", StringComparison.OrdinalIgnoreCase))
+        {
+            if (command.ResourcePolicy is null)
+            {
+                return new EdgeNodeConfigurationCommandResult(false, "resource_policy_invalid");
+            }
+            return command.ResourcePolicy.TryValidate(out var resourceFailureKind)
+                ? new EdgeNodeConfigurationCommandResult(true)
+                : new EdgeNodeConfigurationCommandResult(false, resourceFailureKind);
+        }
+
+        if (command.Action.Equals("apply-resource-policy", StringComparison.OrdinalIgnoreCase))
+        {
+            return await ApplyResourcePolicyAsync(command.ResourcePolicy, cancellationToken);
+        }
         string? applyFailureKind = "configuration_request_invalid";
         if (!command.Action.Equals("apply", StringComparison.OrdinalIgnoreCase) ||
             !TryValidateAgentInput(command.ControlPlaneBaseUri, out applyFailureKind) ||
@@ -119,7 +136,10 @@ public sealed class HostConfigurationSocketWorker(
                 EdgeAgent = new
                 {
                     ControlPlaneBaseUri = normalizedUri,
-                    BootstrapFilePath = options.ManagedEdgeAgentBootstrapPath
+                    BootstrapFilePath = options.ManagedEdgeAgentBootstrapPath,
+                    HostUpgradeEnabled = options.AllowExecution,
+                    ResourcePolicy = command.Host?.ResourcePolicy ?? options.ResourcePolicy,
+                    ResourcePolicyStatusPath = options.ManagedResourcePolicyStatusPath
                 }
             });
             WriteJsonAtomically(options.ManagedEdgeAgentBootstrapPath, new { enrollmentCode = command.EnrollmentCode.Trim() });
@@ -145,6 +165,13 @@ public sealed class HostConfigurationSocketWorker(
                 }
                 WriteJsonAtomically(options.ManagedHostAgentConfigurationPath, new { HostAgent = hostConfiguration });
                 SetOwnerOnlyPermissions(options.ManagedHostAgentConfigurationPath);
+                if (!string.IsNullOrWhiteSpace(hostConfiguration.ResourcePolicyComposeOverridePath))
+                {
+                    await LinuxResourcePolicyComposeWriter.WriteAsync(
+                        hostConfiguration.ResourcePolicyComposeOverridePath,
+                        hostConfiguration.ResourcePolicy,
+                        cancellationToken);
+                }
                 hostRestarting = true;
             }
 
@@ -204,15 +231,111 @@ public sealed class HostConfigurationSocketWorker(
             AllowedArtifactHosts = hosts,
             MaximumArtifactBytes = input.MaximumArtifactBytes,
             ExecutionTimeoutSeconds = input.ExecutionTimeoutSeconds,
+            ResourcePolicy = input.ResourcePolicy ?? options.ResourcePolicy,
             PollIntervalSeconds = options.PollIntervalSeconds,
             ConfigurationSocketPath = options.ConfigurationSocketPath,
             ConfigurationTokenPath = options.ConfigurationTokenPath,
             ManagedEdgeAgentConfigurationPath = options.ManagedEdgeAgentConfigurationPath,
             ManagedEdgeAgentBootstrapPath = options.ManagedEdgeAgentBootstrapPath,
-            ManagedHostAgentConfigurationPath = options.ManagedHostAgentConfigurationPath
+            ManagedHostAgentConfigurationPath = options.ManagedHostAgentConfigurationPath,
+            ResourcePolicyComposeOverridePath = options.ResourcePolicyComposeOverridePath,
+            ManagedResourcePolicyStatusPath = options.ManagedResourcePolicyStatusPath
         };
         if (!configuration.TryValidate(out _)) return false;
         return true;
+    }
+
+    private async Task<EdgeNodeConfigurationCommandResult> ApplyResourcePolicyAsync(
+        EdgeNodeResourcePolicy? policy,
+        CancellationToken cancellationToken)
+    {
+        if (policy is null)
+        {
+            return new EdgeNodeConfigurationCommandResult(false, "resource_policy_invalid");
+        }
+        if (!policy.TryValidate(out var failureKind))
+        {
+            return new EdgeNodeConfigurationCommandResult(false, failureKind);
+        }
+        if (string.IsNullOrWhiteSpace(options.ManagedHostAgentConfigurationPath) ||
+            string.IsNullOrWhiteSpace(options.ManagedEdgeAgentConfigurationPath) ||
+            string.IsNullOrWhiteSpace(options.ResourcePolicyComposeOverridePath))
+        {
+            return new EdgeNodeConfigurationCommandResult(false, "resource_configuration_paths_invalid");
+        }
+
+        try
+        {
+            var next = CopyWithResourcePolicy(policy);
+            if (!next.TryValidate(out _))
+            {
+                return new EdgeNodeConfigurationCommandResult(false, "resource_policy_invalid");
+            }
+
+            WriteJsonAtomically(options.ManagedHostAgentConfigurationPath, new { HostAgent = next });
+            SetOwnerOnlyPermissions(options.ManagedHostAgentConfigurationPath);
+            WriteAgentResourcePolicy(policy);
+            await new EdgeNodeResourcePolicyStatusStore(options.ManagedResourcePolicyStatusPath ?? string.Empty)
+                .WriteAsync(new EdgeNodeResourcePolicyStatus("applying", policy, null, DateTimeOffset.UtcNow), cancellationToken);
+            await LinuxResourcePolicyComposeWriter.WriteAsync(options.ResourcePolicyComposeOverridePath, policy, cancellationToken);
+
+            var restart = await composeExecutor.RestartConfiguredEdgeAgentAsync(cancellationToken);
+            return restart.Succeeded
+                ? new EdgeNodeConfigurationCommandResult(true, HostRestarting: true)
+                : new EdgeNodeConfigurationCommandResult(false, restart.FailureKind, HostRestarting: true);
+        }
+        catch (IOException)
+        {
+            return new EdgeNodeConfigurationCommandResult(false, "resource_configuration_storage_failed");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return new EdgeNodeConfigurationCommandResult(false, "resource_configuration_storage_failed");
+        }
+    }
+
+    private HostAgentOptions CopyWithResourcePolicy(EdgeNodeResourcePolicy policy) => new()
+    {
+        // 资源策略需要 Host Agent 常驻；受控升级仍由 AllowExecution 单独控制。
+        Enabled = true,
+        AllowExecution = options.AllowExecution,
+        OperationInboxDirectory = options.OperationInboxDirectory,
+        OperationReceiptDirectory = options.OperationReceiptDirectory,
+        OperationStateDirectory = options.OperationStateDirectory,
+        ReleaseArtifactDirectory = options.ReleaseArtifactDirectory,
+        SigningPublicKeyPath = options.SigningPublicKeyPath,
+        SigningPublicKeyId = options.SigningPublicKeyId,
+        AllowedArtifactHosts = options.AllowedArtifactHosts,
+        MaximumArtifactBytes = options.MaximumArtifactBytes,
+        DockerComposeExecutablePath = options.DockerComposeExecutablePath,
+        ComposeFilePath = options.ComposeFilePath,
+        ActiveReleaseComposeOverridePath = options.ActiveReleaseComposeOverridePath,
+        ComposeEnvironmentFilePath = options.ComposeEnvironmentFilePath,
+        RollbackComposeFilePath = options.RollbackComposeFilePath,
+        ConfigurationSocketPath = options.ConfigurationSocketPath,
+        ConfigurationTokenPath = options.ConfigurationTokenPath,
+        ManagedEdgeAgentConfigurationPath = options.ManagedEdgeAgentConfigurationPath,
+        ManagedEdgeAgentBootstrapPath = options.ManagedEdgeAgentBootstrapPath,
+        ManagedHostAgentConfigurationPath = options.ManagedHostAgentConfigurationPath,
+        ResourcePolicyComposeOverridePath = options.ResourcePolicyComposeOverridePath,
+        ManagedResourcePolicyStatusPath = options.ManagedResourcePolicyStatusPath,
+        ExecutionTimeoutSeconds = options.ExecutionTimeoutSeconds,
+        PollIntervalSeconds = options.PollIntervalSeconds,
+        ResourcePolicy = policy
+    };
+
+    private void WriteAgentResourcePolicy(EdgeNodeResourcePolicy policy)
+    {
+        var path = options.ManagedEdgeAgentConfigurationPath!;
+        var root = File.Exists(path)
+            ? JsonNode.Parse(File.ReadAllText(path))?.AsObject() ?? new JsonObject()
+            : new JsonObject();
+        var edgeAgent = root["EdgeAgent"] as JsonObject ?? new JsonObject();
+        edgeAgent["ResourcePolicy"] = JsonSerializer.SerializeToNode(policy);
+        edgeAgent["ResourcePolicyStatusPath"] = options.ManagedResourcePolicyStatusPath;
+        root["EdgeAgent"] = edgeAgent;
+        WriteJsonAtomically(path, root);
+        SetAgentConfigurationPermissions(path);
     }
 
     private async Task<bool> IsAuthorizedAsync(string providedToken, CancellationToken cancellationToken)

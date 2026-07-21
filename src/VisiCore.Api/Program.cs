@@ -98,6 +98,10 @@ var embeddedRuntimeSettings = EmbeddedRuntimeSettings.FromEnvironment();
 builder.Services.AddSingleton(embeddedRuntimeSettings);
 builder.Services.AddSingleton(new InstallationService(runtimeConfigurationPath, embeddedRuntimeSettings));
 builder.Services.Configure<PlatformBackupOptions>(builder.Configuration.GetSection("PlatformBackup"));
+builder.Services.Configure<ReleaseTrustOptions>(builder.Configuration.GetSection("ReleaseTrust"));
+var coreUpgradeOptions = builder.Configuration.GetSection("CoreUpgrade").Get<CoreUpgradeOptions>() ?? new CoreUpgradeOptions();
+builder.Services.AddSingleton(coreUpgradeOptions);
+builder.Services.AddSingleton<CoreUpgradeExchange>();
 builder.Services.AddSingleton<BootstrapRestoreService>();
 builder.Services.AddSingleton(new HttpsConfigurationService(new HttpsConfigurationPaths(
     httpsConfigurationPath,
@@ -213,6 +217,8 @@ else
     builder.Services.AddScoped<AccountPasswordService>();
     builder.Services.AddScoped<PlatformAccessService>();
     builder.Services.AddScoped<AuditService>();
+    builder.Services.AddScoped<ReleaseCatalogService>();
+    builder.Services.AddScoped<UpgradePlanService>();
     builder.Services.AddScoped<DevicePluginService>();
     builder.Services.Configure<DevicePluginTrustOptions>(builder.Configuration.GetSection("DevicePlugins"));
     builder.Services.AddScoped<DevicePluginCapabilityService>();
@@ -249,6 +255,7 @@ else
     builder.Services.AddHostedService<ExportArtifactCleanupService>();
     builder.Services.AddHostedService<RecorderClockObservationCleanupService>();
     builder.Services.AddHostedService<PlatformBackupScheduler>();
+    builder.Services.AddHostedService<UpgradePlanDispatcher>();
     builder.Services
         .AddAuthentication(PlatformSessionAuthenticationHandler.SchemeName)
         .AddScheme<AuthenticationSchemeOptions, PlatformSessionAuthenticationHandler>(PlatformSessionAuthenticationHandler.SchemeName, _ => { });
@@ -256,6 +263,17 @@ else
 }
 
 var app = builder.Build();
+if (args.Any(argument => string.Equals(argument, "--migrate", StringComparison.OrdinalIgnoreCase)))
+{
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        throw new InvalidOperationException("数据库迁移需要已完成中心初始化。 ");
+    }
+    await using var migrationScope = app.Services.CreateAsyncScope();
+    var migrationDbContext = migrationScope.ServiceProvider.GetRequiredService<PlatformDbContext>();
+    await migrationDbContext.Database.MigrateAsync();
+    return;
+}
 app.UseExceptionHandler(exceptionApp =>
 {
     exceptionApp.Run(async context =>
@@ -302,6 +320,12 @@ if (Directory.Exists(app.Environment.WebRootPath))
 }
 app.MapHealthChecks("/healthz", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/readyz", new HealthCheckOptions { Predicate = _ => true });
+app.MapGet("/api/v1/system/version", () => Results.Ok(new
+{
+    version = RuntimeVersion.ProductVersion,
+    runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
+    architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()
+}));
 
 app.MapGet("/api/v1/setup/status", (InstallationService installationService) =>
 {
@@ -1915,6 +1939,32 @@ else
         }));
     });
 
+    admin.MapGet("/edge-agents/enrollments", async (ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageDeviceWorkers, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        var enrollments = await dbContext.EdgeAgentEnrollments.AsNoTracking()
+            .OrderByDescending(item => item.CreatedAt)
+            .Take(200)
+            .ToListAsync(cancellationToken);
+        var usedAgentIds = enrollments.Where(item => item.UsedByAgentId is not null).Select(item => item.UsedByAgentId!.Value).Distinct().ToList();
+        var agentNames = await dbContext.EdgeAgents.AsNoTracking()
+            .Where(item => usedAgentIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, item => item.Name, cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        return Results.Ok(enrollments.Select(item => new EdgeAgentEnrollmentSummary(
+            item.Id,
+            item.Name,
+            item.CreatedAt,
+            item.ExpiresAt,
+            item.UsedAt,
+            EdgeAgentControlService.GetEnrollmentStatus(item, now),
+            item.UsedByAgentId,
+            item.UsedByAgentId is Guid agentId ? agentNames.GetValueOrDefault(agentId) : null)));
+    });
+
     admin.MapPost("/edge-agents/enrollments", async (CreateEdgeAgentEnrollmentRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, EdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
     {
         if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageDeviceWorkers, cancellationToken))
@@ -1934,21 +1984,78 @@ else
         }
     });
 
-    admin.MapPatch("/edge-agents/{agentId:guid}/status", async (Guid agentId, SetEdgeAgentStatusRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, AuditService auditService, CancellationToken cancellationToken) =>
+    admin.MapPut("/edge-agents/{agentId:guid}", async (Guid agentId, UpdateEdgeAgentRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, EdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
     {
         if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageDeviceWorkers, cancellationToken))
         {
             return Results.Forbid();
         }
-        var agent = await dbContext.EdgeAgents.SingleOrDefaultAsync(item => item.Id == agentId, cancellationToken);
-        if (agent is null) return Results.NotFound();
-        agent.DisabledAt = request.Disabled ? DateTimeOffset.UtcNow : null;
-        var worker = await dbContext.DeviceWorkers.SingleAsync(item => item.Id == agent.DeviceWorkerId, cancellationToken);
-        worker.DisabledAt = agent.DisabledAt;
-        await dbContext.SaveChangesAsync(cancellationToken);
-        await auditService.WriteAsync(principal, request.Disabled ? "edge_agent.disable" : "edge_agent.enable", "edge_agent", agent.Id,
-            new { agent.Name }, cancellationToken);
-        return Results.NoContent();
+        try
+        {
+            var updated = await edgeAgentControl.RenameAsync(agentId, request.Name, cancellationToken);
+            await auditService.WriteAsync(principal, "edge_agent.rename", "edge_agent", updated.Id, new { updated.Name }, cancellationToken);
+            return Results.Ok(updated);
+        }
+        catch (KeyNotFoundException)
+        {
+            return Results.NotFound();
+        }
+        catch (ArgumentException exception)
+        {
+            return Results.BadRequest(new { message = exception.Message });
+        }
+        catch (InvalidOperationException exception)
+        {
+            return Results.Conflict(new { message = exception.Message });
+        }
+    });
+
+    admin.MapDelete("/edge-agents/{agentId:guid}", async (Guid agentId, DeleteEdgeAgentRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, EdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageDeviceWorkers, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        try
+        {
+            var deleted = await edgeAgentControl.DeleteAsync(agentId, request.ConfirmationName, cancellationToken);
+            await auditService.WriteAsync(principal, "edge_agent.delete", "edge_agent", deleted.Id, new
+            {
+                deleted.Name,
+                deleted.DetachedAssignmentCount,
+                deleted.DeletedCredentialEnvelopeCount,
+                deleted.DeletedConfigurationCount,
+                deleted.DeletedCommandCount
+            }, cancellationToken);
+            return Results.Ok(deleted);
+        }
+        catch (KeyNotFoundException)
+        {
+            return Results.NotFound();
+        }
+        catch (ArgumentException exception)
+        {
+            return Results.BadRequest(new { message = exception.Message });
+        }
+    });
+
+    admin.MapPatch("/edge-agents/{agentId:guid}/status", async (Guid agentId, SetEdgeAgentStatusRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, EdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageDeviceWorkers, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        try
+        {
+            var updated = await edgeAgentControl.SetStatusAsync(agentId, request.Disabled, cancellationToken);
+            await auditService.WriteAsync(principal, request.Disabled ? "edge_agent.disable" : "edge_agent.enable", "edge_agent", updated.Id,
+                new { updated.Name }, cancellationToken);
+            return Results.NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return Results.NotFound();
+        }
     });
 
     admin.MapPost("/edge-agents/{agentId:guid}/diagnostics", async (Guid agentId, RequestEdgeAgentDiagnosticRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, EdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
@@ -2176,6 +2283,144 @@ else
         await auditService.WriteAsync(principal, "edge_release.register", "edge_release", catalog.Id,
             new { releaseManifest.ReleaseId, releaseManifest.TargetPlatform, releaseManifest.TargetArchitecture }, cancellationToken);
         return Results.Created($"/api/v1/admin/edge-releases/{catalog.Id}", ToEdgeReleaseResponse(TryReadRegisteredEdgeRelease(catalog)!));
+    });
+
+    admin.MapGet("/release-catalog", async (ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        var entries = await dbContext.ReleaseCatalog.AsNoTracking()
+            .OrderByDescending(item => item.PublishedAt)
+            .Take(100)
+            .ToListAsync(cancellationToken);
+        return Results.Ok(entries.Select(ToReleaseCatalogResponse));
+    });
+
+    admin.MapPost("/release-catalog", async (
+        RegisterReleaseDescriptorRequest request,
+        ClaimsPrincipal principal,
+        PlatformAccessService accessService,
+        ReleaseCatalogService releaseCatalog,
+        AuditService auditService,
+        CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        if (string.IsNullOrWhiteSpace(request.DescriptorJson) || string.IsNullOrWhiteSpace(request.SignatureBase64) ||
+            string.IsNullOrWhiteSpace(request.PublicKeyId))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["release"] = ["发行描述、签名或公钥标识缺失。"] });
+        }
+        try
+        {
+            var entry = await releaseCatalog.RegisterAsync(
+                request.DescriptorJson,
+                request.SignatureBase64,
+                request.PublicKeyId.Trim(),
+                cancellationToken);
+            await auditService.WriteAsync(principal, "release_catalog.register", "release_catalog", entry.Id,
+                new { entry.ProductVersion, entry.Channel, entry.SigningPublicKeyId }, cancellationToken);
+            return Results.Created($"/api/v1/admin/release-catalog/{entry.Id}", ToReleaseCatalogResponse(entry));
+        }
+        catch (ReleaseCatalogException exception) when (exception.FailureKind == "release_already_registered")
+        {
+            return Results.Conflict(new { message = "该稳定通道版本已登记。" });
+        }
+        catch (ReleaseCatalogException exception)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["release"] = [$"发行描述校验失败：{exception.FailureKind}。"] });
+        }
+    });
+
+    admin.MapGet("/upgrade-plans", async (ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        var plans = await dbContext.UpgradePlans.AsNoTracking()
+            .OrderByDescending(item => item.RequestedAt)
+            .Take(100)
+            .ToListAsync(cancellationToken);
+        var planIds = plans.Select(item => item.Id).ToList();
+        var targets = await dbContext.UpgradeTargets.AsNoTracking()
+            .Where(item => planIds.Contains(item.UpgradePlanId))
+            .OrderBy(item => item.Batch)
+            .ToListAsync(cancellationToken);
+        return Results.Ok(plans.Select(plan => ToUpgradePlanResponse(plan, targets.Where(target => target.UpgradePlanId == plan.Id).ToList())));
+    });
+
+    admin.MapPost("/upgrade-plans", async (
+        CreateUpgradePlanRequest request,
+        ClaimsPrincipal principal,
+        PlatformAccessService accessService,
+        UpgradePlanService upgradePlans,
+        PlatformDbContext dbContext,
+        AuditService auditService,
+        CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        try
+        {
+            var plan = await upgradePlans.CreateAsync(
+                request.ReleaseCatalogId,
+                request.TargetScope?.Trim().ToLowerInvariant() ?? string.Empty,
+                request.EdgeAgentIds?.Distinct().ToArray() ?? [],
+                principal.Identity?.Name ?? "unknown",
+                cancellationToken);
+            var targets = await dbContext.UpgradeTargets.AsNoTracking().Where(item => item.UpgradePlanId == plan.Id).OrderBy(item => item.Batch).ToListAsync(cancellationToken);
+            await auditService.WriteAsync(principal, "upgrade_plan.create", "upgrade_plan", plan.Id,
+                new { plan.ReleaseCatalogId, plan.TargetScope, targetCount = targets.Count }, cancellationToken);
+            return Results.Created($"/api/v1/admin/upgrade-plans/{plan.Id}", ToUpgradePlanResponse(plan, targets));
+        }
+        catch (UpgradePlanException exception)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["upgrade"] = [$"无法创建升级计划：{exception.FailureKind}。"] });
+        }
+    });
+
+    admin.MapPost("/upgrade-plans/{planId:guid}/start", async (Guid planId, ClaimsPrincipal principal, PlatformAccessService accessService, UpgradePlanService upgradePlans, PlatformDbContext dbContext, AuditService auditService, CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        try
+        {
+            var plan = await upgradePlans.StartAsync(planId, cancellationToken);
+            var targets = await dbContext.UpgradeTargets.AsNoTracking().Where(item => item.UpgradePlanId == plan.Id).OrderBy(item => item.Batch).ToListAsync(cancellationToken);
+            await auditService.WriteAsync(principal, "upgrade_plan.start", "upgrade_plan", plan.Id, new { }, cancellationToken);
+            return Results.Accepted($"/api/v1/admin/upgrade-plans/{plan.Id}", ToUpgradePlanResponse(plan, targets));
+        }
+        catch (UpgradePlanException exception)
+        {
+            return Results.Conflict(new { message = $"无法启动升级计划：{exception.FailureKind}。" });
+        }
+    });
+
+    admin.MapPost("/upgrade-plans/{planId:guid}/pause", async (Guid planId, PauseUpgradePlanRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, UpgradePlanService upgradePlans, AuditService auditService, CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        try
+        {
+            await upgradePlans.PauseAsync(planId, request.Reason ?? "paused_by_operator", cancellationToken);
+            await auditService.WriteAsync(principal, "upgrade_plan.pause", "upgrade_plan", planId, new { }, cancellationToken);
+            return Results.NoContent();
+        }
+        catch (UpgradePlanException)
+        {
+            return Results.NotFound();
+        }
     });
 
     admin.MapPost("/platform-operations/deployments", async (RequestPlatformDeploymentRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, AuditService auditService, CancellationToken cancellationToken) =>
@@ -4782,6 +5027,54 @@ static PlatformBackupResponse ToPlatformBackupResponse(PlatformBackupEntity back
     backup.LastRestoredAt,
     backup.FailureDetail);
 
+static ReleaseCatalogResponse ToReleaseCatalogResponse(ReleaseCatalogEntity entry)
+{
+    var descriptorValid = ReleaseCatalogService.TryReadDescriptor(entry, out var descriptor);
+    return new ReleaseCatalogResponse(
+        entry.Id,
+        entry.ProductVersion,
+        entry.Channel,
+        entry.Status,
+        entry.SigningPublicKeyId,
+        entry.PublishedAt,
+        entry.ExpiresAt,
+        descriptorValid
+            ? descriptor.Artifacts.Select(item => new ReleaseArtifactResponse(
+                item.Component,
+                item.Platform,
+                item.Architecture,
+                item.ArtifactReference,
+                item.ArtifactSha256,
+                item.SizeBytes,
+                item.MinimumHostAgentVersion)).ToList()
+            : []);
+}
+
+static UpgradePlanResponse ToUpgradePlanResponse(UpgradePlanEntity plan, IReadOnlyList<UpgradeTargetEntity> targets) => new(
+    plan.Id,
+    plan.ReleaseCatalogId,
+    plan.TargetScope,
+    plan.Status,
+    plan.RequestedBy,
+    plan.FailureSummary,
+    plan.RequestedAt,
+    plan.StartedAt,
+    plan.CompletedAt,
+    targets.Select(item => new UpgradeTargetResponse(
+        item.Id,
+        item.EdgeAgentId,
+        item.TargetType,
+        item.Component,
+        item.Batch,
+        item.Status,
+        item.ExpectedVersion,
+        item.PreviousVersion,
+        item.FailureSummary,
+        item.RequestedAt,
+        item.StartedAt,
+        item.StableSince,
+        item.CompletedAt)).ToList());
+
 static string? GetEdgeAgentArchitecture(string capabilitiesJson)
 {
     try
@@ -4870,7 +5163,7 @@ static string ToSafePlatformOperationDetails(PlatformOperationEntity operation)
                 publicKeyId = root.TryGetProperty("publicKeyId", out var publicKeyId) && publicKeyId.ValueKind == JsonValueKind.String
                     ? publicKeyId.GetString()
                     : null,
-                manifest = "[受控发布清单已保存]",
+                manifest = root.TryGetProperty("releaseDescriptorJson", out _) ? "[统一发行描述已保存]" : "[受控发布清单已保存]",
                 signature = "[已隐藏]"
             });
         }
@@ -5209,11 +5502,16 @@ public sealed record DeviceCredentialResponse(
     string? LastVerificationError = null);
 public sealed record SetDeviceCredentialStatusRequest(bool Disabled);
 public sealed record SetEdgeAgentStatusRequest(bool Disabled);
+public sealed record UpdateEdgeAgentRequest(string Name);
+public sealed record DeleteEdgeAgentRequest(string ConfirmationName);
 public sealed record RequestEdgeAgentDiagnosticRequest(string Kind);
 public sealed record RequestPlatformDiagnosticRequest(Guid EdgeAgentId, string Kind);
 public sealed record UpdateEdgeAgentConfigurationRequest(string ConfigurationJson);
 public sealed record DirectCameraPreflightRequest(Guid EdgeAgentId, Guid CredentialId, string MainStreamUrl, string? SubStreamUrl = null);
 public sealed record RegisterEdgeReleaseRequest(string ManifestJson, string SignatureBase64, string PublicKeyId);
+public sealed record RegisterReleaseDescriptorRequest(string DescriptorJson, string SignatureBase64, string PublicKeyId);
+public sealed record CreateUpgradePlanRequest(Guid ReleaseCatalogId, string? TargetScope, IReadOnlyList<Guid>? EdgeAgentIds = null);
+public sealed record PauseUpgradePlanRequest(string? Reason);
 public sealed record RequestPlatformDeploymentRequest(Guid EdgeAgentId, string ReleaseId);
 public sealed record RestorePlatformBackupRequest(string? RecoveryKey, string? Confirmation);
 public sealed record PlatformBackupResponse(Guid Id, string Kind, string Status, string FileName, long SizeBytes, string Sha256, DateTimeOffset CreatedAt, DateTimeOffset? RetainUntil, DateTimeOffset? LastRestoredAt, string? FailureDetail);
@@ -5234,6 +5532,48 @@ public sealed record EdgeReleaseResponse(
     DateTimeOffset ExpiresAt,
     string PublicKeyId,
     DateTimeOffset RegisteredAt);
+public sealed record ReleaseCatalogResponse(
+    Guid Id,
+    string ProductVersion,
+    string Channel,
+    string Status,
+    string SigningPublicKeyId,
+    DateTimeOffset PublishedAt,
+    DateTimeOffset ExpiresAt,
+    IReadOnlyList<ReleaseArtifactResponse> Artifacts);
+public sealed record ReleaseArtifactResponse(
+    string Component,
+    string Platform,
+    string Architecture,
+    string ArtifactReference,
+    string ArtifactSha256,
+    long SizeBytes,
+    string MinimumHostAgentVersion);
+public sealed record UpgradePlanResponse(
+    Guid Id,
+    Guid ReleaseCatalogId,
+    string TargetScope,
+    string Status,
+    string RequestedBy,
+    string? FailureSummary,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset? StartedAt,
+    DateTimeOffset? CompletedAt,
+    IReadOnlyList<UpgradeTargetResponse> Targets);
+public sealed record UpgradeTargetResponse(
+    Guid Id,
+    Guid? EdgeAgentId,
+    string TargetType,
+    string Component,
+    int Batch,
+    string Status,
+    string ExpectedVersion,
+    string? PreviousVersion,
+    string? FailureSummary,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset? StartedAt,
+    DateTimeOffset? StableSince,
+    DateTimeOffset? CompletedAt);
 public sealed record PlatformOperationResponse(
     Guid Id,
     Guid? EdgeAgentId,

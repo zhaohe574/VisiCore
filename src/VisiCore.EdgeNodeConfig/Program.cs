@@ -2,28 +2,80 @@ using System.Buffers.Binary;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using VisiCore.EdgeAgent;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddHttpClient("center", client => client.Timeout = TimeSpan.FromSeconds(12));
 builder.Services.AddHttpClient("agent", client => client.Timeout = TimeSpan.FromSeconds(4));
+var edgeAgentConfigurationPath = builder.Configuration["VISICORE_EDGE_AGENT_CONFIGURATION_PATH"]
+    ?? "/var/lib/visicore/edge-agent/edge-agent.json";
+var edgeAgentBootstrapPath = builder.Configuration["EdgeAgent:BootstrapFilePath"]
+    ?? builder.Configuration["VISICORE_EDGE_AGENT_BOOTSTRAP_PATH"]
+    ?? "/var/lib/visicore/edge-agent/bootstrap/bootstrap.json";
+builder.Services.AddSingleton(new LocalEdgeNodeConfigurationStore(edgeAgentConfigurationPath, edgeAgentBootstrapPath));
 var app = builder.Build();
 var agentIdentityUri = new Uri(Environment.GetEnvironmentVariable("VISICORE_EDGE_AGENT_IDENTITY_URL") ?? "http://127.0.0.1:8081/api/v1/edge-agent/identity", UriKind.Absolute);
+var agentRuntimeUri = new Uri(Environment.GetEnvironmentVariable("VISICORE_EDGE_AGENT_RUNTIME_URL") ?? "http://127.0.0.1:8081/api/v1/edge-agent/runtime", UriKind.Absolute);
 
-app.MapGet("/", () => Results.Content(ConfigurationPage.Html, "text/html; charset=utf-8"));
+app.MapGet("/", () => Results.Content(EdgeNodeConfigurationPageV2.Html, "text/html; charset=utf-8"));
 app.MapGet("/api/status", async (IHttpClientFactory factory, CancellationToken cancellationToken) =>
 {
     try
     {
-        using var response = await factory.CreateClient("agent").GetAsync(agentIdentityUri, cancellationToken);
-        return response.IsSuccessStatusCode
-            ? Results.Content(await response.Content.ReadAsStringAsync(cancellationToken), "application/json")
-            : Results.Json(new { available = false });
+        using var identityResponse = await factory.CreateClient("agent").GetAsync(agentIdentityUri, cancellationToken);
+        if (!identityResponse.IsSuccessStatusCode) return Results.Json(new { available = false, hostAgentAvailable = IsHostAgentAvailable() });
+
+        var identity = JsonNode.Parse(await identityResponse.Content.ReadAsStringAsync(cancellationToken))?.AsObject() ?? new JsonObject();
+        JsonNode? runtime = null;
+        try
+        {
+            using var runtimeResponse = await factory.CreateClient("agent").GetAsync(agentRuntimeUri, cancellationToken);
+            if (runtimeResponse.IsSuccessStatusCode)
+            {
+                runtime = JsonNode.Parse(await runtimeResponse.Content.ReadAsStringAsync(cancellationToken));
+            }
+        }
+        catch (HttpRequestException)
+        {
+            // Agent 身份可用时仍返回页面可展示的降级状态。
+        }
+
+        identity["available"] = true;
+        identity["hostAgentAvailable"] = IsHostAgentAvailable();
+        identity["runtime"] = runtime;
+        return Results.Json(identity);
     }
     catch (HttpRequestException)
     {
         return Results.Json(new { available = false });
     }
+});
+
+app.MapPost("/api/resource-policy/test", async (EdgeNodeResourcePolicyPageRequest request, CancellationToken cancellationToken) =>
+{
+    if (request.ResourcePolicy is null)
+    {
+        return Results.BadRequest(new { failureKind = "resource_policy_invalid" });
+    }
+    if (!request.ResourcePolicy.TryValidate(out var failureKind))
+    {
+        return Results.BadRequest(new { failureKind });
+    }
+    return await SendResourcePolicyCommandAsync("resource-test", request.ResourcePolicy, cancellationToken);
+});
+
+app.MapPost("/api/resource-policy/apply", async (EdgeNodeResourcePolicyPageRequest request, CancellationToken cancellationToken) =>
+{
+    if (request.ResourcePolicy is null)
+    {
+        return Results.BadRequest(new { failureKind = "resource_policy_invalid" });
+    }
+    if (!request.ResourcePolicy.TryValidate(out var failureKind))
+    {
+        return Results.BadRequest(new { failureKind });
+    }
+    return await SendResourcePolicyCommandAsync("apply-resource-policy", request.ResourcePolicy, cancellationToken);
 });
 
 app.MapPost("/api/test", async (EdgeNodeConfigurationPageRequest request, IHttpClientFactory factory, CancellationToken cancellationToken) =>
@@ -59,6 +111,10 @@ app.MapPost("/api/host-test", async (EdgeNodeConfigurationPageRequest request, C
     }
     var tokenPath = Environment.GetEnvironmentVariable("VISICORE_CONFIG_TOKEN_PATH") ?? "/var/run/visicore-config/access.token";
     var socketPath = Environment.GetEnvironmentVariable("VISICORE_CONFIG_SOCKET_PATH") ?? "/var/run/visicore-config/host-agent.sock";
+    if (!File.Exists(tokenPath) && !File.Exists(socketPath))
+    {
+        return Results.BadRequest(new { failureKind = "host_agent_not_installed" });
+    }
     if (!File.Exists(tokenPath)) return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "configuration_host_unavailable");
     try
     {
@@ -80,7 +136,11 @@ app.MapPost("/api/host-test", async (EdgeNodeConfigurationPageRequest request, C
     }
 });
 
-app.MapPost("/api/apply", async (EdgeNodeConfigurationPageRequest request, CancellationToken cancellationToken) =>
+app.MapPost("/api/apply", async (
+    EdgeNodeConfigurationPageRequest request,
+    LocalEdgeNodeConfigurationStore localConfigurationStore,
+    IHostApplicationLifetime applicationLifetime,
+    CancellationToken cancellationToken) =>
 {
     if (!TryNormalizeCenterUri(request.ControlPlaneBaseUri, out var uri, out var centerFailureKind) || string.IsNullOrWhiteSpace(request.EnrollmentCode))
     {
@@ -93,6 +153,20 @@ app.MapPost("/api/apply", async (EdgeNodeConfigurationPageRequest request, Cance
 
     var tokenPath = Environment.GetEnvironmentVariable("VISICORE_CONFIG_TOKEN_PATH") ?? "/var/run/visicore-config/access.token";
     var socketPath = Environment.GetEnvironmentVariable("VISICORE_CONFIG_SOCKET_PATH") ?? "/var/run/visicore-config/host-agent.sock";
+    if (!File.Exists(tokenPath) && !File.Exists(socketPath))
+    {
+        if (request.Host?.AllowExecution == true)
+        {
+            return Results.BadRequest(new { failureKind = "host_agent_required" });
+        }
+        if (!localConfigurationStore.TryApply(uri.AbsoluteUri, request.EnrollmentCode.Trim(), out var localFailureKind))
+        {
+            return Results.BadRequest(new { failureKind = localFailureKind });
+        }
+
+        _ = StopConfigurationServiceAfterResponseAsync(applicationLifetime);
+        return Results.Ok(new { succeeded = true, nodeRestarting = true, hostAgentAvailable = false });
+    }
     if (!File.Exists(tokenPath)) return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "configuration_host_unavailable");
     try
     {
@@ -118,6 +192,56 @@ app.MapPost("/api/apply", async (EdgeNodeConfigurationPageRequest request, Cance
 });
 
 await app.RunAsync();
+
+static async Task StopConfigurationServiceAfterResponseAsync(IHostApplicationLifetime applicationLifetime)
+{
+    await Task.Delay(TimeSpan.FromSeconds(1));
+    applicationLifetime.StopApplication();
+}
+
+static bool IsHostAgentAvailable()
+{
+    var tokenPath = Environment.GetEnvironmentVariable("VISICORE_CONFIG_TOKEN_PATH") ?? "/var/run/visicore-config/access.token";
+    var socketPath = Environment.GetEnvironmentVariable("VISICORE_CONFIG_SOCKET_PATH") ?? "/var/run/visicore-config/host-agent.sock";
+    return File.Exists(tokenPath) && File.Exists(socketPath);
+}
+
+static async Task<IResult> SendResourcePolicyCommandAsync(
+    string action,
+    EdgeNodeResourcePolicy policy,
+    CancellationToken cancellationToken)
+{
+    var tokenPath = Environment.GetEnvironmentVariable("VISICORE_CONFIG_TOKEN_PATH") ?? "/var/run/visicore-config/access.token";
+    var socketPath = Environment.GetEnvironmentVariable("VISICORE_CONFIG_SOCKET_PATH") ?? "/var/run/visicore-config/host-agent.sock";
+    if (!File.Exists(tokenPath) && !File.Exists(socketPath))
+    {
+        return Results.BadRequest(new { failureKind = "host_agent_not_installed" });
+    }
+    if (!File.Exists(tokenPath))
+    {
+        return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "configuration_host_unavailable");
+    }
+
+    try
+    {
+        var accessToken = (await File.ReadAllTextAsync(tokenPath, cancellationToken)).Trim();
+        var result = await HostConfigurationSocketClient.SendAsync(
+            socketPath,
+            new EdgeNodeConfigurationCommand(accessToken, action, ResourcePolicy: policy),
+            cancellationToken);
+        return result.Succeeded
+            ? Results.Ok(new { succeeded = true, hostRestarting = result.HostRestarting })
+            : Results.BadRequest(new { failureKind = result.FailureKind ?? "resource_policy_apply_failed" });
+    }
+    catch (IOException)
+    {
+        return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "configuration_host_unavailable");
+    }
+    catch (SocketException)
+    {
+        return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "configuration_host_unavailable");
+    }
+}
 
 static bool TryNormalizeCenterUri(string? value, out Uri uri, out string? failureKind)
 {
@@ -165,9 +289,11 @@ static bool TryValidateHostInput(EdgeNodeHostConfigurationPageInput? host, out s
 
 sealed record EdgeNodeConfigurationPageRequest(string? ControlPlaneBaseUri, string? EnrollmentCode = null, EdgeNodeHostConfigurationPageInput? Host = null);
 
-sealed record EdgeNodeHostConfigurationPageInput(bool Enabled, bool AllowExecution, string? SigningPublicKeyId, string? SigningPublicKeyPem, string[]? AllowedArtifactHosts, long MaximumArtifactBytes, int ExecutionTimeoutSeconds)
+sealed record EdgeNodeResourcePolicyPageRequest(EdgeNodeResourcePolicy? ResourcePolicy);
+
+sealed record EdgeNodeHostConfigurationPageInput(bool Enabled, bool AllowExecution, string? SigningPublicKeyId, string? SigningPublicKeyPem, string[]? AllowedArtifactHosts, long MaximumArtifactBytes, int ExecutionTimeoutSeconds, EdgeNodeResourcePolicy? ResourcePolicy = null)
 {
-    public EdgeNodeHostConfigurationInput ToContract() => new(Enabled, AllowExecution, SigningPublicKeyId, SigningPublicKeyPem, AllowedArtifactHosts ?? [], MaximumArtifactBytes, ExecutionTimeoutSeconds);
+    public EdgeNodeHostConfigurationInput ToContract() => new(Enabled, AllowExecution, SigningPublicKeyId, SigningPublicKeyPem, AllowedArtifactHosts ?? [], MaximumArtifactBytes, ExecutionTimeoutSeconds, ResourcePolicy);
 }
 
 static class HostConfigurationSocketClient

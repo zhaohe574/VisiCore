@@ -52,11 +52,16 @@ cat > /etc/visicore/edge-host-agent/edge-host-agent.json <<EOF
     "ReleaseArtifactDirectory": "/var/lib/visicore/edge-host-agent/releases",
     "DockerComposeExecutablePath": "/usr/bin/docker",
     "ComposeFilePath": "${COMPOSE_FILE}",
+    "ActiveReleaseComposeOverridePath": "${COMPOSE_FILE%/*}/compose.release.yaml",
+    "ResourcePolicyComposeOverridePath": "${COMPOSE_FILE%/*}/compose.resources.yaml",
+    "ComposeEnvironmentFilePath": "${COMPOSE_FILE%/*}/.env",
     "ConfigurationSocketPath": "${ROOT_DIRECTORY}/config/host-agent.sock",
     "ConfigurationTokenPath": "${ROOT_DIRECTORY}/config/access.token",
     "ManagedEdgeAgentConfigurationPath": "${ROOT_DIRECTORY}/state/edge-agent.json",
     "ManagedEdgeAgentBootstrapPath": "${ROOT_DIRECTORY}/state/bootstrap/bootstrap.json",
     "ManagedHostAgentConfigurationPath": "/etc/visicore/edge-host-agent/edge-host-agent.json",
+    "ManagedResourcePolicyStatusPath": "${ROOT_DIRECTORY}/state/resource-policy-status.json",
+    "ResourcePolicy": { "DiskWarningPercent": 85 },
     "ExecutionTimeoutSeconds": 600
   }
 }

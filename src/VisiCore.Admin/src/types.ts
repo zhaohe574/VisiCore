@@ -270,7 +270,12 @@ export interface EdgeAgentEnrollment {
   enrollmentToken?: string
   pairingCode?: string
   token?: string
+  createdAt?: string | null
   expiresAt?: string | null
+  usedAt?: string | null
+  status?: string | null
+  usedByAgentId?: Id | null
+  usedByAgentName?: string | null
 }
 
 export interface PlatformDiagnosticCheck {
@@ -364,6 +369,56 @@ export interface EdgeRelease {
   expiresAt: string
   publicKeyId: string
   registeredAt: string
+}
+
+export interface ReleaseArtifact {
+  component: string
+  platform: string
+  architecture: string
+  artifactReference: string
+  artifactSha256: string
+  sizeBytes: number
+  minimumHostAgentVersion: string
+}
+
+export interface ReleaseCatalogEntry {
+  id: Id
+  productVersion: string
+  channel: string
+  status: string
+  signingPublicKeyId: string
+  publishedAt: string
+  expiresAt: string
+  artifacts: ReleaseArtifact[]
+}
+
+export interface UpgradeTarget {
+  id: Id
+  edgeAgentId?: Id | null
+  targetType: string
+  component: string
+  batch: number
+  status: string
+  expectedVersion: string
+  previousVersion?: string | null
+  failureSummary?: string | null
+  requestedAt: string
+  startedAt?: string | null
+  stableSince?: string | null
+  completedAt?: string | null
+}
+
+export interface UpgradePlan {
+  id: Id
+  releaseCatalogId: Id
+  targetScope: string
+  status: string
+  requestedBy: string
+  failureSummary?: string | null
+  requestedAt: string
+  startedAt?: string | null
+  completedAt?: string | null
+  targets: UpgradeTarget[]
 }
 
 export interface NotificationChannel {

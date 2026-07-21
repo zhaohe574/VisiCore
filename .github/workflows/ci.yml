@@ -46,6 +46,8 @@ jobs:
       - run: dotnet restore src/VisiCore.Setup/VisiCore.Setup.csproj
       - run: dotnet restore src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj
       - run: dotnet restore src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj
+      - run: dotnet restore src/VisiCore.CoreHostAgent/VisiCore.CoreHostAgent.csproj
+      - run: dotnet restore src/VisiCore.EdgeUpdateRunner/VisiCore.EdgeUpdateRunner.csproj
       - run: dotnet restore src/VisiCore.EdgeNodeConfig/VisiCore.EdgeNodeConfig.csproj
       - run: dotnet restore tests/VisiCore.EdgeAgent.Tests/VisiCore.EdgeAgent.Tests.csproj
       - run: dotnet restore tests/VisiCore.Api.Tests/VisiCore.Api.Tests.csproj
@@ -54,6 +56,8 @@ jobs:
       - run: dotnet build src/VisiCore.Setup/VisiCore.Setup.csproj --configuration Release --no-restore
       - run: dotnet build src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj --configuration Release --no-restore
       - run: dotnet build src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj --configuration Release --no-restore
+      - run: dotnet build src/VisiCore.CoreHostAgent/VisiCore.CoreHostAgent.csproj --configuration Release --no-restore
+      - run: dotnet build src/VisiCore.EdgeUpdateRunner/VisiCore.EdgeUpdateRunner.csproj --configuration Release --no-restore
       - run: dotnet build src/VisiCore.EdgeNodeConfig/VisiCore.EdgeNodeConfig.csproj --configuration Release --no-restore
       - run: dotnet test tests/VisiCore.Api.Tests/VisiCore.Api.Tests.csproj --configuration Release --no-restore
       - run: dotnet test tests/VisiCore.EdgeAgent.Tests/VisiCore.EdgeAgent.Tests.csproj --configuration Release --no-restore
@@ -69,10 +73,11 @@ jobs:
       - run: dotnet publish src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-agent
       - run: dotnet publish src/VisiCore.EdgeHostAgent/VisiCore.EdgeHostAgent.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-host-agent
       - run: dotnet publish src/VisiCore.EdgeBootstrap/VisiCore.EdgeBootstrap.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-bootstrap
+      - run: dotnet publish src/VisiCore.EdgeUpdateRunner/VisiCore.EdgeUpdateRunner.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-update-runner
       - shell: pwsh
         run: |
           $version = (Get-Content VERSION -Raw).Trim()
-          dotnet build deploy/windows/VisiCore.EdgeNode.Installer.wixproj --configuration Release "-p:ProductVersion=$version" "-p:EdgeAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-agent" "-p:EdgeHostAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-host-agent" "-p:EdgeBootstrapPublishDir=${{ github.workspace }}\artifacts\windows\edge-bootstrap"
+          dotnet build deploy/windows/VisiCore.EdgeNode.Installer.wixproj --configuration Release "-p:ProductVersion=$version" "-p:EdgeAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-agent" "-p:EdgeHostAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-host-agent" "-p:EdgeBootstrapPublishDir=${{ github.workspace }}\artifacts\windows\edge-bootstrap" "-p:EdgeUpdateRunnerPublishDir=${{ github.workspace }}\artifacts\windows\edge-update-runner"
       - shell: pwsh
         run: |
           $msi = Get-ChildItem deploy\windows\bin\x64\Release\*.msi | Select-Object -First 1
@@ -83,6 +88,7 @@ jobs:
             $services = Get-Service 'VisiCore Edge Agent', 'VisiCore Edge Host Agent' -ErrorAction Stop
             if ($services | Where-Object Status -ne Stopped) { throw '首次安装后边缘服务必须保持停止，等待本机配置页确认生效。' }
             if (-not (Test-Path "$env:ProgramFiles\VisiCore\EdgeNode\VisiCore.EdgeBootstrap.exe")) { throw 'MSI 未部署配对向导。' }
+            if (-not (Test-Path "$env:ProgramFiles\VisiCore\EdgeNode\VisiCore.EdgeUpdateRunner.exe")) { throw 'MSI 未部署 Update Runner。' }
           } finally {
             $uninstall = Start-Process msiexec.exe -ArgumentList @('/x', $msi.FullName, '/qn', '/norestart') -Wait -PassThru
             if ($uninstall.ExitCode -notin 0, 3010) { throw "MSI 卸载失败：$($uninstall.ExitCode)" }

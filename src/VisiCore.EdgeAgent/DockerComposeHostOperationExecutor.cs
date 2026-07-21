@@ -25,6 +25,7 @@ public sealed class DockerComposeHostOperationExecutor(HostAgentOptions options)
     }
 
     public async Task<HostOperationExecutionResult> ExecuteAsync(
+        Guid operationId,
         HostOperationKind operationKind,
         HostVerifiedReleaseArtifact artifact,
         CancellationToken cancellationToken)
@@ -32,6 +33,11 @@ public sealed class DockerComposeHostOperationExecutor(HostAgentOptions options)
         if (!options.AllowExecution)
         {
             return HostOperationExecutionResult.Failed("host_execution_not_enabled");
+        }
+
+        if (!string.IsNullOrWhiteSpace(artifact.OciImageReference))
+        {
+            return await ExecuteOciReleaseAsync(artifact, cancellationToken);
         }
 
         var composeFilePath = artifact.ComposeFilePath;
@@ -58,10 +64,60 @@ public sealed class DockerComposeHostOperationExecutor(HostAgentOptions options)
             : applyResult with { FailureKind = "docker_compose_apply_failed" };
     }
 
+    private async Task<HostOperationExecutionResult> ExecuteOciReleaseAsync(
+        HostVerifiedReleaseArtifact artifact,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(options.ComposeFilePath) ||
+            string.IsNullOrWhiteSpace(options.ActiveReleaseComposeOverridePath) ||
+            string.IsNullOrWhiteSpace(artifact.OciImageReference) ||
+            !Path.IsPathFullyQualified(options.ComposeFilePath) ||
+            !Path.IsPathFullyQualified(options.ActiveReleaseComposeOverridePath) ||
+            !File.Exists(options.ComposeFilePath) ||
+            !artifact.OciImageReference.StartsWith("ghcr.io/", StringComparison.OrdinalIgnoreCase) ||
+            !artifact.OciImageReference.Contains($"@sha256:{artifact.ArtifactSha256}", StringComparison.OrdinalIgnoreCase))
+        {
+            return HostOperationExecutionResult.Failed("host_executor_configuration_invalid");
+        }
+
+        var overridePath = options.ActiveReleaseComposeOverridePath;
+        var directory = Path.GetDirectoryName(overridePath)!;
+        Directory.CreateDirectory(directory);
+        var temporaryPath = Path.Combine(directory, $".{Path.GetFileName(overridePath)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            // 镜像引用已在签名描述与 Host Agent 中重复校验，写入内容没有用户可控路径或命令。
+            await File.WriteAllTextAsync(temporaryPath, $"services:\n  edge-node:\n    image: {artifact.OciImageReference}\n", cancellationToken);
+            File.Move(temporaryPath, overridePath, overwrite: true);
+        }
+        catch (IOException)
+        {
+            return HostOperationExecutionResult.Failed("active_release_pointer_write_failed");
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+
+        var pullResult = await RunComposeAsync(options.ComposeFilePath, ["pull", "edge-node"], cancellationToken, overridePath);
+        if (!pullResult.Succeeded)
+        {
+            return pullResult with { FailureKind = "docker_compose_pull_failed" };
+        }
+        var applyResult = await RunComposeAsync(options.ComposeFilePath, ["up", "--detach", "--no-deps", "edge-node"], cancellationToken, overridePath);
+        return applyResult.Succeeded
+            ? HostOperationExecutionResult.Success()
+            : applyResult with { FailureKind = "docker_compose_apply_failed" };
+    }
+
     private async Task<HostOperationExecutionResult> RunComposeAsync(
         string composeFilePath,
         IReadOnlyList<string> actionArguments,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? releaseOverridePath = null)
     {
         using var process = new Process
         {
@@ -76,8 +132,23 @@ public sealed class DockerComposeHostOperationExecutor(HostAgentOptions options)
             }
         };
         process.StartInfo.ArgumentList.Add("compose");
+        if (!string.IsNullOrWhiteSpace(options.ComposeEnvironmentFilePath) && File.Exists(options.ComposeEnvironmentFilePath))
+        {
+            process.StartInfo.ArgumentList.Add("--env-file");
+            process.StartInfo.ArgumentList.Add(options.ComposeEnvironmentFilePath);
+        }
         process.StartInfo.ArgumentList.Add("--file");
         process.StartInfo.ArgumentList.Add(composeFilePath);
+        if (!string.IsNullOrWhiteSpace(options.ResourcePolicyComposeOverridePath) && File.Exists(options.ResourcePolicyComposeOverridePath))
+        {
+            process.StartInfo.ArgumentList.Add("--file");
+            process.StartInfo.ArgumentList.Add(options.ResourcePolicyComposeOverridePath);
+        }
+        if (!string.IsNullOrWhiteSpace(releaseOverridePath))
+        {
+            process.StartInfo.ArgumentList.Add("--file");
+            process.StartInfo.ArgumentList.Add(releaseOverridePath);
+        }
         foreach (var argument in actionArguments)
         {
             process.StartInfo.ArgumentList.Add(argument);

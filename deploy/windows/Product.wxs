@@ -21,6 +21,9 @@
               <Shortcut Id="EdgeBootstrapShortcut" Directory="VisiCoreProgramMenu" Name="VisiCore 边缘节点配置" WorkingDirectory="EDGENODEFOLDER" Advertise="no" />
             </File>
           </Component>
+          <Component Id="EdgeUpdateRunner" Guid="*">
+            <File Id="EdgeUpdateRunnerExecutable" Source="$(var.EdgeUpdateRunnerPublishDir)\VisiCore.EdgeUpdateRunner.exe" KeyPath="yes" />
+          </Component>
         </Directory>
       </Directory>
     </StandardDirectory>
@@ -37,6 +40,7 @@
       <ComponentRef Id="EdgeAgentService" />
       <ComponentRef Id="EdgeHostAgentService" />
       <ComponentRef Id="EdgeBootstrap" />
+      <ComponentRef Id="EdgeUpdateRunner" />
     </Feature>
   </Package>
 </Wix>

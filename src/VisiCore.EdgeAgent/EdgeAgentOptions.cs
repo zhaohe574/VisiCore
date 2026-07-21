@@ -10,6 +10,9 @@ public sealed class EdgeAgentOptions
     public string? BootstrapFilePath { get; init; }
     public string StateDirectory { get; init; } = GetDefaultStateDirectory();
     public string? AgentVersion { get; init; }
+    public bool HostUpgradeEnabled { get; init; }
+    public EdgeNodeResourcePolicy ResourcePolicy { get; init; } = new();
+    public string? ResourcePolicyStatusPath { get; init; }
     public string[] Capabilities { get; init; } =
     [
         "health",
@@ -18,7 +21,8 @@ public sealed class EdgeAgentOptions
         "diagnostics",
         "credential-envelope",
         "onvif-readonly",
-        "direct-rtsp-probe"
+        "direct-rtsp-probe",
+        "resource-policy"
     ];
     public int HeartbeatIntervalSeconds { get; init; } = 30;
     public int InventorySyncIntervalSeconds { get; init; } = 300;
@@ -55,7 +59,8 @@ public sealed class EdgeAgentOptions
             (!string.IsNullOrWhiteSpace(BootstrapFilePath) && !Path.IsPathFullyQualified(BootstrapFilePath)) ||
             Capabilities.Length == 0 ||
             Capabilities.Length > 32 ||
-            Capabilities.Any(item => string.IsNullOrWhiteSpace(item) || item.Length > 64))
+            Capabilities.Any(item => string.IsNullOrWhiteSpace(item) || item.Length > 64) ||
+            !ResourcePolicy.TryValidate(out _))
         {
             validationError = "Edge Agent 的状态目录、引导文件、能力列表、同步间隔或心跳间隔无效。";
             return false;
@@ -68,7 +73,7 @@ public sealed class EdgeAgentOptions
 
     public string GetAgentVersion() =>
         string.IsNullOrWhiteSpace(AgentVersion)
-            ? typeof(EdgeAgentOptions).Assembly.GetName().Version?.ToString() ?? "0.1.0"
+            ? typeof(EdgeAgentOptions).Assembly.GetName().Version?.ToString() ?? "0.1.1"
             : AgentVersion.Trim();
 
     public string GetPlatform() =>
@@ -80,7 +85,8 @@ public sealed class EdgeAgentOptions
         {
             declared = Capabilities,
             platform = GetPlatform(),
-            architecture = RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()
+            architecture = RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant(),
+            hostUpgradeReady = HostUpgradeEnabled
         });
     }
 
@@ -105,6 +111,10 @@ public sealed class EdgeAgentOptions
         return "unknown";
     }
 
+    public string GetResourcePolicyStatusPath() => !string.IsNullOrWhiteSpace(ResourcePolicyStatusPath)
+        ? ResourcePolicyStatusPath
+        : Path.Combine(StateDirectory, "resource-policy-status.json");
+
 }
 
 public sealed class HostAgentOptions
@@ -121,9 +131,14 @@ public sealed class HostAgentOptions
     public string OperationStateDirectory { get; init; } = GetDefaultHostPath("state");
     public string? DockerComposeExecutablePath { get; init; }
     public string? ComposeFilePath { get; init; }
+    public string? ActiveReleaseComposeOverridePath { get; init; }
+    public string? ComposeEnvironmentFilePath { get; init; }
     public string? RollbackComposeFilePath { get; init; }
     public string? WindowsInstallerExecutablePath { get; init; } = OperatingSystem.IsWindows()
         ? Path.Combine(Environment.SystemDirectory, "msiexec.exe")
+        : null;
+    public string? WindowsUpdateRunnerExecutablePath { get; init; } = OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "VisiCore", "EdgeNode", "VisiCore.EdgeUpdateRunner.exe")
         : null;
     public string? WindowsInstallerPath { get; init; }
     public string? RollbackWindowsInstallerPath { get; init; }
@@ -142,6 +157,13 @@ public sealed class HostAgentOptions
     public string? ManagedHostAgentConfigurationPath { get; init; } = OperatingSystem.IsWindows()
         ? null
         : "/etc/visicore/edge-host-agent/edge-host-agent.json";
+    public string? ResourcePolicyComposeOverridePath { get; init; } = OperatingSystem.IsWindows()
+        ? null
+        : "/opt/visicore/edge/compose.resources.yaml";
+    public string? ManagedResourcePolicyStatusPath { get; init; } = OperatingSystem.IsWindows()
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "VisiCore", "EdgeAgent", "resource-policy-status.json")
+        : "/var/lib/visicore/edge-agent/resource-policy-status.json";
+    public EdgeNodeResourcePolicy ResourcePolicy { get; init; } = new();
     public int ExecutionTimeoutSeconds { get; init; } = 600;
     public int PollIntervalSeconds { get; init; } = 15;
 
@@ -181,9 +203,16 @@ public sealed class HostAgentOptions
         if (AllowExecution && OperatingSystem.IsWindows() &&
             (string.IsNullOrWhiteSpace(WindowsInstallerExecutablePath) ||
              !Path.IsPathFullyQualified(WindowsInstallerExecutablePath) ||
-             !File.Exists(WindowsInstallerExecutablePath)))
+             !File.Exists(WindowsInstallerExecutablePath) ||
+             string.IsNullOrWhiteSpace(WindowsUpdateRunnerExecutablePath) ||
+             !Path.IsPathFullyQualified(WindowsUpdateRunnerExecutablePath) ||
+             !File.Exists(WindowsUpdateRunnerExecutablePath) ||
+             string.IsNullOrWhiteSpace(WindowsInstallerPath) ||
+             !Path.IsPathFullyQualified(WindowsInstallerPath) ||
+             !WindowsInstallerPath.EndsWith(".msi", StringComparison.OrdinalIgnoreCase) ||
+             !File.Exists(WindowsInstallerPath)))
         {
-            validationError = "Host Agent 的固定 MSI 执行器路径无效。";
+            validationError = "Host Agent 的固定 MSI 执行器、Update Runner 或已知良好 MSI 路径无效。";
             return false;
         }
 
@@ -193,6 +222,28 @@ public sealed class HostAgentOptions
              !File.Exists(DockerComposeExecutablePath)))
         {
             validationError = "Host Agent 的固定 Docker Compose 执行器路径无效。";
+            return false;
+        }
+
+        if (!ResourcePolicy.TryValidate(out _))
+        {
+            validationError = "Host Agent 的资源策略无效。";
+            return false;
+        }
+
+        if (AllowExecution && !OperatingSystem.IsWindows() &&
+            (!string.IsNullOrWhiteSpace(ActiveReleaseComposeOverridePath) && !Path.IsPathFullyQualified(ActiveReleaseComposeOverridePath) ||
+             !string.IsNullOrWhiteSpace(ComposeEnvironmentFilePath) && !Path.IsPathFullyQualified(ComposeEnvironmentFilePath)))
+        {
+            validationError = "Host Agent 的活动发行覆盖文件或 Compose 环境文件路径无效。";
+            return false;
+        }
+
+        if (!OperatingSystem.IsWindows() &&
+            (!string.IsNullOrWhiteSpace(ResourcePolicyComposeOverridePath) && !Path.IsPathFullyQualified(ResourcePolicyComposeOverridePath) ||
+             !string.IsNullOrWhiteSpace(ManagedResourcePolicyStatusPath) && !Path.IsPathFullyQualified(ManagedResourcePolicyStatusPath)))
+        {
+            validationError = "Host Agent 的资源覆盖文件或状态文件路径无效。";
             return false;
         }
 

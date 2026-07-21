@@ -13,6 +13,7 @@ maintenance_directory="${VISICORE_MAINTENANCE_DIRECTORY:-/var/lib/visicore/maint
 postgres_password_file="${VISICORE_EMBEDDED_POSTGRES_PASSWORD_FILE:-${config_directory}/internal-postgres-password}"
 backup_key_file="${VISICORE_BACKUP_KEY_FILE:-${config_directory}/backup-recovery.key}"
 restore_request_file="${maintenance_directory}/restore-request.json"
+upgrade_restore_request_file="${maintenance_directory}/upgrade-restore-request.json"
 
 mkdir -p "${PGDATA}" "${config_directory}" "${backup_directory}" "${maintenance_directory}"
 chown -R postgres:postgres "${PGDATA}"
@@ -133,6 +134,11 @@ if ! pg_isready --host=127.0.0.1 --port=5432 --username=visicore --dbname=postgr
 fi
 unset PGPASSWORD
 
+if [[ "${configured}" == "true" && "${VISICORE_APPLY_MIGRATIONS:-true}" == "true" ]]; then
+    # 迁移始终在新镜像自身容器内执行，中心 Host Agent 只负责受限 Compose 切换与失败恢复。
+    gosu visicore dotnet /app/api/VisiCore.Api.dll --migrate
+fi
+
 start_workload() {
     /usr/local/bin/mediamtx /etc/visicore/mediamtx.yml &
     mediamtx_pid="$!"
@@ -158,7 +164,7 @@ start_workload() {
 restore_requested=false
 trap 'restore_requested=true' USR1
 restore_monitor() {
-    while [[ ! -f "${restore_request_file}" ]]; do
+    while [[ ! -f "${restore_request_file}" && ! -f "${upgrade_restore_request_file}" ]]; do
         sleep 1
     done
     kill -USR1 "$$"
@@ -179,17 +185,38 @@ while true; do
         for child in "${workload_children[@]}"; do
             wait "${child}" 2>/dev/null || true
         done
+        active_restore_request="${restore_request_file}"
+        generated_upgrade_restore_request=""
+        if [[ ! -f "${active_restore_request}" && -f "${upgrade_restore_request_file}" ]]; then
+            # Core Host Agent 只能引用当前保护备份，恢复密钥始终留在容器受限配置目录内。
+            archive_path="$(sed -n 's/.*"archivePath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${upgrade_restore_request_file}" | head -n 1)"
+            expected_prefix="${backup_directory}/items/"
+            if [[ -z "${archive_path}" || "${archive_path}" != "${expected_prefix}"*.vcbackup || ! -f "${archive_path}" ]]; then
+                echo "中心升级保护备份请求无效。" >&2
+                rm -f "${upgrade_restore_request_file}"
+                terminate
+                exit 1
+            fi
+            generated_upgrade_restore_request="${maintenance_directory}/.upgrade-restore-${RANDOM}-${RANDOM}.json"
+            umask 077
+            printf '{"archivePath":"%s","recoveryKey":"%s","requestedBy":"core-host-agent"}\n' "${archive_path}" "$(<"${backup_key_file}")" > "${generated_upgrade_restore_request}"
+            chown "${app_uid}:${app_uid}" "${generated_upgrade_restore_request}"
+            chmod 0400 "${generated_upgrade_restore_request}"
+            active_restore_request="${generated_upgrade_restore_request}"
+        fi
         if ! dotnet /app/maintenance/VisiCore.Maintenance.dll restore \
-            --request "${restore_request_file}" \
+            --request "${active_restore_request}" \
             --config-directory "${config_directory}" \
             --postgres-password-file "${postgres_password_file}" \
             --backup-key-file "${backup_key_file}"; then
             echo "平台备份恢复失败，已清除恢复请求；若数据库已开始替换，请使用自动保护点重新恢复。" >&2
             rm -f "${restore_request_file}"
+            rm -f "${upgrade_restore_request_file}" "${generated_upgrade_restore_request}"
             terminate
             exit 1
         fi
         rm -f "${restore_request_file}"
+        rm -f "${upgrade_restore_request_file}" "${generated_upgrade_restore_request}"
         terminate
         exit 75
     fi

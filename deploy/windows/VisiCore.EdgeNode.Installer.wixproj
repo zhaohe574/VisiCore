@@ -6,11 +6,12 @@
     <!-- 托管 CI 与受限桌面会话通常无法调用 Windows Installer ICE，自身验证交由可交互安装验收执行。 -->
     <SuppressValidation>true</SuppressValidation>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <ProductVersion Condition="'$(ProductVersion)' == ''">0.1.0</ProductVersion>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.1.1</ProductVersion>
     <EdgeAgentPublishDir Condition="'$(EdgeAgentPublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\windows\edge-agent</EdgeAgentPublishDir>
     <EdgeHostAgentPublishDir Condition="'$(EdgeHostAgentPublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\windows\edge-host-agent</EdgeHostAgentPublishDir>
     <EdgeBootstrapPublishDir Condition="'$(EdgeBootstrapPublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\windows\edge-bootstrap</EdgeBootstrapPublishDir>
-    <DefineConstants>ProductVersion=$(ProductVersion);EdgeAgentPublishDir=$(EdgeAgentPublishDir);EdgeHostAgentPublishDir=$(EdgeHostAgentPublishDir);EdgeBootstrapPublishDir=$(EdgeBootstrapPublishDir)</DefineConstants>
+    <EdgeUpdateRunnerPublishDir Condition="'$(EdgeUpdateRunnerPublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\artifacts\windows\edge-update-runner</EdgeUpdateRunnerPublishDir>
+    <DefineConstants>ProductVersion=$(ProductVersion);EdgeAgentPublishDir=$(EdgeAgentPublishDir);EdgeHostAgentPublishDir=$(EdgeHostAgentPublishDir);EdgeBootstrapPublishDir=$(EdgeBootstrapPublishDir);EdgeUpdateRunnerPublishDir=$(EdgeUpdateRunnerPublishDir)</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Product.wxs" />

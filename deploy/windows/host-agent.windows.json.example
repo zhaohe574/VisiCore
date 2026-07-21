@@ -11,6 +11,9 @@
     "SigningPublicKeyPath": "C:\\ProgramData\\VisiCore\\EdgeHostAgent\\release-public-key.pem",
     "SigningPublicKeyId": "replace-with-release-key-id",
     "WindowsInstallerExecutablePath": "C:\\Windows\\System32\\msiexec.exe",
+    "WindowsInstallerPath": "C:\\ProgramData\\VisiCore\\EdgeHostAgent\\known-good\\edge-node.msi",
+    "ManagedResourcePolicyStatusPath": "C:\\ProgramData\\VisiCore\\EdgeAgent\\resource-policy-status.json",
+    "ResourcePolicy": { "DiskWarningPercent": 85 },
     "ExecutionTimeoutSeconds": 600
   }
 }

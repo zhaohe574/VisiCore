@@ -27,5 +27,6 @@ builder.Services.AddSingleton<WindowsMsiHostOperationExecutor>();
 builder.Services.AddSingleton<IHostOperationExecutor, PlatformHostOperationExecutor>();
 builder.Services.AddSingleton<HostOperationWorker>();
 builder.Services.AddHostedService(provider => provider.GetRequiredService<HostOperationWorker>());
+builder.Services.AddHostedService<HostResourcePolicyWorker>();
 
 await builder.Build().RunAsync();

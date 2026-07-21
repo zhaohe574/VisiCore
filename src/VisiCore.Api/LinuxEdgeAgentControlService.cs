@@ -20,18 +20,14 @@ public class EdgeAgentControlService(PlatformDbContext dbContext)
         int? lifetimeMinutes,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 128)
-        {
-            throw new ArgumentException("边缘节点名称无效。", nameof(name));
-        }
-
+        var normalizedName = NormalizeAgentName(name);
         var lifetime = Math.Clamp(lifetimeMinutes ?? 15, 5, 60);
         var code = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
         var now = DateTimeOffset.UtcNow;
         var enrollment = new EdgeAgentEnrollmentEntity
         {
             Id = Guid.NewGuid(),
-            Name = name.Trim(),
+            Name = normalizedName,
             CodeHash = HashToken(code),
             CreatedAt = now,
             ExpiresAt = now.AddMinutes(lifetime)
@@ -39,6 +35,11 @@ public class EdgeAgentControlService(PlatformDbContext dbContext)
         dbContext.EdgeAgentEnrollments.Add(enrollment);
         await dbContext.SaveChangesAsync(cancellationToken);
         return new CreatedEdgeAgentEnrollment(enrollment.Id, enrollment.Name, code, enrollment.ExpiresAt);
+    }
+
+    public static string GetEnrollmentStatus(EdgeAgentEnrollmentEntity enrollment, DateTimeOffset now)
+    {
+        return enrollment.UsedAt is not null ? "used" : enrollment.ExpiresAt <= now ? "expired" : "available";
     }
 
     public async Task<EnrolledEdgeAgent> EnrollAsync(EnrollEdgeAgentRequest request, CancellationToken cancellationToken)
@@ -106,8 +107,76 @@ public class EdgeAgentControlService(PlatformDbContext dbContext)
             AppliedAt = now
         });
         enrollment.UsedAt = now;
+        enrollment.UsedByAgentId = agent.Id;
         await dbContext.SaveChangesAsync(cancellationToken);
         return new EnrolledEdgeAgent(agent.Id, worker.Id, workerToken, agent.ConfigurationVersion);
+    }
+
+    public async Task<ManagedEdgeAgent> RenameAsync(Guid agentId, string name, CancellationToken cancellationToken)
+    {
+        var normalizedName = NormalizeAgentName(name);
+        var agent = await dbContext.EdgeAgents.SingleOrDefaultAsync(item => item.Id == agentId, cancellationToken)
+            ?? throw new KeyNotFoundException("边缘节点不存在。 ");
+        var worker = await dbContext.DeviceWorkers.SingleAsync(item => item.Id == agent.DeviceWorkerId, cancellationToken);
+        var workerName = GetWorkerName(normalizedName);
+
+        if (await dbContext.EdgeAgents.AnyAsync(item => item.Id != agentId && item.Name == normalizedName, cancellationToken) ||
+            await dbContext.DeviceWorkers.AnyAsync(item => item.Id != worker.Id && item.Name == workerName, cancellationToken))
+        {
+            throw new InvalidOperationException("边缘节点名称已被使用。 ");
+        }
+
+        agent.Name = normalizedName;
+        worker.Name = workerName;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return new ManagedEdgeAgent(agent.Id, agent.Name, worker.Id);
+    }
+
+    public async Task<ManagedEdgeAgent> SetStatusAsync(Guid agentId, bool disabled, CancellationToken cancellationToken)
+    {
+        var agent = await dbContext.EdgeAgents.SingleOrDefaultAsync(item => item.Id == agentId, cancellationToken)
+            ?? throw new KeyNotFoundException("边缘节点不存在。 ");
+        var worker = await dbContext.DeviceWorkers.SingleAsync(item => item.Id == agent.DeviceWorkerId, cancellationToken);
+        DateTimeOffset? disabledAt = disabled ? DateTimeOffset.UtcNow : null;
+        agent.DisabledAt = disabledAt;
+        worker.DisabledAt = disabledAt;
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return new ManagedEdgeAgent(agent.Id, agent.Name, worker.Id);
+    }
+
+    public async Task<DeletedEdgeAgent> DeleteAsync(Guid agentId, string confirmationName, CancellationToken cancellationToken)
+    {
+        var agent = await dbContext.EdgeAgents.SingleOrDefaultAsync(item => item.Id == agentId, cancellationToken)
+            ?? throw new KeyNotFoundException("边缘节点不存在。 ");
+        if (!string.Equals(agent.Name, confirmationName?.Trim(), StringComparison.Ordinal))
+        {
+            throw new ArgumentException("确认名称与当前边缘节点名称不一致。", nameof(confirmationName));
+        }
+
+        var workerId = agent.DeviceWorkerId;
+        var worker = await dbContext.DeviceWorkers.SingleAsync(item => item.Id == workerId, cancellationToken);
+        var assignments = await dbContext.DeviceWorkerAssignments.Where(item => item.WorkerId == workerId).ToListAsync(cancellationToken);
+        var operationStatuses = await dbContext.DeviceWorkerOperationStatuses.Where(item => item.WorkerId == workerId).ToListAsync(cancellationToken);
+        var commands = await dbContext.EdgeCommands.Where(item => item.WorkerId == workerId).ToListAsync(cancellationToken);
+        var envelopes = await dbContext.DeviceCredentialEnvelopes.Where(item => item.EdgeAgentId == agentId).ToListAsync(cancellationToken);
+        var configurations = await dbContext.EdgeAgentConfigurations.Where(item => item.EdgeAgentId == agentId).ToListAsync(cancellationToken);
+        var enrollments = await dbContext.EdgeAgentEnrollments.Where(item => item.UsedByAgentId == agentId).ToListAsync(cancellationToken);
+        var operations = await dbContext.PlatformOperations.Where(item => item.EdgeAgentId == agentId).ToListAsync(cancellationToken);
+        var upgradeTargets = await dbContext.UpgradeTargets.Where(item => item.EdgeAgentId == agentId).ToListAsync(cancellationToken);
+
+        foreach (var enrollment in enrollments) enrollment.UsedByAgentId = null;
+        foreach (var operation in operations) operation.EdgeAgentId = null;
+        foreach (var target in upgradeTargets) target.EdgeAgentId = null;
+        dbContext.DeviceWorkerAssignments.RemoveRange(assignments);
+        dbContext.DeviceWorkerOperationStatuses.RemoveRange(operationStatuses);
+        dbContext.EdgeCommands.RemoveRange(commands);
+        dbContext.DeviceCredentialEnvelopes.RemoveRange(envelopes);
+        dbContext.EdgeAgentConfigurations.RemoveRange(configurations);
+        dbContext.EdgeAgents.Remove(agent);
+        dbContext.DeviceWorkers.Remove(worker);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return new DeletedEdgeAgent(agent.Id, agent.Name, assignments.Count, envelopes.Count, configurations.Count, commands.Count);
     }
 
     public async Task<EdgeAgentEntity?> AuthenticateAsync(HttpRequest request, Guid agentId, CancellationToken cancellationToken)
@@ -509,6 +578,16 @@ public class EdgeAgentControlService(PlatformDbContext dbContext)
         return false;
     }
 
+    private static string NormalizeAgentName(string name)
+    {
+        const int maxAgentNameLength = 117;
+        if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > maxAgentNameLength)
+        {
+            throw new ArgumentException($"边缘节点名称长度必须在 1 至 {maxAgentNameLength} 个字符之间。", nameof(name));
+        }
+        return name.Trim();
+    }
+
     private static string GetWorkerName(string agentName) => $"edge-agent-{agentName}";
 
     private static string HashToken(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
@@ -522,6 +601,15 @@ public sealed record EdgeAgentPublicKeyRequest(
 
 public sealed record CreateEdgeAgentEnrollmentRequest(string Name, int? LifetimeMinutes = null);
 public sealed record CreatedEdgeAgentEnrollment(Guid Id, string Name, string EnrollmentCode, DateTimeOffset ExpiresAt);
+public sealed record EdgeAgentEnrollmentSummary(
+    Guid Id,
+    string Name,
+    DateTimeOffset CreatedAt,
+    DateTimeOffset ExpiresAt,
+    DateTimeOffset? UsedAt,
+    string Status,
+    Guid? UsedByAgentId,
+    string? UsedByAgentName);
 public sealed record EnrollEdgeAgentRequest(
     string EnrollmentCode,
     string AgentVersion,
@@ -529,6 +617,8 @@ public sealed record EnrollEdgeAgentRequest(
     string? CapabilitiesJson,
     EdgeAgentPublicKeyRequest? PublicKey);
 public sealed record EnrolledEdgeAgent(Guid AgentId, Guid WorkerId, string WorkerToken, int ConfigurationVersion);
+public sealed record ManagedEdgeAgent(Guid Id, string Name, Guid WorkerId);
+public sealed record DeletedEdgeAgent(Guid Id, string Name, int DetachedAssignmentCount, int DeletedCredentialEnvelopeCount, int DeletedConfigurationCount, int DeletedCommandCount);
 public sealed record EdgeAgentHeartbeatRequest(string AgentVersion, string? CapabilitiesJson, string? ServiceStatusJson);
 public sealed record EdgeAgentConfigurationResponse(int Version, string ConfigurationJson, string Status);
 public sealed record EdgeAgentConfigurationStatusReport(int Version, bool Applied, string? FailureKind);

@@ -236,6 +236,7 @@ public sealed class EdgeAgentRuntimeWorker(
                 snapshot.CredentialEnvelopeCount,
                 snapshot.LastHeartbeatAt,
                 snapshot.LastFailureKind,
+                snapshot.Resource,
                 hostAgent = hostOperationState.Snapshot()
             }),
             true,

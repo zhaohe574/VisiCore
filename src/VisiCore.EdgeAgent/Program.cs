@@ -22,9 +22,14 @@ builder.Logging.AddSimpleConsole(options => options.SingleLine = true);
 
 var edgeAgentOptions = builder.Configuration.GetSection("EdgeAgent").Get<EdgeAgentOptions>() ?? new EdgeAgentOptions();
 var hostAgentOptions = builder.Configuration.GetSection("HostAgent").Get<HostAgentOptions>() ?? new HostAgentOptions();
+if (OperatingSystem.IsWindows())
+{
+    builder.WebHost.UseUrls("http://127.0.0.1:18082");
+}
 builder.Services.AddSingleton(edgeAgentOptions);
 builder.Services.AddSingleton(hostAgentOptions);
 builder.Services.AddSingleton<EdgeAgentRuntimeState>();
+builder.Services.AddSingleton(new EdgeNodeResourcePolicyStatusStore(edgeAgentOptions.GetResourcePolicyStatusPath()));
 builder.Services.AddSingleton<EdgeAgentRuntimeSettings>();
 builder.Services.AddSingleton<HostOperationState>();
 builder.Services.AddSingleton<EdgeAgentIdentityStore>();
@@ -61,6 +66,7 @@ else
 }
 
 builder.Services.AddHostedService<EdgeAgentRuntimeWorker>();
+builder.Services.AddHostedService<EdgeNodeResourceMonitor>();
 // 宿主升级器必须独立运行，业务 Agent 不取得 Docker、shell 或系统写入权限。
 builder.Services.AddHealthChecks()
     .AddCheck<EdgeAgentLivenessHealthCheck>("edge_agent_liveness", HealthStatus.Unhealthy)
@@ -84,7 +90,9 @@ app.MapGet("/api/v1/edge-agent/identity", (
         isEnrolled = snapshot.LastHeartbeatAt is not null,
         agentVersion = options.GetAgentVersion(),
         platform = options.GetPlatform(),
-        capabilities = options.Capabilities
+        capabilities = options.Capabilities,
+        runtimeStatus = snapshot.Status,
+        resource = snapshot.Resource
     });
 });
 app.MapGet("/api/v1/edge-agent/runtime", (

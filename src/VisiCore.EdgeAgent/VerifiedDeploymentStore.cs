@@ -24,7 +24,7 @@ public sealed class VerifiedDeploymentStore(HostAgentOptions options)
         }
     }
 
-    public async Task<HostVerifiedReleaseArtifact?> GetArtifactAsync(
+    public async Task<HostVerifiedReleaseArtifact?> GetRollbackArtifactAsync(
         Guid sourceOperationId,
         CancellationToken cancellationToken)
     {
@@ -34,13 +34,14 @@ public sealed class VerifiedDeploymentStore(HostAgentOptions options)
             var receipt = (await ReadAsync(cancellationToken))
                 .FirstOrDefault(item => item.SourceOperationId == sourceOperationId);
             return receipt is null ||
-                   string.IsNullOrWhiteSpace(receipt.ArtifactPath) ||
-                   string.IsNullOrWhiteSpace(receipt.ArtifactSha256)
+                   string.IsNullOrWhiteSpace(receipt.PreviousArtifactSha256)
                 ? null
                 : new HostVerifiedReleaseArtifact(
-                    receipt.ArtifactPath,
-                    receipt.ComposeFilePath,
-                    receipt.ArtifactSha256);
+                    receipt.PreviousArtifactPath,
+                    receipt.PreviousComposeFilePath,
+                    receipt.PreviousArtifactSha256,
+                    receipt.PreviousOciImageReference,
+                    receipt.PreviousProductVersion);
         }
         finally
         {
@@ -59,7 +60,12 @@ public sealed class VerifiedDeploymentStore(HostAgentOptions options)
         try
         {
             var receipts = await ReadAsync(cancellationToken);
+            var previous = receipts.OrderByDescending(item => item.VerifiedAt).FirstOrDefault(item => item.IsActive);
             receipts.RemoveAll(item => item.SourceOperationId == sourceOperationId);
+            foreach (var item in receipts)
+            {
+                item.IsActive = false;
+            }
             receipts.Add(new VerifiedDeploymentReceipt(
                 sourceOperationId,
                 releaseId,
@@ -67,9 +73,69 @@ public sealed class VerifiedDeploymentStore(HostAgentOptions options)
                 artifact.ArtifactPath,
                 artifact.ComposeFilePath,
                 artifact.ArtifactSha256,
+                artifact.OciImageReference,
+                artifact.ProductVersion,
+                previous?.ReleaseId,
+                previous?.ArtifactPath,
+                previous?.ComposeFilePath,
+                previous?.ArtifactSha256,
+                previous?.OciImageReference,
+                previous?.ProductVersion,
+                true,
                 DateTimeOffset.UtcNow));
             // 保持有限回执，避免宿主状态目录无限增长。
             receipts = receipts.OrderByDescending(item => item.VerifiedAt).Take(100).ToList();
+            await WriteAsync(receipts, cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task<bool> HasActiveArtifactAsync(CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            return (await ReadAsync(cancellationToken)).Any(item => item.IsActive && !string.IsNullOrWhiteSpace(item.ArtifactSha256));
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task EnsureBaselineAsync(
+        string releaseId,
+        string publicKeyId,
+        HostVerifiedReleaseArtifact artifact,
+        CancellationToken cancellationToken)
+    {
+        if (await HasActiveArtifactAsync(cancellationToken))
+        {
+            return;
+        }
+        await RememberAsync(Guid.Empty, releaseId, publicKeyId, artifact, cancellationToken);
+    }
+
+    public async Task ActivateRollbackAsync(Guid sourceOperationId, CancellationToken cancellationToken)
+    {
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var receipts = await ReadAsync(cancellationToken);
+            var source = receipts.FirstOrDefault(item => item.SourceOperationId == sourceOperationId);
+            if (source is null || string.IsNullOrWhiteSpace(source.PreviousArtifactSha256))
+            {
+                return;
+            }
+            foreach (var item in receipts)
+            {
+                item.IsActive = string.Equals(item.ArtifactSha256, source.PreviousArtifactSha256, StringComparison.OrdinalIgnoreCase) &&
+                                string.Equals(item.ArtifactPath, source.PreviousArtifactPath, StringComparison.Ordinal) &&
+                                string.Equals(item.OciImageReference, source.PreviousOciImageReference, StringComparison.Ordinal);
+            }
             await WriteAsync(receipts, cancellationToken);
         }
         finally
@@ -117,11 +183,58 @@ public sealed class VerifiedDeploymentStore(HostAgentOptions options)
     private string GetPath() => Path.Combine(Path.GetFullPath(options.OperationStateDirectory), FileName);
 }
 
-public sealed record VerifiedDeploymentReceipt(
-    Guid SourceOperationId,
-    string ReleaseId,
-    string PublicKeyId,
-    string? ArtifactPath,
-    string? ComposeFilePath,
-    string? ArtifactSha256,
-    DateTimeOffset VerifiedAt);
+public sealed class VerifiedDeploymentReceipt
+{
+    public VerifiedDeploymentReceipt(
+        Guid sourceOperationId,
+        string releaseId,
+        string publicKeyId,
+        string? artifactPath,
+        string? composeFilePath,
+        string? artifactSha256,
+        string? ociImageReference,
+        string? productVersion,
+        string? previousReleaseId,
+        string? previousArtifactPath,
+        string? previousComposeFilePath,
+        string? previousArtifactSha256,
+        string? previousOciImageReference,
+        string? previousProductVersion,
+        bool isActive,
+        DateTimeOffset verifiedAt)
+    {
+        SourceOperationId = sourceOperationId;
+        ReleaseId = releaseId;
+        PublicKeyId = publicKeyId;
+        ArtifactPath = artifactPath;
+        ComposeFilePath = composeFilePath;
+        ArtifactSha256 = artifactSha256;
+        OciImageReference = ociImageReference;
+        ProductVersion = productVersion;
+        PreviousReleaseId = previousReleaseId;
+        PreviousArtifactPath = previousArtifactPath;
+        PreviousComposeFilePath = previousComposeFilePath;
+        PreviousArtifactSha256 = previousArtifactSha256;
+        PreviousOciImageReference = previousOciImageReference;
+        PreviousProductVersion = previousProductVersion;
+        IsActive = isActive;
+        VerifiedAt = verifiedAt;
+    }
+
+    public Guid SourceOperationId { get; set; }
+    public string ReleaseId { get; set; } = string.Empty;
+    public string PublicKeyId { get; set; } = string.Empty;
+    public string? ArtifactPath { get; set; }
+    public string? ComposeFilePath { get; set; }
+    public string? ArtifactSha256 { get; set; }
+    public string? OciImageReference { get; set; }
+    public string? ProductVersion { get; set; }
+    public string? PreviousReleaseId { get; set; }
+    public string? PreviousArtifactPath { get; set; }
+    public string? PreviousComposeFilePath { get; set; }
+    public string? PreviousArtifactSha256 { get; set; }
+    public string? PreviousOciImageReference { get; set; }
+    public string? PreviousProductVersion { get; set; }
+    public bool IsActive { get; set; }
+    public DateTimeOffset VerifiedAt { get; set; }
+}

@@ -37,6 +37,13 @@ public sealed class AlertEventProcessor(PlatformDbContext dbContext)
             {
                 await RecoverIncidentAsync(payload.ResourceType, payload.ResourceId, "clock_skew", payload.ObservedAt, cancellationToken);
             }
+            return;
+        }
+        if (outboxEvent.EventType.Equals("upgrade.plan.failed", StringComparison.Ordinal))
+        {
+            var payload = JsonSerializer.Deserialize<UpgradePlanFailedPayload>(outboxEvent.PayloadJson, JsonOptions)
+                ?? throw new InvalidOperationException("升级计划告警载荷无效。 ");
+            await OpenIncidentAsync("upgrade_plan", payload.PlanId, "upgrade_failed", payload.OccurredAt, cancellationToken);
         }
     }
 
@@ -114,6 +121,13 @@ public sealed class AlertEventProcessor(PlatformDbContext dbContext)
                 .Select(item => (Guid?)item.DefaultRegionId)
                 .SingleOrDefaultAsync(cancellationToken);
             return new ResourceDescriptor(recorder.Name, regionId);
+        }
+        if (resourceType.Equals("upgrade_plan", StringComparison.Ordinal))
+        {
+            var plan = await dbContext.UpgradePlans.AsNoTracking().SingleOrDefaultAsync(item => item.Id == resourceId, cancellationToken)
+                ?? throw new InvalidOperationException("告警关联的升级计划不存在。 ");
+            var scopeName = plan.TargetScope.Equals("core", StringComparison.OrdinalIgnoreCase) ? "中心" : "边缘";
+            return new ResourceDescriptor($"{scopeName}升级计划", null);
         }
         throw new InvalidOperationException("告警资源类型不受支持。 ");
     }
@@ -204,5 +218,11 @@ public sealed record ClockSynchronizationChangedPayload(
     ClockSynchronization CurrentSynchronization,
     int OffsetMilliseconds,
     DateTimeOffset ObservedAt);
+
+public sealed record UpgradePlanFailedPayload(
+    Guid PlanId,
+    string TargetScope,
+    string FailureKind,
+    DateTimeOffset OccurredAt);
 
 internal sealed record ResourceDescriptor(string Name, Guid? RegionId);

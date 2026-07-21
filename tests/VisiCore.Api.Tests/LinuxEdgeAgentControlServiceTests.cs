@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using VisiCore.Api;
@@ -10,6 +11,120 @@ namespace VisiCore.Api.Tests;
 
 public sealed class LinuxEdgeAgentControlServiceTests
 {
+    [Fact(DisplayName = "配对码台账保留使用关联且不会序列化配对码明文或哈希")]
+    public async Task EnrollmentLedgerTracksUsageWithoutExposingSecrets()
+    {
+        await using var dbContext = CreateContext();
+        var service = new EdgeAgentControlService(dbContext);
+        var enrollment = await service.CreateEnrollmentAsync("台账节点", 15, CancellationToken.None);
+        using var rsa = RSA.Create(2048);
+        var agentId = Guid.NewGuid();
+        var publicKey = AgentCredentialEnvelopeCryptography.CreatePublicKey(agentId, "ledger-key", rsa);
+
+        await service.EnrollAsync(new EnrollEdgeAgentRequest(
+            enrollment.EnrollmentCode,
+            "1.0.0",
+            "linux",
+            "{}",
+            new EdgeAgentPublicKeyRequest(publicKey.AgentId, publicKey.KeyId, publicKey.KeyEncryptionAlgorithm, publicKey.SubjectPublicKeyInfoBase64)),
+            CancellationToken.None);
+
+        var persisted = await dbContext.EdgeAgentEnrollments.SingleAsync();
+        Assert.Equal(agentId, persisted.UsedByAgentId);
+        Assert.NotNull(persisted.UsedAt);
+        Assert.Equal("used", EdgeAgentControlService.GetEnrollmentStatus(persisted, DateTimeOffset.UtcNow));
+        Assert.Equal("available", EdgeAgentControlService.GetEnrollmentStatus(new EdgeAgentEnrollmentEntity { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(1) }, DateTimeOffset.UtcNow));
+        Assert.Equal("expired", EdgeAgentControlService.GetEnrollmentStatus(new EdgeAgentEnrollmentEntity { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1) }, DateTimeOffset.UtcNow));
+
+        var summary = new EdgeAgentEnrollmentSummary(
+            persisted.Id,
+            persisted.Name,
+            persisted.CreatedAt,
+            persisted.ExpiresAt,
+            persisted.UsedAt,
+            "used",
+            persisted.UsedByAgentId,
+            "台账节点");
+        var serialized = JsonSerializer.Serialize(summary);
+        Assert.DoesNotContain(enrollment.EnrollmentCode, serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("CodeHash", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("EnrollmentCode", serialized, StringComparison.Ordinal);
+    }
+
+    [Fact(DisplayName = "边缘节点改名会同步更新受管 Worker 并拒绝重复名称")]
+    public async Task RenameSynchronizesWorkerNameAndRejectsDuplicates()
+    {
+        await using var dbContext = CreateContext();
+        var service = new EdgeAgentControlService(dbContext);
+        var enrolled = await EnrollAsync(service, "旧节点", "rename-key");
+
+        var updated = await service.RenameAsync(enrolled.AgentId, "新节点", CancellationToken.None);
+        Assert.Equal("新节点", updated.Name);
+        Assert.Equal("新节点", (await dbContext.EdgeAgents.SingleAsync(item => item.Id == enrolled.AgentId)).Name);
+        Assert.Equal("edge-agent-新节点", (await dbContext.DeviceWorkers.SingleAsync(item => item.Id == enrolled.WorkerId)).Name);
+
+        await service.SetStatusAsync(enrolled.AgentId, true, CancellationToken.None);
+        Assert.NotNull((await dbContext.EdgeAgents.SingleAsync(item => item.Id == enrolled.AgentId)).DisabledAt);
+        Assert.NotNull((await dbContext.DeviceWorkers.SingleAsync(item => item.Id == enrolled.WorkerId)).DisabledAt);
+        await service.SetStatusAsync(enrolled.AgentId, false, CancellationToken.None);
+        Assert.Null((await dbContext.EdgeAgents.SingleAsync(item => item.Id == enrolled.AgentId)).DisabledAt);
+        Assert.Null((await dbContext.DeviceWorkers.SingleAsync(item => item.Id == enrolled.WorkerId)).DisabledAt);
+
+        dbContext.DeviceWorkers.Add(new DeviceWorkerEntity
+        {
+            Id = Guid.NewGuid(),
+            Name = "edge-agent-重复节点",
+            TokenHash = "other-worker",
+            CreatedAt = DateTimeOffset.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.RenameAsync(enrolled.AgentId, "重复节点", CancellationToken.None));
+    }
+
+    [Fact(DisplayName = "删除边缘节点会解除设备分配、保留历史引用并使旧令牌失效")]
+    public async Task DeleteRemovesNodeScopedDataAndPreservesHistoricalReferences()
+    {
+        await using var dbContext = CreateContext();
+        var service = new EdgeAgentControlService(dbContext);
+        var enrolled = await EnrollAsync(service, "待删除节点", "delete-key");
+        var agent = await dbContext.EdgeAgents.SingleAsync(item => item.Id == enrolled.AgentId);
+        var enrollment = await dbContext.EdgeAgentEnrollments.SingleAsync(item => item.UsedByAgentId == enrolled.AgentId);
+        var assignment = new DeviceWorkerAssignmentEntity { Id = Guid.NewGuid(), WorkerId = enrolled.WorkerId, RecorderId = Guid.NewGuid(), DefaultRegionId = Guid.NewGuid() };
+        var status = new DeviceWorkerOperationStatusEntity { Id = Guid.NewGuid(), WorkerId = enrolled.WorkerId, RecorderId = assignment.RecorderId, OperationType = "recording.search", IsReady = true, ReportedAt = DateTimeOffset.UtcNow };
+        var command = new EdgeCommandEntity { Id = Guid.NewGuid(), WorkerId = enrolled.WorkerId, RecorderId = assignment.RecorderId, CommandType = "diagnostic", AggregateType = "edge_agent", AggregateId = enrolled.AgentId, CreatedAt = DateTimeOffset.UtcNow, NextAttemptAt = DateTimeOffset.UtcNow };
+        var envelope = new DeviceCredentialEnvelopeEntity { Id = Guid.NewGuid(), CredentialVersionId = Guid.NewGuid(), EdgeAgentId = enrolled.AgentId, KeyId = "delete-key", KeyEncryptionAlgorithm = "RSA-OAEP-256", ContentEncryptionAlgorithm = "AES-256-GCM", EncryptedKey = [1], InitializationVector = [1], Ciphertext = [1], AuthenticationTag = [1], CreatedAt = DateTimeOffset.UtcNow };
+        var operation = new PlatformOperationEntity { Id = Guid.NewGuid(), EdgeAgentId = enrolled.AgentId, OperationType = "diagnostic", Status = "completed", Summary = "保留历史", DetailsJson = "{}", RequestedAt = DateTimeOffset.UtcNow };
+        var target = new UpgradeTargetEntity { Id = Guid.NewGuid(), UpgradePlanId = Guid.NewGuid(), EdgeAgentId = enrolled.AgentId, TargetType = "edge", Component = "edge-agent", Batch = 1, Status = "completed", ExpectedVersion = "1.0.0", RequestedAt = DateTimeOffset.UtcNow };
+        dbContext.DeviceWorkerAssignments.Add(assignment);
+        dbContext.DeviceWorkerOperationStatuses.Add(status);
+        dbContext.EdgeCommands.Add(command);
+        dbContext.DeviceCredentialEnvelopes.Add(envelope);
+        dbContext.PlatformOperations.Add(operation);
+        dbContext.UpgradeTargets.Add(target);
+        await dbContext.SaveChangesAsync();
+
+        var deleted = await service.DeleteAsync(enrolled.AgentId, agent.Name, CancellationToken.None);
+
+        Assert.Equal(1, deleted.DetachedAssignmentCount);
+        Assert.Equal(1, deleted.DeletedCredentialEnvelopeCount);
+        Assert.Null(await dbContext.EdgeAgents.FindAsync(enrolled.AgentId));
+        Assert.Null(await dbContext.DeviceWorkers.FindAsync(enrolled.WorkerId));
+        Assert.Empty(await dbContext.DeviceWorkerAssignments.ToListAsync());
+        Assert.Empty(await dbContext.DeviceWorkerOperationStatuses.ToListAsync());
+        Assert.Empty(await dbContext.EdgeCommands.ToListAsync());
+        Assert.Empty(await dbContext.DeviceCredentialEnvelopes.ToListAsync());
+        Assert.Empty(await dbContext.EdgeAgentConfigurations.ToListAsync());
+        Assert.NotNull(enrollment.UsedAt);
+        Assert.Null(enrollment.UsedByAgentId);
+        Assert.Null((await dbContext.PlatformOperations.SingleAsync(item => item.Id == operation.Id)).EdgeAgentId);
+        Assert.Null((await dbContext.UpgradeTargets.SingleAsync(item => item.Id == target.Id)).EdgeAgentId);
+
+        var request = new DefaultHttpContext().Request;
+        request.Headers.Authorization = $"Bearer {enrolled.WorkerToken}";
+        Assert.Null(await service.AuthenticateAsync(request, enrolled.AgentId, CancellationToken.None));
+    }
+
     [Fact(DisplayName = "Windows Edge Agent 使用同一配对协议并能回传配置拒绝状态")]
     public async Task WindowsAgentCanEnrollAndRejectInvalidConfiguration()
     {
@@ -217,6 +332,21 @@ public sealed class LinuxEdgeAgentControlServiceTests
         AuthenticationTag = Convert.FromBase64String(envelope.AuthenticationTagBase64),
         CreatedAt = DateTimeOffset.UtcNow
     };
+
+    private static async Task<EnrolledEdgeAgent> EnrollAsync(EdgeAgentControlService service, string name, string keyId)
+    {
+        var enrollment = await service.CreateEnrollmentAsync(name, 15, CancellationToken.None);
+        using var rsa = RSA.Create(2048);
+        var agentId = Guid.NewGuid();
+        var publicKey = AgentCredentialEnvelopeCryptography.CreatePublicKey(agentId, keyId, rsa);
+        return await service.EnrollAsync(new EnrollEdgeAgentRequest(
+            enrollment.EnrollmentCode,
+            "1.0.0",
+            "linux",
+            "{}",
+            new EdgeAgentPublicKeyRequest(publicKey.AgentId, publicKey.KeyId, publicKey.KeyEncryptionAlgorithm, publicKey.SubjectPublicKeyInfoBase64)),
+            CancellationToken.None);
+    }
 
     private static PlatformDbContext CreateContext()
     {

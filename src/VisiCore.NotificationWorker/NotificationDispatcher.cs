@@ -192,6 +192,8 @@ public sealed class NotificationDispatcher(
         ? "通知渠道测试"
         : incidentType.Equals("clock_skew", StringComparison.Ordinal)
         ? "时钟偏差"
+        : incidentType.Equals("upgrade_failed", StringComparison.Ordinal)
+        ? "升级失败"
         : "设备掉线";
 
     private static string DeviceTypeText(string? deviceType, string resourceType)
@@ -200,6 +202,7 @@ public sealed class NotificationDispatcher(
         return normalized.Trim().ToLowerInvariant() switch
         {
             NotificationTestIncidentType => "测试消息",
+            "upgrade_plan" => "升级计划",
             DeviceKinds.Camera => "摄像头",
             DeviceKinds.Recorder => "录像机",
             DeviceKinds.Matrix => "视频矩阵",

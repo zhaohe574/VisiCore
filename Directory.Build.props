@@ -1,8 +1,11 @@
 <Project>
   <PropertyGroup>
-    <Version>0.1.0</Version>
-    <AssemblyVersion>0.1.0.0</AssemblyVersion>
-    <FileVersion>0.1.0.0</FileVersion>
+    <!-- VERSION 是所有 .NET 制品的唯一版本来源；正式 Release 仍会校验 Git 标签与该文件一致。 -->
+    <VisiCoreProductVersion>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</VisiCoreProductVersion>
+    <Version Condition="'$(Version)' == ''">$(VisiCoreProductVersion)</Version>
+    <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">$(VisiCoreProductVersion).0</AssemblyVersion>
+    <FileVersion Condition="'$(FileVersion)' == ''">$(VisiCoreProductVersion).0</FileVersion>
+    <InformationalVersion Condition="'$(InformationalVersion)' == ''">$(VisiCoreProductVersion)</InformationalVersion>
     <!-- 项目内的验证产物不能被 SDK 当作发布内容或 MSI 文件收集。 -->
     <DefaultItemExcludes>$(DefaultItemExcludes);artifacts\**</DefaultItemExcludes>
   </PropertyGroup>

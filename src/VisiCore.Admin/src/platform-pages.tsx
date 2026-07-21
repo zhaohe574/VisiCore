@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { AlertCircle, BellRing, Cpu, Download, KeyRound, LockKeyhole, PackagePlus, Plus, RefreshCw, RotateCw, Server, ShieldCheck, Trash2, Upload } from 'lucide-react'
+import { AlertCircle, BellRing, Cpu, Download, KeyRound, LockKeyhole, PackageCheck, PackagePlus, PauseCircle, Pencil, PlayCircle, Plus, Power, RefreshCw, RotateCw, Server, ShieldCheck, Trash2, Upload } from 'lucide-react'
 import { api, formatTime } from './api'
-import type { AgentCredentialEnvelope, AgentPublicKeyContract, DeviceCredential, EdgeAgent, EdgeAgentEnrollment, EdgeRelease, PlatformBackup, PlatformDeployment, PlatformDiagnosticCheck, PlatformDiagnosticResult, PlatformOperationsOverview, PlatformServiceStatus } from './types'
+import type { AgentCredentialEnvelope, AgentPublicKeyContract, DeviceCredential, EdgeAgent, EdgeAgentEnrollment, EdgeRelease, PlatformBackup, PlatformDeployment, PlatformDiagnosticCheck, PlatformDiagnosticResult, PlatformOperationsOverview, PlatformServiceStatus, ReleaseCatalogEntry, UpgradePlan } from './types'
 import { Badge, Button, Dialog, EmptyState, ErrorState, Field, Form, Input, LoadingState, PageHeader, Panel, Select, Textarea } from './ui'
 
 type Notify = (message: string, tone?: 'good' | 'bad') => void
@@ -32,19 +32,21 @@ function statusKey(value: string | number | null | undefined) {
 function statusLabel(value: string | number | null | undefined) {
   const labels: Record<string, string> = {
     active: '可用', enabled: '已启用', ready: '就绪', healthy: '健康', online: '在线', connected: '已连接',
-    pending: '等待中', enrolling: '配对中', running: '执行中', deploying: '发布中', upgrading: '升级中',
-    completed: '已完成', succeeded: '已完成', applied: '已生效',
-    disabled: '已停用', inactive: '未启用', offline: '离线', failed: '失败', error: '异常', revoked: '已撤销', stopped: '已停止'
+    available: '未使用', used: '已使用', expired: '已过期', pending: '等待中', enrolling: '配对中', running: '执行中', deploying: '发布中', upgrading: '升级中',
+    completed: '已完成', succeeded: '已完成', applied: '已生效', draft: '待确认', queued: '已排队', dispatched: '已下发', verifying: '稳定观察', paused: '已暂停', reboot_required: '等待重启',
+    disabled: '已停用', inactive: '未启用', offline: '离线', failed: '失败', error: '异常', revoked: '已撤销', stopped: '已停止', rolled_back: '已回退',
+    not_configured: '未配置', unlimited: '未限制', applying: '正在应用', awaiting_agent: '等待 Agent', unsupported: '不支持'
   }
   const key = statusKey(value)
   return labels[key] ?? (value === null || value === undefined || value === '' ? '未上报' : String(value))
 }
 
-function statusTone(value: string | number | null | undefined): 'good' | 'bad' | 'warn' | 'neutral' {
+function statusTone(value: string | number | null | undefined): 'good' | 'bad' | 'warn' | 'neutral' | 'info' {
   const key = statusKey(value)
-  if (['active', 'enabled', 'ready', 'healthy', 'online', 'connected', 'completed', 'succeeded', 'applied'].includes(key)) return 'good'
+  if (['active', 'enabled', 'ready', 'healthy', 'online', 'connected', 'completed', 'succeeded', 'applied', 'rolled_back'].includes(key)) return 'good'
   if (['disabled', 'inactive', 'offline', 'failed', 'error', 'revoked', 'stopped'].includes(key)) return 'bad'
-  if (['pending', 'enrolling', 'running', 'deploying', 'upgrading'].includes(key)) return 'warn'
+  if (['expired', 'pending', 'enrolling', 'running', 'deploying', 'upgrading', 'draft', 'queued', 'dispatched', 'verifying', 'paused', 'reboot_required', 'applying', 'awaiting_agent'].includes(key)) return 'warn'
+  if (key === 'used') return 'info'
   return 'neutral'
 }
 
@@ -242,18 +244,21 @@ function CredentialDialog({ open, credential, agents, onClose, onSaved, notify }
 export function EdgeAgentsPage({ notify }: { notify: Notify }) {
   const [enrollmentOpen, setEnrollmentOpen] = useState(false)
   const [enrollment, setEnrollment] = useState<EdgeAgentEnrollment | null>(null)
+  const [editing, setEditing] = useState<EdgeAgent | null>(null)
+  const [deleting, setDeleting] = useState<EdgeAgent | null>(null)
   const [credentialView, setCredentialView] = useState<{ agent: EdgeAgent; credentials: DeviceCredential[] } | null>(null)
   const [diagnostic, setDiagnostic] = useState<{ agent: EdgeAgent; result: PlatformDiagnosticResult } | null>(null)
   const resource = useResource(async () => {
-    const [agentResponse, credentialResponse] = await Promise.all([
+    const [agentResponse, credentialResponse, enrollmentResponse] = await Promise.all([
       api.get<EdgeAgent[] | { items?: EdgeAgent[] }>('/api/v1/admin/edge-agents'),
-      api.get<DeviceCredential[] | { items?: DeviceCredential[] }>('/api/v1/admin/device-credentials')
+      api.get<DeviceCredential[] | { items?: DeviceCredential[] }>('/api/v1/admin/device-credentials'),
+      api.get<EdgeAgentEnrollment[] | { items?: EdgeAgentEnrollment[] }>('/api/v1/admin/edge-agents/enrollments')
     ])
-    return { agents: readList(agentResponse), credentials: readList(credentialResponse) }
+    return { agents: readList(agentResponse), credentials: readList(credentialResponse), enrollments: readList(enrollmentResponse) }
   }, [])
   if (resource.loading) return <LoadingState />
   if (resource.error || !resource.data) return <ErrorState message={resource.error} retry={resource.refresh} />
-  const { agents, credentials } = resource.data
+  const { agents, credentials, enrollments } = resource.data
   const viewCredentials = (agent: EdgeAgent) => setCredentialView({ agent, credentials: credentials.filter(credential => credential.agentIds?.includes(agent.id)) })
   const runDiagnostic = async (agent: EdgeAgent) => {
     try {
@@ -264,19 +269,35 @@ export function EdgeAgentsPage({ notify }: { notify: Notify }) {
       notify(reason instanceof Error ? reason.message : '节点诊断失败', 'bad')
     }
   }
+  const setAgentStatus = async (agent: EdgeAgent) => {
+    const disabled = !agent.disabledAt
+    try {
+      await api.patch<void>(`/api/v1/admin/edge-agents/${agent.id}/status`, { disabled })
+      notify(disabled ? '边缘节点已停用' : '边缘节点已启用')
+      await resource.refresh()
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : '无法更新节点状态', 'bad')
+    }
+  }
   const enrollmentCode = enrollment?.enrollmentCode ?? enrollment?.enrollmentToken ?? enrollment?.pairingCode ?? enrollment?.token ?? ''
   return <>
     <PageHeader title="边缘节点" description="Docker 与 Windows Edge Agent 统一承载设备接入、预检、诊断和配置回执；现场转流仍由独立媒体部署承担。" actions={<div className="page-header__actions"><Button variant="secondary" icon={<RefreshCw size={16} />} onClick={() => void resource.refresh()}>刷新状态</Button><Button icon={<PackagePlus size={16} />} onClick={() => setEnrollmentOpen(true)}>配对节点</Button></div>} />
     <Panel className="table-panel">
-      {agents.length === 0 ? <EmptyState title="尚未配对边缘节点" description="创建一次性注册码后，由已安装的 Linux Agent 完成安全配对。" /> : <div className="table-scroll"><table><thead><tr><th>状态</th><th>节点</th><th>版本 / 能力</th><th>最近心跳</th><th>配置 / 升级</th><th>凭据</th><th /></tr></thead><tbody>{agents.map(agent => {
+      {agents.length === 0 ? <EmptyState title="尚未配对边缘节点" description="创建一次性注册码后，由已安装的 Linux Agent 完成安全配对。" /> : <div className="table-scroll"><table><thead><tr><th>状态</th><th>节点</th><th>版本 / 能力</th><th>最近心跳</th><th>配置 / 升级</th><th>运行 / 资源</th><th>凭据</th><th /></tr></thead><tbody>{agents.map(agent => {
         const capabilities = edgeAgentCapabilities(agent)
         const state = edgeAgentStatus(agent)
         const configurationStatus = agent.configurationStatus ?? '未上报'
-        return <tr key={agent.id}><td><Badge tone={statusTone(state)}>{statusLabel(state)}</Badge></td><td><strong>{agent.name}</strong><small>{`${agent.platform ?? '未知平台'}${agent.architecture ? ` / ${agent.architecture}` : ''}`}</small><small>{agent.publicKey ? '节点公钥已登记' : '等待节点公钥'}</small></td><td>{agent.agentVersion ?? agent.version ?? '版本未上报'}<small>{capabilities.length ? capabilities.join('、') : '能力未上报'}</small></td><td>{formatTime(edgeAgentLastSeen(agent))}</td><td>{agent.configurationVersion ? `v${agent.configurationVersion}` : agent.appliedConfigVersion ?? agent.configVersion ?? '未上报'}<small>{`配置：${statusLabel(configurationStatus)}${agent.configurationFailureSummary ? ` · ${agent.configurationFailureSummary}` : ''}`}</small><small>{agent.lastDiagnosticAt ? `${agent.lastDiagnosticSucceeded === false ? '异常' : '最近诊断'} · ${formatTime(agent.lastDiagnosticAt)}` : '未执行诊断'}</small></td><td>{agent.credentialCount ?? 0}<small>{agent.assignmentCount ?? 0} 个设备分配</small></td><td><div className="row-actions"><Button variant="ghost" onClick={() => viewCredentials(agent)}>凭据</Button><Button variant="ghost" icon={<AlertCircle size={14} />} onClick={() => void runDiagnostic(agent)}>诊断</Button></div></td></tr>
+        const runtime = resourceSummary(edgeAgentResource(agent))
+        return <tr key={agent.id}><td><Badge tone={statusTone(state)}>{statusLabel(state)}</Badge></td><td><strong>{agent.name}</strong><small>{`${agent.platform ?? '未知平台'}${agent.architecture ? ` / ${agent.architecture}` : ''}`}</small><small>{agent.publicKey ? '节点公钥已登记' : '等待节点公钥'}</small></td><td>{agent.agentVersion ?? agent.version ?? '版本未上报'}<small>{capabilities.length ? capabilities.join('、') : '能力未上报'}</small></td><td>{formatTime(edgeAgentLastSeen(agent))}</td><td>{agent.configurationVersion ? `v${agent.configurationVersion}` : agent.appliedConfigVersion ?? agent.configVersion ?? '未上报'}<small>{`配置：${statusLabel(configurationStatus)}${agent.configurationFailureSummary ? ` · ${agent.configurationFailureSummary}` : ''}`}</small><small>{agent.lastDiagnosticAt ? `${agent.lastDiagnosticSucceeded === false ? '异常' : '最近诊断'} · ${formatTime(agent.lastDiagnosticAt)}` : '未执行诊断'}</small></td><td><strong>{runtime.primary}</strong><small>{runtime.detail}</small></td><td>{agent.credentialCount ?? 0}<small>{agent.assignmentCount ?? 0} 个设备分配</small></td><td><div className="row-actions"><Button variant="ghost" onClick={() => viewCredentials(agent)}>凭据</Button><Button variant="ghost" icon={<AlertCircle size={14} />} onClick={() => void runDiagnostic(agent)}>诊断</Button><Button variant="ghost" icon={<Pencil size={14} />} onClick={() => setEditing(agent)}>编辑</Button><Button variant={agent.disabledAt ? 'ghost' : 'secondary'} icon={<Power size={14} />} onClick={() => void setAgentStatus(agent)}>{agent.disabledAt ? '启用' : '停用'}</Button><Button variant="danger" icon={<Trash2 size={14} />} onClick={() => setDeleting(agent)}>删除</Button></div></td></tr>
       })}</tbody></table></div>}
+    </Panel>
+    <Panel className="table-panel" title="配对码台账" actions={<Badge tone={enrollments.length ? 'info' : 'neutral'}>{enrollments.length}</Badge>}>
+      {enrollments.length === 0 ? <EmptyState title="暂无配对码记录" description="创建配对码后会在此显示使用状态，不会再次显示明文。" /> : <div className="table-scroll"><table><thead><tr><th>状态</th><th>节点名称</th><th>已配对节点</th><th>创建时间</th><th>有效至</th><th>使用时间</th></tr></thead><tbody>{enrollments.map(item => <tr key={item.id ?? `${item.name}-${item.createdAt}`}><td><Badge tone={statusTone(item.status)}>{statusLabel(item.status)}</Badge></td><td><strong>{item.name ?? '—'}</strong></td><td>{item.status === 'used' ? item.usedByAgentName ?? '节点已删除' : '—'}</td><td>{formatTime(item.createdAt)}</td><td>{formatTime(item.expiresAt)}</td><td>{formatTime(item.usedAt)}</td></tr>)}</tbody></table></div>}
     </Panel>
     <EdgeEnrollmentDialog open={enrollmentOpen} onClose={() => setEnrollmentOpen(false)} onCreated={async result => { setEnrollmentOpen(false); setEnrollment(result); await resource.refresh(); notify('一次性配对凭证已生成') }} notify={notify} />
     <EnrollmentCodeDialog code={enrollmentCode} expiresAt={enrollment?.expiresAt ?? null} onClose={() => setEnrollment(null)} notify={notify} />
+    <EdgeAgentEditDialog agent={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); notify('边缘节点名称已更新'); await resource.refresh() }} notify={notify} />
+    <EdgeAgentDeleteDialog agent={deleting} onClose={() => setDeleting(null)} onDeleted={async () => { setDeleting(null); notify('边缘节点已删除并解除设备分配'); await resource.refresh() }} notify={notify} />
     <AgentCredentialsDialog value={credentialView} onClose={() => setCredentialView(null)} />
     <DiagnosticResultDialog value={diagnostic} onClose={() => setDiagnostic(null)} />
   </>
@@ -297,7 +318,7 @@ function EdgeEnrollmentDialog({ open, onClose, onCreated, notify }: { open: bool
       setSubmitting(false)
     }
   }
-  return <Dialog open={open} title="配对边缘节点" description="创建后的凭证仅显示一次，并在过期后自动失效。" onClose={onClose}><Form onSubmit={submit}><Field label="节点名称"><Input name="name" placeholder="例如 warehouse-edge-01" autoCapitalize="none" required /></Field><div className="dialog__footer"><Button variant="secondary" type="button" onClick={onClose}>取消</Button><Button disabled={submitting}>{submitting ? '正在创建' : '创建配对凭证'}</Button></div></Form></Dialog>
+  return <Dialog open={open} title="配对边缘节点" description="创建后的凭证仅显示一次，并在过期后自动失效。" onClose={onClose}><Form onSubmit={submit}><Field label="节点名称" hint="最多 117 个字符。"><Input name="name" placeholder="例如 warehouse-edge-01" autoCapitalize="none" maxLength={117} required /></Field><div className="dialog__footer"><Button variant="secondary" type="button" onClick={onClose}>取消</Button><Button disabled={submitting}>{submitting ? '正在创建' : '创建配对凭证'}</Button></div></Form></Dialog>
 }
 
 function EnrollmentCodeDialog({ code, expiresAt, onClose, notify }: { code: string; expiresAt: string | null; onClose: () => void; notify: Notify }) {
@@ -314,6 +335,82 @@ function EnrollmentCodeDialog({ code, expiresAt, onClose, notify }: { code: stri
   return <Dialog open={!!code} title="一次性配对凭证" description={expiresAt ? `有效至 ${formatTime(expiresAt)}` : '请在有效期内完成节点配对。'} onClose={onClose}><div className="token-box"><code>{code}</code><Button variant="secondary" icon={<KeyRound size={15} />} onClick={() => void copy()}>{copied ? '已复制' : '复制凭证'}</Button></div><div className="dialog__footer"><Button onClick={onClose}>关闭</Button></div></Dialog>
 }
 
+type EdgeResourceView = {
+  processCpuPercent?: number
+  processMemoryBytes?: number
+  diskWarning?: boolean
+  policy?: { cpuLimitPercent?: number | null; memoryLimitMiB?: number | null; diskWarningPercent?: number | null }
+  enforcementStatus?: string
+  enforcementFailureKind?: string | null
+  sampledAt?: string | null
+}
+
+function edgeAgentResource(agent: EdgeAgent): EdgeResourceView | null {
+  if (!agent.serviceStatusJson) return null
+  try {
+    const status = JSON.parse(agent.serviceStatusJson) as { resource?: EdgeResourceView }
+    return status.resource ?? null
+  } catch {
+    return null
+  }
+}
+
+function formatBytes(value?: number) {
+  if (!value || value < 0) return '未上报'
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  let amount = value
+  let index = 0
+  while (amount >= 1024 && index < units.length - 1) { amount /= 1024; index += 1 }
+  return `${amount.toFixed(index === 0 ? 0 : 1)} ${units[index]}`
+}
+
+function resourceSummary(resource: EdgeResourceView | null) {
+  if (!resource) return { primary: '资源未上报', detail: '等待节点心跳' }
+  const limits = [resource.policy?.cpuLimitPercent ? `CPU ${resource.policy.cpuLimitPercent}%` : 'CPU 不限', resource.policy?.memoryLimitMiB ? `内存 ${resource.policy.memoryLimitMiB} MiB` : '内存不限'].join(' · ')
+  const usage = `${typeof resource.processCpuPercent === 'number' ? `${resource.processCpuPercent.toFixed(1)}% CPU` : 'CPU 未上报'} · ${formatBytes(resource.processMemoryBytes)}`
+  const enforcement = resource.enforcementFailureKind ? `执行失败：${resource.enforcementFailureKind}` : `策略：${statusLabel(resource.enforcementStatus)}`
+  return { primary: usage, detail: `${limits}\n${enforcement}${resource.diskWarning ? ' · 磁盘预警' : ''}` }
+}
+
+function EdgeAgentEditDialog({ agent, onClose, onSaved, notify }: { agent: EdgeAgent | null; onClose: () => void; onSaved: () => Promise<void>; notify: Notify }) {
+  const [submitting, setSubmitting] = useState(false)
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!agent) return
+    const form = new FormData(event.currentTarget)
+    setSubmitting(true)
+    try {
+      await api.put(`/api/v1/admin/edge-agents/${agent.id}`, { name: form.get('name') })
+      await onSaved()
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : '边缘节点更新失败', 'bad')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+  return <Dialog open={!!agent} title={`编辑边缘节点 · ${agent?.name ?? ''}`} description="仅可修改管理名称；平台、公钥和节点身份保持不变。" onClose={onClose}><Form onSubmit={submit}><Field label="节点名称" hint="最多 117 个字符。"><Input name="name" defaultValue={agent?.name ?? ''} maxLength={117} required /></Field><div className="dialog__footer"><Button variant="secondary" type="button" onClick={onClose}>取消</Button><Button disabled={submitting}>{submitting ? '正在保存' : '保存'}</Button></div></Form></Dialog>
+}
+
+function EdgeAgentDeleteDialog({ agent, onClose, onDeleted, notify }: { agent: EdgeAgent | null; onClose: () => void; onDeleted: () => Promise<void>; notify: Notify }) {
+  const [submitting, setSubmitting] = useState(false)
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!agent) return
+    const form = new FormData(event.currentTarget)
+    setSubmitting(true)
+    try {
+      await api.delete(`/api/v1/admin/edge-agents/${agent.id}`, { confirmationName: form.get('confirmationName') })
+      await onDeleted()
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : '边缘节点删除失败', 'bad')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+  const description = agent ? `将解除 ${agent.assignmentCount ?? 0} 个设备分配，删除 ${agent.credentialCount ?? 0} 份节点加密信封及节点配置。远端节点会立即失去中心认证，重新接入需再次配对。` : ''
+  return <Dialog open={!!agent} title={`删除边缘节点 · ${agent?.name ?? ''}`} description={description} onClose={onClose}><Form onSubmit={submit}><Field label={`输入“${agent?.name ?? ''}”确认删除`}><Input name="confirmationName" autoComplete="off" required /></Field><div className="dialog__footer"><Button variant="secondary" type="button" onClick={onClose}>取消</Button><Button variant="danger" disabled={submitting}>{submitting ? '正在删除' : '删除节点'}</Button></div></Form></Dialog>
+}
+
 function AgentCredentialsDialog({ value, onClose }: { value: { agent: EdgeAgent; credentials: DeviceCredential[] } | null; onClose: () => void }) {
   return <Dialog open={!!value} title={`节点凭据 · ${value?.agent.name ?? ''}`} description="仅列出逻辑凭据和运行状态，不展示加密信封或任何登录信息。" onClose={onClose}>{value && <div className="dialog-table"><table><thead><tr><th>凭据</th><th>版本</th><th>状态</th><th>最近验证</th></tr></thead><tbody>{value.credentials.length === 0 ? <tr><td colSpan={4} className="dialog-table__empty">当前节点没有可用凭据</td></tr> : value.credentials.map(credential => <tr key={credential.id}><td>{credential.name}</td><td>{credentialVersionLabel(credential)}</td><td><Badge tone={isActiveCredential(credential) ? 'good' : 'neutral'}>{statusLabel(credentialStatus(credential))}</Badge></td><td>{formatTime(credential.lastVerifiedAt)}</td></tr>)}</tbody></table></div>}<div className="dialog__footer"><Button onClick={onClose}>关闭</Button></div></Dialog>
 }
@@ -325,19 +422,23 @@ function DiagnosticResultDialog({ value, onClose }: { value: { agent: EdgeAgent;
 
 export function PlatformOperationsPage({ notify }: { notify: Notify }) {
   const [registerOpen, setRegisterOpen] = useState(false)
+  const [descriptorRegisterOpen, setDescriptorRegisterOpen] = useState(false)
   const [deploymentRelease, setDeploymentRelease] = useState<EdgeRelease | null>(null)
+  const [upgradeRelease, setUpgradeRelease] = useState<ReleaseCatalogEntry | null>(null)
   const resource = useResource(async () => {
-    const [overview, deploymentResponse, releaseResponse, agentResponse] = await Promise.all([
+    const [overview, deploymentResponse, releaseResponse, catalogResponse, planResponse, agentResponse] = await Promise.all([
       api.get<PlatformOperationsOverview>('/api/v1/admin/platform-operations/overview'),
       api.get<PlatformDeployment[] | { items?: PlatformDeployment[] }>('/api/v1/admin/platform-operations/deployments'),
       api.get<EdgeRelease[] | { items?: EdgeRelease[] }>('/api/v1/admin/edge-releases'),
+      api.get<ReleaseCatalogEntry[] | { items?: ReleaseCatalogEntry[] }>('/api/v1/admin/release-catalog'),
+      api.get<UpgradePlan[] | { items?: UpgradePlan[] }>('/api/v1/admin/upgrade-plans'),
       api.get<EdgeAgent[] | { items?: EdgeAgent[] }>('/api/v1/admin/edge-agents')
     ])
-    return { overview, deployments: readList(deploymentResponse), releases: readList(releaseResponse), agents: readList(agentResponse) }
+    return { overview, deployments: readList(deploymentResponse), releases: readList(releaseResponse), catalog: readList(catalogResponse), plans: readList(planResponse), agents: readList(agentResponse) }
   }, [])
   if (resource.loading) return <LoadingState />
   if (resource.error || !resource.data) return <ErrorState message={resource.error} retry={resource.refresh} />
-  const { overview, deployments, releases, agents: registeredEdgeAgents } = resource.data
+  const { overview, deployments, releases, catalog, plans, agents: registeredEdgeAgents } = resource.data
   const services = (overview.recentOperations ?? []).map<PlatformServiceStatus>(operation => ({ name: operation.operationType ?? '运维任务', status: operation.status, detail: operation.summary, updatedAt: operation.requestedAt }))
   const agents = overview.edgeAgents ?? registeredEdgeAgents
   const registeredAgents = overview.edgeAgentCount ?? agents.length
@@ -345,14 +446,26 @@ export function PlatformOperationsPage({ notify }: { notify: Notify }) {
   const unhealthyAgents = overview.unhealthyEdgeAgentCount ?? 0
   const activeDeployments = overview.pendingOperationCount ?? overview.activeDeploymentCount ?? deployments.filter(item => ['pending', 'running', 'deploying', 'upgrading'].includes(statusKey(item.status))).length
   return <>
-    <PageHeader title="平台运维" description="集中查看 Docker 与 Windows 边缘节点运行态、诊断任务和受控发布记录。" actions={<div className="page-header__actions"><Button variant="secondary" icon={<RefreshCw size={16} />} onClick={() => void resource.refresh()}>刷新状态</Button><Button icon={<PackagePlus size={16} />} onClick={() => setRegisterOpen(true)}>登记发行版本</Button></div>} />
+    <PageHeader title="版本中心与平台运维" description="集中管理中心镜像、Docker Edge 和 Windows Edge 的签名版本、灰度计划与回退记录。" actions={<div className="page-header__actions"><Button variant="secondary" icon={<RefreshCw size={16} />} onClick={() => void resource.refresh()}>刷新状态</Button><Button variant="secondary" icon={<PackagePlus size={16} />} onClick={() => setRegisterOpen(true)}>登记旧版发行</Button><Button icon={<PackageCheck size={16} />} onClick={() => setDescriptorRegisterOpen(true)}>登记统一版本</Button></div>} />
     <div className="metric-grid operations-metrics"><article className="metric"><Server size={18} /><span>已登记节点</span><strong>{registeredAgents}</strong><small>Docker / Windows Edge Agent</small></article><article className="metric"><Cpu size={18} /><span>在线节点</span><strong>{onlineAgents}</strong><small>两分钟内有心跳</small></article><article className="metric metric--alert"><BellRing size={18} /><span>诊断异常</span><strong>{unhealthyAgents}</strong><small>待进一步处置</small></article><article className="metric"><PackagePlus size={18} /><span>待处理任务</span><strong>{activeDeployments}</strong><small>发布、诊断或连接预检</small></article></div>
     <div className="split-grid operations-grid"><Panel title="近期运维任务" actions={<Badge tone={services.length ? 'info' : 'neutral'}>{services.length}</Badge>}>{services.length === 0 ? <EmptyState title="暂无近期运维任务" description="诊断、预检和发布任务会在此汇总。" /> : <div className="compact-list">{services.map((service: PlatformServiceStatus, index) => <div className="compact-row" key={service.id ?? service.name ?? index}><span className={`status-dot status-dot--${statusTone(service.status) === 'good' ? 'good' : statusTone(service.status) === 'bad' ? 'bad' : 'neutral'}`} /><div><strong>{service.name ?? '未命名任务'}</strong><small>{service.detail ?? '未返回摘要'}</small></div><Badge tone={statusTone(service.status)}>{statusLabel(service.status)}</Badge></div>)}</div>}</Panel><Panel title="当前运行态" actions={<Badge tone={onlineAgents === registeredAgents && registeredAgents > 0 ? 'good' : registeredAgents ? 'warn' : 'neutral'}>{registeredAgents ? `${onlineAgents}/${registeredAgents} 在线` : '未上报'}</Badge>}><div className="operations-facts"><div><span>已登记节点</span><strong>{registeredAgents}</strong></div><div><span>在线节点</span><strong>{onlineAgents}</strong></div><div><span>待处理运维任务</span><strong>{activeDeployments}</strong></div></div></Panel></div>
+    <Panel className="table-panel" title="统一发行版本" actions={<Badge tone={catalog.length ? 'info' : 'neutral'}>{catalog.length}</Badge>}>{catalog.length === 0 ? <EmptyState title="尚未登记统一版本" description="登记由发行密钥签名的版本描述后，才能创建中心或边缘灰度计划。" /> : <div className="table-scroll"><table><thead><tr><th>版本</th><th>制品</th><th>状态</th><th>有效期</th><th /></tr></thead><tbody>{catalog.map(release => <tr key={release.id}><td><strong>v{release.productVersion}</strong><small>{release.signingPublicKeyId}</small></td><td>{release.artifacts.map(item => `${item.component}/${item.platform}-${item.architecture}`).join('，')}</td><td><Badge tone={statusTone(release.status)}>{statusLabel(release.status)}</Badge></td><td>{formatTime(release.expiresAt)}</td><td><Button variant="ghost" icon={<PlayCircle size={15} />} onClick={() => setUpgradeRelease(release)}>创建计划</Button></td></tr>)}</tbody></table></div>}</Panel>
+    <Panel className="table-panel" title="灰度升级计划" actions={<Badge tone={plans.length ? 'info' : 'neutral'}>{plans.length}</Badge>}>{plans.length === 0 ? <EmptyState title="暂无灰度升级计划" description="确认计划后将依次执行首台、10% 和其余节点批次。" /> : <div className="table-scroll"><table><thead><tr><th>范围</th><th>状态</th><th>目标</th><th>失败原因</th><th /></tr></thead><tbody>{plans.map(plan => <tr key={plan.id}><td>{plan.targetScope === 'core' ? '中心镜像' : '边缘节点'}</td><td><Badge tone={statusTone(plan.status)}>{statusLabel(plan.status)}</Badge></td><td>{plan.targets.map(target => `第 ${target.batch} 批：${statusLabel(target.status)}`).join('；')}</td><td>{plan.failureSummary ?? '—'}</td><td><div className="table-actions">{plan.status === 'draft' ? <Button variant="ghost" icon={<PlayCircle size={15} />} onClick={() => void startUpgradePlan(plan.id)}>启动</Button> : null}{plan.status === 'running' ? <Button variant="ghost" icon={<PauseCircle size={15} />} onClick={() => void pauseUpgradePlan(plan.id)}>暂停</Button> : null}</div></td></tr>)}</tbody></table></div>}</Panel>
     <Panel className="table-panel" title="发行版本" actions={<Badge tone={releases.length ? 'info' : 'neutral'}>{releases.length}</Badge>}>{releases.length === 0 ? <EmptyState title="尚未登记发行版本" description="登记包含 SHA-256 与离线签名的发行清单后才能向节点发布。" /> : <div className="table-scroll"><table><thead><tr><th>版本</th><th>目标</th><th>最小 Host Agent</th><th>有效期</th><th /></tr></thead><tbody>{releases.map(release => <tr key={release.id}><td><strong>{release.releaseId}</strong><small>{release.publicKeyId}</small></td><td>{release.targetPlatform} / {release.targetArchitecture}</td><td>{release.minimumHostAgentVersion}</td><td>{formatTime(release.expiresAt)}</td><td><Button variant="ghost" icon={<PackagePlus size={14} />} onClick={() => setDeploymentRelease(release)}>发布</Button></td></tr>)}</tbody></table></div>}</Panel>
     <Panel className="table-panel operation-readiness-panel" title="任务记录" actions={<Badge tone={deployments.length ? 'info' : 'neutral'}>{deployments.length}</Badge>}>{deployments.length === 0 ? <EmptyState title="暂无运维任务记录" description="Host Agent 完成诊断、预检或发布后将在此保留历史。" /> : <div className="table-scroll"><table><thead><tr><th>状态</th><th>任务类型</th><th>任务摘要</th><th>目标节点</th><th>提交时间</th><th>完成时间</th></tr></thead><tbody>{deployments.map(deployment => <tr key={deployment.id}><td><Badge tone={statusTone(deployment.status)}>{statusLabel(deployment.status)}</Badge></td><td>{deployment.operationType ?? deployment.version ?? '运维任务'}</td><td>{deployment.summary ?? deployment.detail ?? '—'}</td><td>{deployment.edgeAgentId?.slice(0, 8) ?? '中心服务'}</td><td>{formatTime(deployment.requestedAt ?? deployment.startedAt)}</td><td>{formatTime(deployment.completedAt)}</td></tr>)}</tbody></table></div>}</Panel>
     <ReleaseRegistrationDialog open={registerOpen} onClose={() => setRegisterOpen(false)} onSaved={async () => { setRegisterOpen(false); notify('发行版本已登记'); await resource.refresh() }} notify={notify} />
+    <ReleaseDescriptorRegistrationDialog open={descriptorRegisterOpen} onClose={() => setDescriptorRegisterOpen(false)} onSaved={async () => { setDescriptorRegisterOpen(false); notify('统一版本已登记'); await resource.refresh() }} notify={notify} />
     <ReleaseDeploymentDialog release={deploymentRelease} agents={registeredEdgeAgents} onClose={() => setDeploymentRelease(null)} onSaved={async () => { setDeploymentRelease(null); notify('发布任务已进入队列'); await resource.refresh() }} notify={notify} />
+    <UpgradePlanDialog release={upgradeRelease} agents={registeredEdgeAgents} onClose={() => setUpgradeRelease(null)} onSaved={async () => { setUpgradeRelease(null); notify('灰度升级计划已创建'); await resource.refresh() }} notify={notify} />
   </>
+
+  async function startUpgradePlan(id: string) {
+    try { await api.post(`/api/v1/admin/upgrade-plans/${id}/start`); notify('升级计划已启动'); await resource.refresh() } catch (reason) { notify(reason instanceof Error ? reason.message : '无法启动升级计划', 'bad') }
+  }
+
+  async function pauseUpgradePlan(id: string) {
+    try { await api.post(`/api/v1/admin/upgrade-plans/${id}/pause`, { reason: 'paused_by_operator' }); notify('升级计划已暂停'); await resource.refresh() } catch (reason) { notify(reason instanceof Error ? reason.message : '无法暂停升级计划', 'bad') }
+  }
 }
 
 function backupSize(value: number) {
@@ -418,6 +531,57 @@ function ReleaseRegistrationDialog({ open, onClose, onSaved, notify }: { open: b
     }
   }
   return <Dialog open={open} title="登记发行版本" description="只接受目标平台、架构、不可变 HTTPS 制品地址、SHA-256、有效期和离线签名完整匹配的清单。" onClose={onClose}><Form onSubmit={submit}><Field label="发行公钥标识"><Input name="publicKeyId" required /></Field><Field label="签名（Base64）"><Textarea name="signatureBase64" rows={3} required /></Field><Field label="发行清单"><Textarea name="manifestJson" rows={9} required /></Field><div className="dialog__footer"><Button variant="secondary" type="button" onClick={onClose}>取消</Button><Button disabled={submitting}>{submitting ? '正在登记' : '登记'}</Button></div></Form></Dialog>
+}
+
+function ReleaseDescriptorRegistrationDialog({ open, onClose, onSaved, notify }: { open: boolean; onClose: () => void; onSaved: () => Promise<void>; notify: Notify }) {
+  const [submitting, setSubmitting] = useState(false)
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    setSubmitting(true)
+    try {
+      await api.post('/api/v1/admin/release-catalog', {
+        descriptorJson: form.get('descriptorJson'),
+        signatureBase64: form.get('signatureBase64'),
+        publicKeyId: form.get('publicKeyId')
+      })
+      await onSaved()
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : '统一版本登记失败', 'bad')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+  return <Dialog open={open} title="登记统一版本" description="描述必须包含中心、Docker Edge 或 Windows Edge 的不可变制品引用，并由后台已配置的发行公钥验签。" onClose={onClose}><Form onSubmit={submit}><Field label="发行公钥标识"><Input name="publicKeyId" required /></Field><Field label="签名（Base64）"><Textarea name="signatureBase64" rows={3} required /></Field><Field label="统一发行描述"><Textarea name="descriptorJson" rows={12} required /></Field><div className="dialog__footer"><Button variant="secondary" type="button" onClick={onClose}>取消</Button><Button disabled={submitting}>{submitting ? '正在登记' : '登记版本'}</Button></div></Form></Dialog>
+}
+
+function UpgradePlanDialog({ release, agents, onClose, onSaved, notify }: { release: ReleaseCatalogEntry | null; agents: EdgeAgent[]; onClose: () => void; onSaved: () => Promise<void>; notify: Notify }) {
+  const [scope, setScope] = useState<'core' | 'edge'>('edge')
+  const [submitting, setSubmitting] = useState(false)
+  const activeAgents = agents.filter(isActiveEdgeAgent)
+  useEffect(() => { setScope('edge') }, [release?.id])
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!release) return
+    if (scope === 'edge' && activeAgents.length === 0) {
+      notify('没有可纳入灰度的在线边缘节点', 'bad')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await api.post('/api/v1/admin/upgrade-plans', {
+        releaseCatalogId: release.id,
+        targetScope: scope,
+        edgeAgentIds: scope === 'edge' ? activeAgents.map(agent => agent.id) : []
+      })
+      await onSaved()
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : '创建灰度升级计划失败', 'bad')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+  return <Dialog open={!!release} title={`创建 v${release?.productVersion ?? ''} 灰度计划`} description="计划不会自动开始；确认后由管理员启动，失败节点将回退并暂停后续批次。" onClose={onClose}><Form onSubmit={submit}><Field label="升级范围"><Select value={scope} onChange={event => setScope(event.target.value as 'core' | 'edge')}><option value="edge">全部在线边缘节点</option><option value="core">中心镜像</option></Select></Field>{scope === 'edge' ? <Field label="目标节点"><div className="compact-list">{activeAgents.length === 0 ? <small>当前没有在线节点。</small> : activeAgents.map(agent => <div className="compact-row" key={agent.id}><Server size={15} /><div><strong>{agent.name}</strong><small>{agent.platform}/{agent.architecture ?? '未知架构'} · {agent.agentVersion ?? '未上报版本'}</small></div></div>)}</div></Field> : <Field label="维护影响"><small>中心将创建加密保护备份后重启并执行健康检查，期间管理和播放服务会短暂中断。</small></Field>}<div className="dialog__footer"><Button variant="secondary" type="button" onClick={onClose}>取消</Button><Button disabled={submitting}>{submitting ? '正在创建' : '创建待确认计划'}</Button></div></Form></Dialog>
 }
 
 function ReleaseDeploymentDialog({ release, agents, onClose, onSaved, notify }: { release: EdgeRelease | null; agents: EdgeAgent[]; onClose: () => void; onSaved: () => Promise<void>; notify: Notify }) {

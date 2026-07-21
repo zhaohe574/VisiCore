@@ -646,10 +646,15 @@ namespace VisiCore.Persistence.Migrations
                     b.Property<DateTimeOffset?>("UsedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<Guid?>("UsedByAgentId")
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
 
                     b.HasIndex("CodeHash")
                         .IsUnique();
+
+                    b.HasIndex("UsedByAgentId");
 
                     b.ToTable("edge_agent_enrollments", (string)null);
                 });
@@ -1148,6 +1153,235 @@ namespace VisiCore.Persistence.Migrations
                     b.HasIndex("Status", "RequestedAt");
 
                     b.ToTable("platform_operations", (string)null);
+                });
+
+            modelBuilder.Entity("VisiCore.Persistence.PlatformBackupEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureDetail")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTimeOffset?>("LastRestoredAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("RetainUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("StorageKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Kind", "CreatedAt");
+
+                    b.HasIndex("Status", "RetainUntil");
+
+                    b.ToTable("platform_backups", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_platform_backups_size", "\"SizeBytes\" >= 0");
+                        });
+                });
+
+            modelBuilder.Entity("VisiCore.Persistence.ReleaseCatalogEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Channel")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DescriptorJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("PublishedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProductVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("SignatureBase64")
+                        .IsRequired()
+                        .HasMaxLength(32768)
+                        .HasColumnType("character varying(32768)");
+
+                    b.Property<string>("SigningPublicKeyId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductVersion", "Channel")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "PublishedAt");
+
+                    b.ToTable("release_catalog", (string)null);
+                });
+
+            modelBuilder.Entity("VisiCore.Persistence.UpgradePlanEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureSummary")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<Guid>("ReleaseCatalogId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RequestedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset?>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("TargetScope")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReleaseCatalogId");
+
+                    b.HasIndex("Status", "RequestedAt");
+
+                    b.ToTable("upgrade_plans", (string)null);
+                });
+
+            modelBuilder.Entity("VisiCore.Persistence.UpgradeTargetEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Batch")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Component")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("EdgeAgentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ExpectedVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("FailureSummary")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<Guid?>("PlatformOperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("PreviousArtifactJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("PreviousVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("StableSince")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("StartedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("TargetType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid>("UpgradePlanId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EdgeAgentId");
+
+                    b.HasIndex("UpgradePlanId", "Batch", "Status");
+
+                    b.ToTable("upgrade_targets", (string)null);
                 });
 
             modelBuilder.Entity("VisiCore.Persistence.PlaybackExportEntity", b =>
@@ -2036,13 +2270,21 @@ namespace VisiCore.Persistence.Migrations
                 });
 
             modelBuilder.Entity("VisiCore.Persistence.EdgeAgentConfigurationEntity", b =>
-                {
-                    b.HasOne("VisiCore.Persistence.EdgeAgentEntity", null)
+            {
+                b.HasOne("VisiCore.Persistence.EdgeAgentEntity", null)
                         .WithMany()
                         .HasForeignKey("EdgeAgentId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
-                });
+            });
+
+            modelBuilder.Entity("VisiCore.Persistence.EdgeAgentEnrollmentEntity", b =>
+            {
+                b.HasOne("VisiCore.Persistence.EdgeAgentEntity", null)
+                    .WithMany()
+                    .HasForeignKey("UsedByAgentId")
+                    .OnDelete(DeleteBehavior.SetNull);
+            });
 
             modelBuilder.Entity("VisiCore.Persistence.EdgeAgentEntity", b =>
                 {
@@ -2118,6 +2360,29 @@ namespace VisiCore.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("EdgeAgentId")
                         .OnDelete(DeleteBehavior.SetNull);
+                });
+
+            modelBuilder.Entity("VisiCore.Persistence.UpgradePlanEntity", b =>
+                {
+                    b.HasOne("VisiCore.Persistence.ReleaseCatalogEntity", null)
+                        .WithMany()
+                        .HasForeignKey("ReleaseCatalogId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("VisiCore.Persistence.UpgradeTargetEntity", b =>
+                {
+                    b.HasOne("VisiCore.Persistence.EdgeAgentEntity", null)
+                        .WithMany()
+                        .HasForeignKey("EdgeAgentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("VisiCore.Persistence.UpgradePlanEntity", null)
+                        .WithMany()
+                        .HasForeignKey("UpgradePlanId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("VisiCore.Persistence.PlaybackExportEntity", b =>

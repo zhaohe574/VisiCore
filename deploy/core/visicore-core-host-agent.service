@@ -1,0 +1,20 @@
+[Unit]
+Description=VisiCore Core Host Agent
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+Environment=VISICORE_CORE_HOST_AGENT_CONFIG=/etc/visicore/core-host-agent.json
+ExecStart=/usr/local/lib/visicore/VisiCore.CoreHostAgent
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ReadWritePaths=/opt/visicore/upgrade-exchange /opt/visicore
+
+[Install]
+WantedBy=multi-user.target

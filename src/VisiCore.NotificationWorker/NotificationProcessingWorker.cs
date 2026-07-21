@@ -79,7 +79,7 @@ public sealed class NotificationProcessingWorker(
         var candidates = await dbContext.OutboxEvents.FromSqlRaw("""
             SELECT candidate.* FROM outbox_events AS candidate
             WHERE candidate."ProcessedAt" IS NULL
-              AND candidate."EventType" IN ('health.state.changed', 'notification.channel.test.requested')
+              AND candidate."EventType" IN ('health.state.changed', 'upgrade.plan.failed', 'notification.channel.test.requested')
               AND candidate."DeadLetteredAt" IS NULL
               AND candidate."NextAttemptAt" <= NOW()
               AND (candidate."LockedUntil" IS NULL OR candidate."LockedUntil" < NOW())

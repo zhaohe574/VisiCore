@@ -13,6 +13,7 @@ public sealed class EdgeAgentRuntimeState
         0,
         null,
         null,
+        null,
         DateTimeOffset.UtcNow);
 
     public EdgeAgentRuntimeSnapshot Snapshot()
@@ -79,6 +80,18 @@ public sealed class EdgeAgentRuntimeState
             };
         }
     }
+
+    public void SetResources(EdgeNodeResourceSnapshot resource)
+    {
+        lock (gate)
+        {
+            snapshot = snapshot with
+            {
+                Resource = resource,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+        }
+    }
 }
 
 public sealed record EdgeAgentRuntimeSnapshot(
@@ -91,6 +104,7 @@ public sealed record EdgeAgentRuntimeSnapshot(
     int AssignedRecorderCount,
     string? LastFailureKind,
     DateTimeOffset? LastDiagnosticAt,
+    EdgeNodeResourceSnapshot? Resource,
     DateTimeOffset UpdatedAt);
 
 public sealed class HostOperationState

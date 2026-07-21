@@ -141,7 +141,7 @@ export const api = {
   upload: <T>(path: string, body: FormData) => request<T>(path, { method: 'POST', body }),
   put: <T>(path: string, body: unknown) => request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
   patch: <T>(path: string, body: unknown) => request<T>(path, { method: 'PATCH', body: JSON.stringify(body) }),
-  delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+  delete: <T>(path: string, body?: unknown) => request<T>(path, { method: 'DELETE', body: body === undefined ? undefined : JSON.stringify(body) }),
   download: async (path: string) => {
     const headers = new Headers()
     const token = session.token()

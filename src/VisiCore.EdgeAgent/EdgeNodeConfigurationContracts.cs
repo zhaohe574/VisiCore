@@ -7,13 +7,15 @@ public sealed record EdgeNodeHostConfigurationInput(
     string? SigningPublicKeyPem,
     IReadOnlyList<string> AllowedArtifactHosts,
     long MaximumArtifactBytes,
-    int ExecutionTimeoutSeconds);
+    int ExecutionTimeoutSeconds,
+    EdgeNodeResourcePolicy? ResourcePolicy = null);
 
 public sealed record EdgeNodeConfigurationCommand(
     string AccessToken,
     string Action,
     string? ControlPlaneBaseUri = null,
     string? EnrollmentCode = null,
-    EdgeNodeHostConfigurationInput? Host = null);
+    EdgeNodeHostConfigurationInput? Host = null,
+    EdgeNodeResourcePolicy? ResourcePolicy = null);
 
 public sealed record EdgeNodeConfigurationCommandResult(bool Succeeded, string? FailureKind = null, bool HostRestarting = false);

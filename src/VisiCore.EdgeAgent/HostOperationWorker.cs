@@ -18,6 +18,7 @@ public sealed class HostOperationWorker(
     IHostOperationExecutor executor,
     VerifiedDeploymentStore verifiedDeploymentStore,
     HostReleaseArtifactVerifier releaseArtifactVerifier,
+    HostOperationExchange operationExchange,
     ILogger<HostOperationWorker> logger) : BackgroundService
 {
     private static readonly HashSet<string> AllowedOperationTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -99,7 +100,7 @@ public sealed class HostOperationWorker(
         }
         if (hasRollbackSource)
         {
-            var rollbackArtifact = await verifiedDeploymentStore.GetArtifactAsync(sourceOperationId, cancellationToken);
+            var rollbackArtifact = await verifiedDeploymentStore.GetRollbackArtifactAsync(sourceOperationId, cancellationToken);
             if (rollbackArtifact is null ||
                 !await releaseArtifactVerifier.VerifyPersistedAsync(rollbackArtifact, cancellationToken))
             {
@@ -111,7 +112,12 @@ public sealed class HostOperationWorker(
             }
 
             state.SetAccepted();
-            return await executor.ExecuteAsync(HostOperationKind.Rollback, rollbackArtifact, cancellationToken);
+            var rollbackResult = await executor.ExecuteAsync(operation.Id, HostOperationKind.Rollback, rollbackArtifact, cancellationToken);
+            if (rollbackResult.Succeeded)
+            {
+                await verifiedDeploymentStore.ActivateRollbackAsync(sourceOperationId, cancellationToken);
+            }
+            return rollbackResult;
         }
         if (operationKind == HostOperationKind.Rollback && !string.IsNullOrEmpty(sourceFailureKind))
         {
@@ -127,7 +133,13 @@ public sealed class HostOperationWorker(
 
             using var publicKey = RSA.Create();
             publicKey.ImportFromPem(await File.ReadAllTextAsync(options.SigningPublicKeyPath!, cancellationToken));
-            var manifestBytes = Encoding.UTF8.GetBytes(controlPlaneManifest.ManifestJson);
+            var signedPayload = controlPlaneManifest.ManifestJson;
+            if (controlPlaneManifest.IsReleaseDescriptor &&
+                !ReleaseDescriptor.TryCanonicalizeJson(signedPayload, out signedPayload))
+            {
+                return HostOperationExecutionResult.Failed("release_descriptor_invalid");
+            }
+            var manifestBytes = Encoding.UTF8.GetBytes(signedPayload);
             var signature = Convert.FromBase64String(controlPlaneManifest.SignatureBase64);
             try
             {
@@ -142,29 +154,44 @@ public sealed class HostOperationWorker(
                 CryptographicOperations.ZeroMemory(signature);
             }
 
-            if (!TryValidateControlPlaneManifest(controlPlaneManifest, operationKind, out failureKind))
-            {
-                return HostOperationExecutionResult.Failed(failureKind);
-            }
-
             if (!options.AllowExecution)
             {
                 return HostOperationExecutionResult.Failed("host_execution_not_enabled");
             }
 
-            if (!EdgeReleaseManifest.TryParse(controlPlaneManifest.ManifestJson, out var releaseManifest, out _))
+            HostArtifactVerificationResult artifactVerification;
+            if (controlPlaneManifest.IsReleaseDescriptor)
             {
-                return HostOperationExecutionResult.Failed("release_manifest_invalid");
+                if (!TryResolveUnifiedReleaseArtifact(controlPlaneManifest, operationKind, out var releaseArtifact, out failureKind))
+                {
+                    return HostOperationExecutionResult.Failed(failureKind);
+                }
+                artifactVerification = await releaseArtifactVerifier.DownloadAndVerifyAsync(
+                    releaseArtifact,
+                    controlPlaneManifest.ReleaseId,
+                    cancellationToken);
+                if (artifactVerification.Succeeded && artifactVerification.Artifact is not null &&
+                    !await EnsureKnownGoodBaselineAsync(artifactVerification.Artifact, cancellationToken))
+                {
+                    return HostOperationExecutionResult.Failed("edge_known_good_release_missing");
+                }
             }
-
-            var artifactVerification = await releaseArtifactVerifier.DownloadAndVerifyAsync(releaseManifest, cancellationToken);
+            else
+            {
+                if (!TryValidateControlPlaneManifest(controlPlaneManifest, operationKind, out failureKind) ||
+                    !EdgeReleaseManifest.TryParse(controlPlaneManifest.ManifestJson, out var releaseManifest, out _))
+                {
+                    return HostOperationExecutionResult.Failed(failureKind == "payload_invalid" ? "release_manifest_invalid" : failureKind);
+                }
+                artifactVerification = await releaseArtifactVerifier.DownloadAndVerifyAsync(releaseManifest, cancellationToken);
+            }
             if (!artifactVerification.Succeeded || artifactVerification.Artifact is null)
             {
                 return HostOperationExecutionResult.Failed(artifactVerification.FailureKind ?? "artifact_verification_failed");
             }
 
             state.SetAccepted();
-            var executionResult = await executor.ExecuteAsync(operationKind, artifactVerification.Artifact, cancellationToken);
+            var executionResult = await executor.ExecuteAsync(operation.Id, operationKind, artifactVerification.Artifact, cancellationToken);
             if (!executionResult.Succeeded || operationKind != HostOperationKind.Deployment)
             {
                 return executionResult;
@@ -264,10 +291,19 @@ public sealed class HostOperationWorker(
                 }
                 else
                 {
-                    var result = await ValidateAndExecuteAsync(
-                        new EdgeOperation(message.OperationId, message.OperationType, message.DetailsJson),
-                        cancellationToken);
-                    receipt = new HostOperationReceipt(message.OperationId, result.Succeeded, result.FailureKind, DateTimeOffset.UtcNow);
+                    var existingReceipt = await operationExchange.TryReadReceiptAsync(message.OperationId, cancellationToken);
+                    if (existingReceipt is not null)
+                    {
+                        // Windows Update Runner 可能在 Host Agent 被 MSI 停止后独立完成，不能重复执行同一安装任务。
+                        receipt = existingReceipt;
+                    }
+                    else
+                    {
+                        var result = await ValidateAndExecuteAsync(
+                            new EdgeOperation(message.OperationId, message.OperationType, message.DetailsJson),
+                            cancellationToken);
+                        receipt = new HostOperationReceipt(message.OperationId, result.Succeeded, result.FailureKind, DateTimeOffset.UtcNow);
+                    }
                 }
             }
             catch (JsonException)
@@ -374,7 +410,6 @@ public sealed class HostOperationWorker(
             using var details = JsonDocument.Parse(operation.DetailsJson);
             var root = details.RootElement;
             if (!TryReadString(root, "releaseId", out var releaseId) || releaseId.Length > 128 ||
-                !TryReadString(root, "manifestJson", out var manifestJson) || manifestJson.Length > 65_536 ||
                 !TryReadString(root, "signatureBase64", out var signatureBase64) || signatureBase64.Length > 24_576 ||
                 !TryReadString(root, "publicKeyId", out var publicKeyId) ||
                 !string.Equals(publicKeyId, options.SigningPublicKeyId, StringComparison.Ordinal))
@@ -391,7 +426,25 @@ public sealed class HostOperationWorker(
                 return false;
             }
 
-            manifest = new ControlPlaneManifest(releaseId, manifestJson, signatureBase64);
+            var isReleaseDescriptor = root.TryGetProperty("releaseDescriptorJson", out var descriptorJson) && descriptorJson.ValueKind == JsonValueKind.String;
+            if (isReleaseDescriptor)
+            {
+                var descriptorPayload = descriptorJson.GetString() ?? string.Empty;
+                if (descriptorPayload.Length > 131_072 || !TryReadString(root, "component", out var component))
+                {
+                    failureKind = "manifest_metadata_invalid";
+                    return false;
+                }
+                manifest = new ControlPlaneManifest(releaseId, descriptorPayload, signatureBase64, component, true);
+                return true;
+            }
+
+            if (!TryReadString(root, "manifestJson", out var legacyManifestJson) || legacyManifestJson.Length > 65_536)
+            {
+                failureKind = "manifest_metadata_invalid";
+                return false;
+            }
+            manifest = new ControlPlaneManifest(releaseId, legacyManifestJson, signatureBase64, null, false);
             return true;
         }
         catch (JsonException)
@@ -443,6 +496,120 @@ public sealed class HostOperationWorker(
         catch (JsonException)
         {
             failureKind = "json_invalid";
+            return false;
+        }
+    }
+
+    private bool TryResolveUnifiedReleaseArtifact(
+        ControlPlaneManifest manifest,
+        HostOperationKind expectedOperationKind,
+        out ReleaseArtifactDescriptor artifact,
+        out string failureKind)
+    {
+        artifact = null!;
+        failureKind = "release_descriptor_invalid";
+        if (expectedOperationKind != HostOperationKind.Deployment ||
+            !ReleaseDescriptor.TryParse(manifest.ManifestJson, out var descriptor, out _) ||
+            !string.Equals(descriptor.ProductVersion, manifest.ReleaseId, StringComparison.Ordinal) ||
+            !string.Equals(descriptor.SigningPublicKeyId, options.SigningPublicKeyId, StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(manifest.Component))
+        {
+            return false;
+        }
+
+        var expectedPlatform = OperatingSystem.IsWindows() ? "windows" : "linux";
+        var expectedArchitecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture switch
+        {
+            System.Runtime.InteropServices.Architecture.X64 when expectedPlatform == "windows" => "x64",
+            System.Runtime.InteropServices.Architecture.X64 => "amd64",
+            System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
+            _ => string.Empty
+        };
+        var expectedComponent = expectedPlatform == "windows" ? "edge-windows" : "edge-docker";
+        artifact = descriptor.FindArtifacts(manifest.Component, expectedPlatform, expectedArchitecture).SingleOrDefault()!;
+        if (artifact is null || !string.Equals(manifest.Component, expectedComponent, StringComparison.Ordinal))
+        {
+            failureKind = "release_target_invalid";
+            return false;
+        }
+
+        var currentVersion = typeof(HostOperationWorker).Assembly.GetName().Version ?? new Version(0, 0);
+        if (!Version.TryParse(artifact.MinimumHostAgentVersion, out var minimumVersion) || currentVersion < minimumVersion)
+        {
+            failureKind = "minimum_host_version_not_met";
+            return false;
+        }
+        return true;
+    }
+
+    private async Task<bool> EnsureKnownGoodBaselineAsync(HostVerifiedReleaseArtifact targetArtifact, CancellationToken cancellationToken)
+    {
+        if (await verifiedDeploymentStore.HasActiveArtifactAsync(cancellationToken))
+        {
+            return true;
+        }
+        if (OperatingSystem.IsWindows())
+        {
+            if (string.IsNullOrWhiteSpace(options.WindowsInstallerPath) ||
+                !Path.IsPathFullyQualified(options.WindowsInstallerPath) ||
+                !options.WindowsInstallerPath.EndsWith(".msi", StringComparison.OrdinalIgnoreCase) ||
+                !File.Exists(options.WindowsInstallerPath))
+            {
+                return false;
+            }
+            try
+            {
+                await using var stream = new FileStream(options.WindowsInstallerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                var hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
+                var version = RuntimeVersion.ProductVersion;
+                await verifiedDeploymentStore.EnsureBaselineAsync(
+                    $"baseline-{version}",
+                    options.SigningPublicKeyId!,
+                    new HostVerifiedReleaseArtifact(options.WindowsInstallerPath, null, hash, null, version),
+                    cancellationToken);
+                return true;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+        if (string.IsNullOrWhiteSpace(options.ActiveReleaseComposeOverridePath) ||
+            !File.Exists(options.ActiveReleaseComposeOverridePath))
+        {
+            return false;
+        }
+        try
+        {
+            var content = await File.ReadAllTextAsync(options.ActiveReleaseComposeOverridePath, cancellationToken);
+            var imageReference = content.Split('\n')
+                .Select(line => line.Trim())
+                .FirstOrDefault(line => line.StartsWith("image:", StringComparison.OrdinalIgnoreCase))?
+                .Split(':', 2)[1].Trim();
+            const string digestPrefix = "@sha256:";
+            var digestIndex = imageReference?.IndexOf(digestPrefix, StringComparison.OrdinalIgnoreCase) ?? -1;
+            if (digestIndex < 0 || imageReference is null)
+            {
+                return false;
+            }
+            var digest = imageReference[(digestIndex + digestPrefix.Length)..];
+            if (digest.Length != 64 || digest.Any(character => !Uri.IsHexDigit(character)))
+            {
+                return false;
+            }
+            await verifiedDeploymentStore.EnsureBaselineAsync(
+                "baseline",
+                options.SigningPublicKeyId!,
+                new HostVerifiedReleaseArtifact(null, null, digest.ToLowerInvariant(), imageReference, "baseline"),
+                cancellationToken);
+            return true;
+        }
+        catch (IOException)
+        {
             return false;
         }
     }
@@ -515,5 +682,10 @@ public sealed class HostOperationWorker(
             DateTimeOffset.TryParse(property.GetString(), out value);
     }
 
-    private sealed record ControlPlaneManifest(string ReleaseId, string ManifestJson, string SignatureBase64);
+    private sealed record ControlPlaneManifest(
+        string ReleaseId,
+        string ManifestJson,
+        string SignatureBase64,
+        string? Component,
+        bool IsReleaseDescriptor);
 }
