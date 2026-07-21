@@ -3,6 +3,7 @@
 .local-dev
 .local-sdk
 artifacts
+**/artifacts
 Nginx
 **/bin
 **/obj

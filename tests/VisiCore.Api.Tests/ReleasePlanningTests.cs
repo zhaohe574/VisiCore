@@ -156,7 +156,7 @@ public sealed class ReleasePlanningTests
             artifacts = new[]
             {
                 new { component = "core", platform = "linux", architecture = "amd64", artifactReference = $"visicore/visicore-core@sha256:{digest}", artifactSha256 = digest, sizeBytes = 1L, minimumHostAgentVersion = "0.1.0" },
-                new { component = "edge-docker", platform = "linux", architecture = "amd64", artifactReference = $"visicore/visicore-edge-node@sha256:{digest}", artifactSha256 = digest, sizeBytes = 1L, minimumHostAgentVersion = "0.1.0" }
+                new { component = "edge-docker", platform = "linux", architecture = "amd64", artifactReference = $"visicore/visicore-edge@sha256:{digest}", artifactSha256 = digest, sizeBytes = 1L, minimumHostAgentVersion = "0.1.0" }
             }
         });
     }

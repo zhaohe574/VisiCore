@@ -74,7 +74,7 @@ public sealed class DockerComposeHostOperationExecutor(HostAgentOptions options)
             !Path.IsPathFullyQualified(options.ComposeFilePath) ||
             !Path.IsPathFullyQualified(options.ActiveReleaseComposeOverridePath) ||
             !File.Exists(options.ComposeFilePath) ||
-            !artifact.OciImageReference.StartsWith("visicore/", StringComparison.OrdinalIgnoreCase) ||
+            !artifact.OciImageReference.StartsWith("visicore/visicore-edge@", StringComparison.OrdinalIgnoreCase) ||
             !artifact.OciImageReference.Contains($"@sha256:{artifact.ArtifactSha256}", StringComparison.OrdinalIgnoreCase))
         {
             return HostOperationExecutionResult.Failed("host_executor_configuration_invalid");

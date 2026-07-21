@@ -25,7 +25,7 @@ Linux 保存资源策略后，Host Agent 只会原子更新固定的 `compose.re
 
 ## Docker 版
 
-适用 Linux x64 与 ARM64 主机。Docker 部署不在 `.env`、镜像、Compose 或 bootstrap 文件中填写中心地址、注册码或发行密钥。正式版本使用 Docker Hub 的 `visicore/visicore-edge-node@sha256:...` 不可变引用，并通过仓库内受控 Compose 启动一个 `visicore-edge-node` 容器；镜像自动运行 Edge Agent 与本机配置服务。`.env` 只设置固定本机目录和配置页回环端口：
+适用 Linux x64 与 ARM64 主机。Docker 部署不在 `.env`、镜像、Compose 或 bootstrap 文件中填写中心地址、注册码或发行密钥。正式版本使用 Docker Hub 的 `visicore/visicore-edge@sha256:...` 不可变引用，并通过仓库内受控 Compose 启动一个 `visicore-edge-node` 容器；镜像自动运行 Edge Agent 与本机配置服务。`.env` 只设置固定本机目录和配置页回环端口：
 
 ```bash
 cp deploy/linux/edge-agent.env.example deploy/linux/.env
