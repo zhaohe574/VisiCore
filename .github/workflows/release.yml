@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
   windows-edge-msi:
@@ -66,31 +65,36 @@ jobs:
         run: test "${GITHUB_REF_NAME#v}" = "$(tr -d '\r\n' < VERSION)"
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
+      - name: 校验 Docker Hub 发布凭据
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          test -n "$DOCKERHUB_USERNAME"
+          test -n "$DOCKERHUB_TOKEN"
       - uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
       - id: metadata
         name: 构建并发布不可变多架构镜像
         shell: bash
         run: |
           set -euo pipefail
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
           version="${GITHUB_REF_NAME#v}"
-          core_image="ghcr.io/${owner}/visicore-core:v${version}"
-          edge_image="ghcr.io/${owner}/visicore-edge-node:v${version}"
+          core_image="visicore/visicore-core:${version}"
+          edge_image="visicore/visicore-edge-node:${version}"
           labels=(--label "org.opencontainers.image.version=${version}" --label "org.opencontainers.image.revision=${GITHUB_SHA}")
-          docker buildx build --platform linux/amd64,linux/arm64 --file deploy/core/Dockerfile --tag "$core_image" "${labels[@]}" --push .
-          docker buildx build --platform linux/amd64,linux/arm64 --file deploy/linux/Dockerfile.dotnet --tag "$edge_image" "${labels[@]}" --push .
+          docker buildx build --platform linux/amd64,linux/arm64 --file deploy/core/Dockerfile --tag "$core_image" --tag "visicore/visicore-core:latest" "${labels[@]}" --push .
+          docker buildx build --platform linux/amd64,linux/arm64 --file deploy/linux/Dockerfile.dotnet --tag "$edge_image" --tag "visicore/visicore-edge-node:latest" "${labels[@]}" --push .
           core_digest="$(docker buildx imagetools inspect "$core_image" --format '{{.Manifest.Digest}}')"
           edge_digest="$(docker buildx imagetools inspect "$edge_image" --format '{{.Manifest.Digest}}')"
           core_size="$(docker buildx imagetools inspect "$core_image" --raw | wc -c | tr -d ' ')"
           edge_size="$(docker buildx imagetools inspect "$edge_image" --raw | wc -c | tr -d ' ')"
-          echo "core_image=ghcr.io/${owner}/visicore-core@${core_digest}" >> "$GITHUB_OUTPUT"
+          echo "core_image=visicore/visicore-core@${core_digest}" >> "$GITHUB_OUTPUT"
           echo "core_digest=${core_digest#sha256:}" >> "$GITHUB_OUTPUT"
           echo "core_size=${core_size}" >> "$GITHUB_OUTPUT"
-          echo "edge_image=ghcr.io/${owner}/visicore-edge-node@${edge_digest}" >> "$GITHUB_OUTPUT"
+          echo "edge_image=visicore/visicore-edge-node@${edge_digest}" >> "$GITHUB_OUTPUT"
           echo "edge_digest=${edge_digest#sha256:}" >> "$GITHUB_OUTPUT"
           echo "edge_size=${edge_size}" >> "$GITHUB_OUTPUT"
 

@@ -250,7 +250,7 @@ public sealed record ReleaseArtifactDescriptor(
     {
         if (component is "core" or "edge-docker")
         {
-            return value.StartsWith("ghcr.io/", StringComparison.OrdinalIgnoreCase) &&
+            return value.StartsWith("visicore/", StringComparison.OrdinalIgnoreCase) &&
                    value.Contains("@sha256:", StringComparison.OrdinalIgnoreCase) &&
                    !value.Contains(' ') && !value.Contains('?') && !value.Contains('#');
         }

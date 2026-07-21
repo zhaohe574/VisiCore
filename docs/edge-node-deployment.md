@@ -4,7 +4,7 @@
 
 中心使用单个 `visicore-core` 容器，升级会产生短暂维护窗口。首次启用前，管理员必须在中心宿主机安装独立的 `VisiCore Core Host Agent`，把 `VISICORE_UPGRADE_EXCHANGE_DIRECTORY` 指向 `/opt/visicore/upgrade-exchange`，并在 Compose 环境中设置 `VISICORE_CORE_UPGRADE_ENABLED=true`。业务容器不挂载 Docker Socket。
 
-后台创建中心升级计划时，会先创建加密的 `upgrade-protection` 备份，再向 Host Agent 写入受签名的发行描述。Host Agent 只允许拉取 GHCR 的不可变 digest，固定执行 `docker compose pull/up`，等待 `/healthz`。目标镜像会在容器内执行 EF 数据库迁移；任一步失败时，Host Agent 会切回上一已知良好镜像并触发保护备份恢复。
+后台创建中心升级计划时，会先创建加密的 `upgrade-protection` 备份，再向 Host Agent 写入受签名的发行描述。Host Agent 只允许拉取 Docker Hub 的不可变 digest，固定执行 `docker compose pull/up`，等待 `/healthz`。目标镜像会在容器内执行 EF 数据库迁移；任一步失败时，Host Agent 会切回上一已知良好镜像并触发保护备份恢复。
 
 VisiCore 边缘节点分为无特权的 `Edge Agent` 与可选的独立 `Edge Host Agent`。前者只访问中心控制面、设备网段和内存中的设备凭据；后者才可在验签成功后执行固定的升级或回滚动作。
 
@@ -25,7 +25,7 @@ Linux 保存资源策略后，Host Agent 只会原子更新固定的 `compose.re
 
 ## Docker 版
 
-适用 Linux x64 与 ARM64 主机。Docker 部署不在 `.env`、镜像、Compose 或 bootstrap 文件中填写中心地址、注册码或发行密钥。正式版本使用 GHCR 的 `visicore-edge-node@sha256:...` 不可变引用，并通过仓库内受控 Compose 启动一个 `visicore-edge-node` 容器；镜像自动运行 Edge Agent 与本机配置服务。`.env` 只设置固定本机目录和配置页回环端口：
+适用 Linux x64 与 ARM64 主机。Docker 部署不在 `.env`、镜像、Compose 或 bootstrap 文件中填写中心地址、注册码或发行密钥。正式版本使用 Docker Hub 的 `visicore/visicore-edge-node@sha256:...` 不可变引用，并通过仓库内受控 Compose 启动一个 `visicore-edge-node` 容器；镜像自动运行 Edge Agent 与本机配置服务。`.env` 只设置固定本机目录和配置页回环端口：
 
 ```bash
 cp deploy/linux/edge-agent.env.example deploy/linux/.env
@@ -33,13 +33,13 @@ docker compose --env-file deploy/linux/.env -f deploy/linux/edge-agent.compose.y
 docker compose --env-file deploy/linux/.env -f deploy/linux/edge-agent.compose.yaml up -d
 ```
 
-GHCR Edge 镜像不包含独立 Linux Host Agent。首次 `docker compose up` 会用一次性初始化容器准备三个挂载目录的非特权写入权限；它不挂载 Docker Socket，也不保留运行权限。未单独从源码部署 Host Agent 时，节点仍可配对和执行受限的设备接入，但受控升级保持关闭。随后在宿主机浏览器访问 `http://127.0.0.1:18081`；远程维护通过 SSH 隧道访问该回环端口。
+Docker Hub Edge 镜像不包含独立 Linux Host Agent。首次 `docker compose up` 会用一次性初始化容器准备三个挂载目录的非特权写入权限；它不挂载 Docker Socket，也不保留运行权限。未单独从源码部署 Host Agent 时，节点仍可配对和执行受限的设备接入，但受控升级保持关闭。随后在宿主机浏览器访问 `http://127.0.0.1:18081`；远程维护通过 SSH 隧道访问该回环端口。
 
 页面先测试中心 HTTPS 健康检查。已部署 Host Agent 时，页面还会测试其 Socket、PEM 和域名白名单。确认配对后，配置服务优先通过受限 Unix Socket 提交固定配置对象；Host Agent 原子写入状态目录并执行固定的 `docker compose up --detach --no-deps edge-node`。未部署 Host Agent 且配置通道目录为空时，配置服务只会原子写入本容器已挂载的 Agent 配置与一次性注册码，随后停止自身进程，由 Compose 重启无特权容器完成登记；它不能写宿主机配置、调用 Docker 或启用受控升级。若令牌或 Socket 仅部分缺失，页面会保留 `configuration_host_unavailable`，避免在 Host Agent 异常时绕过配置通道。单容器内的配置服务与 Edge Agent 均不挂载 Docker Socket。配对成功后 Agent 自动清除注册码。
 
 可选的 Host Agent 默认不允许实际升级。只有在页面中导入 PEM、公钥标识、受信下载域名并明确开启“允许实际受控升级”后，才会启用发行下载、验签和固定 Compose 升级。Host Agent 仍只接受目标为当前 Linux 架构、未过期、RSA-PSS SHA-256 验签成功且哈希匹配的发行清单。
 
-首次受控升级前必须存在上一已知良好制品：Docker 节点将从受保护的 `compose.release.yaml` 中导入 GHCR digest；Windows 节点须在初始化时保留并校验当前 MSI 基线。缺少基线时 Host Agent 会返回“需初始化”，不会尝试无法安全回退的升级。
+首次受控升级前必须存在上一已知良好制品：Docker 节点将从受保护的 `compose.release.yaml` 中导入 Docker Hub digest；Windows 节点须在初始化时保留并校验当前 MSI 基线。缺少基线时 Host Agent 会返回“需初始化”，不会尝试无法安全回退的升级。
 
 ## Windows 版
 

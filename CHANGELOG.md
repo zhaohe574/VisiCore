@@ -10,10 +10,10 @@
 - 新增 Core Host Agent，支持在受限的 Linux 主机上执行已验证的中心镜像升级。
 - 边缘节点增加本地配置持久化、资源策略、注册使用量上报与受控更新执行器。
 - Windows Edge Node 安装包集成更新执行器；后台增加中心、Docker 边缘节点和 Windows 边缘节点的发布计划管理。
-- 发布流水线统一基于 Git 标签生成 Viewer MSI、Edge Node MSI、核心镜像和边缘节点镜像，并附带多架构摘要、SBOM 与签名清单。
+- 发布流水线统一基于 Git 标签生成 Viewer MSI、Edge Node MSI、核心镜像和边缘节点镜像，并附带多架构摘要、SBOM 与签名清单；Docker 镜像仅发布到 Docker Hub，不发布到 GitHub Packages。
 
 ## 0.1.0
 
 - 作为无历史的 VisiCore 开源基线，提供中心 Docker 部署、ONVIF／RTSP 核心能力、Windows 查看端与 Windows 边缘节点安装包。
-- 中心与边缘节点镜像分别发布到 GHCR 的 `ghcr.io/zhaohe574/visicore-core` 和 `ghcr.io/zhaohe574/visicore-edge-node`，同时支持 Linux x64 与 ARM64。
+- 中心镜像发布到 Docker Hub 的 `visicore/visicore-core`，同时支持 Linux x64 与 ARM64。
 - GitHub Release 仅发布 Windows Viewer、Windows Edge Node MSI、哈希校验、查看端运行时说明和 Windows 受控升级签名文件。

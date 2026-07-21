@@ -2,7 +2,7 @@ name: visicore
 
 services:
   visicore-core:
-    image: ${VISICORE_CORE_IMAGE:-ghcr.io/zhaohe574/visicore-core:v0.1.1}
+    image: ${VISICORE_CORE_IMAGE:-visicore/visicore-core:0.1.1}
     build:
       context: .
       dockerfile: deploy/core/Dockerfile

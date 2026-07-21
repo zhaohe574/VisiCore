@@ -2,7 +2,7 @@ name: visicore-edge-node
 
 services:
   edge-node-init:
-    image: ${VISICORE_EDGE_NODE_IMAGE:-ghcr.io/zhaohe574/visicore-edge-node:v0.1.1}
+    image: ${VISICORE_EDGE_NODE_IMAGE:-visicore/visicore-edge-node:0.1.1}
     build:
       context: ../..
       dockerfile: deploy/linux/Dockerfile.dotnet
@@ -33,7 +33,7 @@ services:
       - ALL
 
   edge-node:
-    image: ${VISICORE_EDGE_NODE_IMAGE:-ghcr.io/zhaohe574/visicore-edge-node:v0.1.1}
+    image: ${VISICORE_EDGE_NODE_IMAGE:-visicore/visicore-edge-node:0.1.1}
     build:
       context: ../..
       dockerfile: deploy/linux/Dockerfile.dotnet

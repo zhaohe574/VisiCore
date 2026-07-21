@@ -27,8 +27,8 @@ if [[ -z "${container_id}" ]]; then
 fi
 image_id="$(/usr/bin/docker inspect --format '{{.Image}}' "${container_id}")"
 image_reference="$(/usr/bin/docker image inspect --format '{{index .RepoDigests 0}}' "${image_id}")"
-if [[ "${image_reference}" != ghcr.io/*@sha256:* ]]; then
-    echo "当前中心镜像不是可验证的 GHCR digest，先完成一次受控基线部署后再启用在线升级。" >&2
+if [[ "${image_reference}" != visicore/*@sha256:* ]]; then
+    echo "当前中心镜像不是可验证的 Docker Hub digest，先完成一次受控基线部署后再启用在线升级。" >&2
     exit 2
 fi
 cat > "${install_root}/compose.known-good.yaml" <<EOF

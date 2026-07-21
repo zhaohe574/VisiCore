@@ -215,8 +215,8 @@ public sealed class EdgeAgentRuntimeTests
             Directory.CreateDirectory(root);
             var options = new HostAgentOptions { OperationStateDirectory = root };
             var store = new VerifiedDeploymentStore(options);
-            var first = new HostVerifiedReleaseArtifact(null, null, new string('a', 64), "ghcr.io/example/edge@sha256:" + new string('a', 64), "0.1.0");
-            var second = new HostVerifiedReleaseArtifact(null, null, new string('b', 64), "ghcr.io/example/edge@sha256:" + new string('b', 64), "0.1.1");
+            var first = new HostVerifiedReleaseArtifact(null, null, new string('a', 64), "visicore/visicore-edge-node@sha256:" + new string('a', 64), "0.1.0");
+            var second = new HostVerifiedReleaseArtifact(null, null, new string('b', 64), "visicore/visicore-edge-node@sha256:" + new string('b', 64), "0.1.1");
             var firstOperation = Guid.NewGuid();
             var secondOperation = Guid.NewGuid();
             await store.RememberAsync(firstOperation, "0.1.0", "key", first, CancellationToken.None);
