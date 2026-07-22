@@ -1,10 +1,19 @@
 using VisiCore.CoreHostAgent;
+using VisiCore.Core;
 using Xunit;
 
 namespace VisiCore.CoreHostAgent.Tests;
 
 public sealed class CoreVolumeContinuityTests
 {
+    [Fact(DisplayName = "核心 Host Agent 程序集使用独立 Core 版本")]
+    public void CoreHostAgentAssemblyUsesCoreVersion()
+    {
+        var expectedVersion = File.ReadAllText(Path.Combine(Directory.GetCurrentDirectory(), "versions", "core.txt")).Trim();
+
+        Assert.Equal(expectedVersion, RuntimeVersion.GetProductVersion(typeof(CoreHostAgentWorker).Assembly));
+    }
+
     [Fact(DisplayName = "核心 Compose 配置读取四个稳定数据卷")]
     public void ReadsExpectedVolumesFromComposeConfiguration()
     {

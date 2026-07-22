@@ -23,9 +23,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $viewerSource = Join-Path $repositoryRoot 'src\VisiCore.QtViewer'
-$version = (Get-Content -LiteralPath (Join-Path $repositoryRoot 'VERSION') -Raw).Trim()
+$version = (Get-Content -LiteralPath (Join-Path $repositoryRoot 'versions\viewer.txt') -Raw).Trim()
 if ($version -notmatch '^\d+\.\d+\.\d+$') {
-    throw 'VERSION 必须是 x.y.z 格式。'
+    throw 'versions/viewer.txt 必须是 x.y.z 格式。'
 }
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $repositoryRoot 'artifacts\windows\viewer'

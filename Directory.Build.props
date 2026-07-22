@@ -1,7 +1,10 @@
 <Project>
   <PropertyGroup>
-    <!-- VERSION 是所有 .NET 制品的唯一版本来源；正式 Release 仍会校验 Git 标签与该文件一致。 -->
-    <VisiCoreProductVersion>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</VisiCoreProductVersion>
+    <!-- 根 VERSION 标识整套发行批次；各端制品从 versions 目录读取独立版本。 -->
+    <VisiCoreCoreVersion>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)versions/core.txt').Trim())</VisiCoreCoreVersion>
+    <VisiCoreEdgeVersion>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)versions/edge.txt').Trim())</VisiCoreEdgeVersion>
+    <VisiCoreProductVersion>$(VisiCoreCoreVersion)</VisiCoreProductVersion>
+    <VisiCoreProductVersion Condition="'$(MSBuildProjectName)' == 'VisiCore.EdgeAgent' Or '$(MSBuildProjectName)' == 'VisiCore.EdgeBootstrap' Or '$(MSBuildProjectName)' == 'VisiCore.EdgeHostAgent' Or '$(MSBuildProjectName)' == 'VisiCore.EdgeNodeConfig' Or '$(MSBuildProjectName)' == 'VisiCore.EdgeUpdateRunner'">$(VisiCoreEdgeVersion)</VisiCoreProductVersion>
     <Version Condition="'$(Version)' == ''">$(VisiCoreProductVersion)</Version>
     <AssemblyVersion Condition="'$(AssemblyVersion)' == ''">$(VisiCoreProductVersion).0</AssemblyVersion>
     <FileVersion Condition="'$(FileVersion)' == ''">$(VisiCoreProductVersion).0</FileVersion>

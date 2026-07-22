@@ -8,6 +8,8 @@ RUN npm run build
 
 FROM mcr.microsoft.com/dotnet/sdk:8.0-alpine AS dotnet-build
 WORKDIR /src
+COPY Directory.Build.props ./
+COPY versions ./versions
 COPY src ./src
 RUN dotnet restore src/VisiCore.Api/VisiCore.Api.csproj
 RUN dotnet restore src/VisiCore.StreamGateway/VisiCore.StreamGateway.csproj

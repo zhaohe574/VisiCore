@@ -276,9 +276,12 @@ public sealed record ReleaseArtifactDescriptor(
 public static class RuntimeVersion
 {
     public static string ProductVersion =>
-        typeof(RuntimeVersion).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+        GetProductVersion(typeof(RuntimeVersion).Assembly);
+
+    public static string GetProductVersion(System.Reflection.Assembly assembly) =>
+        assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
             .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
             .FirstOrDefault()?.InformationalVersion.Split('+', 2)[0]
-        ?? typeof(RuntimeVersion).Assembly.GetName().Version?.ToString(3)
+        ?? assembly.GetName().Version?.ToString(3)
         ?? "0.0.0";
 }

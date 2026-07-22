@@ -10,6 +10,9 @@
     <ProjectReference Include="..\..\src\VisiCore.CoreHostAgent\VisiCore.CoreHostAgent.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="..\..\versions\core.txt" Link="versions\core.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">

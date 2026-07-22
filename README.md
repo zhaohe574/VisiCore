@@ -102,6 +102,10 @@ Invoke-WebRequest http://127.0.0.1:8080/readyz
 
 Windows 查看端使用 `visicore-viewer-v<版本>.msi`。查看端只请求中心签发的视频会话，不保存摄像头地址、账号或密码。
 
+## 版本边界
+
+根目录 `VERSION` 只表示整套 GitHub Release 的发行批次。Core、Edge、Viewer 的版本分别位于 [`versions/core.txt`](versions/core.txt)、[`versions/edge.txt`](versions/edge.txt)、[`versions/viewer.txt`](versions/viewer.txt)，管理端版本位于 `src/VisiCore.Admin/package.json`。各端可以独立递增；构建、镜像标签和 Windows MSI 使用对应端的版本，不再要求与发行批次相同。
+
 ## 开发与质量
 
 后端为 .NET 8，管理端为 React 与 TypeScript。常用检查：

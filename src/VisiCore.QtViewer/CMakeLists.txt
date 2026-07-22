@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
-file(READ "${CMAKE_CURRENT_LIST_DIR}/../../VERSION" VISICORE_VIEWER_VERSION_RAW)
+file(READ "${CMAKE_CURRENT_LIST_DIR}/../../versions/viewer.txt" VISICORE_VIEWER_VERSION_RAW)
 string(STRIP "${VISICORE_VIEWER_VERSION_RAW}" VISICORE_VIEWER_VERSION)
 if(NOT VISICORE_VIEWER_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
-    message(FATAL_ERROR "根目录 VERSION 必须是 x.y.z 格式。")
+    message(FATAL_ERROR "versions/viewer.txt 必须是 x.y.z 格式。")
 endif()
 project(VisiCoreQtViewer VERSION ${VISICORE_VIEWER_VERSION} LANGUAGES CXX)
 

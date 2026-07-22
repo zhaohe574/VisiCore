@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+core_version="$(tr -d '\r\n' < "${repository_root}/versions/core.txt")"
 project_name="visicore-core-smoke-${RANDOM}-${RANDOM}"
 initial_image="visicore/visicore-core:${project_name}"
 upgraded_image="${initial_image}-updated"
@@ -66,13 +67,21 @@ wait_for_health() {
     return 1
 }
 
+assert_core_version() {
+    local response
+    response="$(curl --fail --silent "http://127.0.0.1:${http_port}/api/v1/system/version")"
+    [[ "${response}" == *"\"version\":\"${core_version}\""* ]]
+}
+
 assert_resolved_volume_names
 docker compose --project-directory "${repository_root}" --project-name "${project_name}" up --build --detach --force-recreate visicore-core
 wait_for_health
+assert_core_version
 assert_container_volumes
 
 docker image tag "${initial_image}" "${upgraded_image}"
 export VISICORE_CORE_IMAGE="${upgraded_image}"
 docker compose --project-directory "${repository_root}" --project-name "${project_name}" up --detach --force-recreate visicore-core
 wait_for_health
+assert_core_version
 assert_container_volumes

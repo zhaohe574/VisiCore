@@ -84,7 +84,7 @@ jobs:
       - run: dotnet publish src/VisiCore.EdgeUpdateRunner/VisiCore.EdgeUpdateRunner.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true --output artifacts/windows/edge-update-runner
       - shell: pwsh
         run: |
-          $version = (Get-Content VERSION -Raw).Trim()
+          $version = (Get-Content versions\edge.txt -Raw).Trim()
           dotnet build deploy/windows/VisiCore.EdgeNode.Installer.wixproj --configuration Release "-p:ProductVersion=$version" "-p:EdgeAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-agent" "-p:EdgeHostAgentPublishDir=${{ github.workspace }}\artifacts\windows\edge-host-agent" "-p:EdgeBootstrapPublishDir=${{ github.workspace }}\artifacts\windows\edge-bootstrap" "-p:EdgeUpdateRunnerPublishDir=${{ github.workspace }}\artifacts\windows\edge-update-runner"
       - shell: pwsh
         run: |

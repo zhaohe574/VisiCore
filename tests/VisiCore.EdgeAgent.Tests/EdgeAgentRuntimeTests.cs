@@ -11,6 +11,14 @@ namespace VisiCore.EdgeAgent.Tests;
 
 public sealed class EdgeAgentRuntimeTests
 {
+    [Fact(DisplayName = "边缘节点程序集使用独立 Edge 版本")]
+    public void EdgeAgentAssemblyUsesEdgeVersion()
+    {
+        var expectedVersion = File.ReadAllText(Path.Combine(Directory.GetCurrentDirectory(), "versions", "edge.txt")).Trim();
+
+        Assert.Equal(expectedVersion, RuntimeVersion.GetProductVersion(typeof(HostOperationWorker).Assembly));
+    }
+
     [Fact(DisplayName = "未安装 Host Agent 时，配置页仍可安全写入本地配对状态")]
     public void LocalConfigurationStoreWritesOnlyAgentState()
     {

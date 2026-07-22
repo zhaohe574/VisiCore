@@ -561,7 +561,7 @@ public sealed class HostOperationWorker(
             {
                 await using var stream = new FileStream(options.WindowsInstallerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
                 var hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
-                var version = RuntimeVersion.ProductVersion;
+                var version = RuntimeVersion.GetProductVersion(typeof(HostOperationWorker).Assembly);
                 await verifiedDeploymentStore.EnsureBaselineAsync(
                     $"baseline-{version}",
                     options.SigningPublicKeyId!,
