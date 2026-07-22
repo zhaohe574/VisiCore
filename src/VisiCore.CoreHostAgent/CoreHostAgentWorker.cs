@@ -135,6 +135,11 @@ public sealed class CoreHostAgentWorker(
         {
             return CoreHostOperationResult.Failed("core_known_good_release_missing");
         }
+        var continuityFailure = await VerifyCoreVolumeContinuityAsync(cancellationToken);
+        if (continuityFailure is not null)
+        {
+            return CoreHostOperationResult.Failed(continuityFailure);
+        }
         if (!await WriteOverrideAsync(artifact.ArtifactReference, cancellationToken))
         {
             return CoreHostOperationResult.Failed("core_release_pointer_write_failed");
@@ -144,7 +149,10 @@ public sealed class CoreHostAgentWorker(
         {
             applyResult = await RunComposeAsync(["up", "--detach", "--force-recreate", options.CoreServiceName], cancellationToken);
         }
-        if (applyResult.Succeeded && await WaitForHealthAsync(cancellationToken))
+        continuityFailure = applyResult.Succeeded
+            ? await VerifyCoreVolumeContinuityAsync(cancellationToken)
+            : "core_upgrade_apply_failed";
+        if (applyResult.Succeeded && continuityFailure is null && await WaitForHealthAsync(cancellationToken))
         {
             await WriteKnownGoodOverrideAsync(artifact.ArtifactReference, cancellationToken);
             return CoreHostOperationResult.Success();
@@ -302,6 +310,27 @@ public sealed class CoreHostAgentWorker(
 
     private string GetKnownGoodOverridePath() => Path.Combine(Path.GetDirectoryName(options.ComposeOverridePath)!, "compose.known-good.yaml");
 
+    private async Task<string?> VerifyCoreVolumeContinuityAsync(CancellationToken cancellationToken)
+    {
+        var configuration = await RunComposeAsync(["config", "--format", "json"], cancellationToken);
+        if (!configuration.Succeeded || !CoreVolumeContinuity.TryReadExpectedVolumes(configuration.StandardOutput, out var expectedVolumes))
+        {
+            return "core_volume_continuity_configuration_invalid";
+        }
+
+        var currentContainer = await RunComposeAsync(["ps", "--quiet", options.CoreServiceName], cancellationToken);
+        var containerId = currentContainer.StandardOutput.Trim();
+        if (!currentContainer.Succeeded || string.IsNullOrWhiteSpace(containerId) || containerId.Contains('\r') || containerId.Contains('\n'))
+        {
+            return "core_volume_continuity_current_container_missing";
+        }
+
+        var inspection = await RunDockerAsync(["inspect", containerId], cancellationToken);
+        return !inspection.Succeeded || !CoreVolumeContinuity.MatchesRunningContainer(inspection.StandardOutput, expectedVolumes)
+            ? "core_volume_continuity_mismatch"
+            : null;
+    }
+
     private async Task<bool> WaitForHealthAsync(CancellationToken cancellationToken)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(options.HealthTimeoutSeconds);
@@ -321,7 +350,7 @@ public sealed class CoreHostAgentWorker(
         return false;
     }
 
-    private Task<CoreHostOperationResult> RunComposeAsync(IReadOnlyList<string> arguments, CancellationToken cancellationToken)
+    private Task<CoreHostCommandResult> RunComposeAsync(IReadOnlyList<string> arguments, CancellationToken cancellationToken)
     {
         var command = new List<string> { "compose", "--file", options.ComposeFilePath };
         if (File.Exists(options.ComposeOverridePath))
@@ -333,7 +362,7 @@ public sealed class CoreHostAgentWorker(
         return RunDockerAsync(command, cancellationToken);
     }
 
-    private async Task<CoreHostOperationResult> RunDockerAsync(IReadOnlyList<string> arguments, CancellationToken cancellationToken)
+    private async Task<CoreHostCommandResult> RunDockerAsync(IReadOnlyList<string> arguments, CancellationToken cancellationToken)
     {
         using var process = new Process
         {
@@ -351,7 +380,7 @@ public sealed class CoreHostAgentWorker(
         var started = false;
         try
         {
-            if (!process.Start()) return CoreHostOperationResult.Failed("docker_start_failed");
+            if (!process.Start()) return CoreHostCommandResult.Failed("docker_start_failed");
             started = true;
             var stdout = process.StandardOutput.ReadToEndAsync();
             var stderr = process.StandardError.ReadToEndAsync();
@@ -359,16 +388,18 @@ public sealed class CoreHostAgentWorker(
             timeout.CancelAfter(TimeSpan.FromSeconds(options.ExecutionTimeoutSeconds));
             await process.WaitForExitAsync(timeout.Token);
             await Task.WhenAll(stdout, stderr);
-            return process.ExitCode == 0 ? CoreHostOperationResult.Success() : CoreHostOperationResult.Failed("docker_command_failed");
+            return process.ExitCode == 0
+                ? CoreHostCommandResult.Success(await stdout)
+                : CoreHostCommandResult.Failed("docker_command_failed");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             TryStop(process);
-            return CoreHostOperationResult.Failed("docker_command_timeout");
+            return CoreHostCommandResult.Failed("docker_command_timeout");
         }
         catch (System.ComponentModel.Win32Exception)
         {
-            return CoreHostOperationResult.Failed("docker_start_failed");
+            return CoreHostCommandResult.Failed("docker_start_failed");
         }
         finally
         {
@@ -412,4 +443,10 @@ public sealed record CoreHostOperationResult(bool Succeeded, string? FailureKind
 {
     public static CoreHostOperationResult Success() => new(true, null);
     public static CoreHostOperationResult Failed(string failureKind) => new(false, failureKind);
+}
+
+internal sealed record CoreHostCommandResult(bool Succeeded, string? FailureKind, string StandardOutput)
+{
+    public static CoreHostCommandResult Success(string standardOutput) => new(true, null, standardOutput);
+    public static CoreHostCommandResult Failed(string failureKind) => new(false, failureKind, string.Empty);
 }

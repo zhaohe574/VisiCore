@@ -2010,7 +2010,7 @@ else
         }
     });
 
-    admin.MapDelete("/edge-agents/{agentId:guid}", async (Guid agentId, DeleteEdgeAgentRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, EdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
+    admin.MapDelete("/edge-agents/{agentId:guid}", async (Guid agentId, [FromBody] DeleteEdgeAgentRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, EdgeAgentControlService edgeAgentControl, AuditService auditService, CancellationToken cancellationToken) =>
     {
         if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageDeviceWorkers, cancellationToken))
         {

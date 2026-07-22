@@ -62,6 +62,8 @@ docker compose ps
 | `visicore_visicore-backups` | 加密平台备份 |
 | `visicore_api-exports` | 录像导出文件 |
 
+Compose 通过 `VISICORE_POSTGRES_VOLUME`、`VISICORE_CONFIG_VOLUME`、`VISICORE_BACKUPS_VOLUME` 和 `VISICORE_EXPORTS_VOLUME` 显式绑定这些名称，避免 Compose 项目名或部署目录变化时创建空卷。已有实例升级时必须保持这四个变量不变；只在部署独立的新实例时才修改它们。
+
 `docker compose down` 不会删除这些卷。`docker compose down -v` 会永久删除全部平台数据和备份，执行前必须确认已下载并验证可恢复的备份。
 
 ## HTTPS
@@ -77,10 +79,15 @@ docker compose ps
 常规镜像升级：
 
 ```powershell
-docker compose pull
-docker compose up -d
+docker compose config --format json
+$coreContainer = docker compose ps --quiet visicore-core
+docker inspect $coreContainer --format '{{range .Mounts}}{{if eq .Type "volume"}}{{println .Destination .Name}}{{end}}{{end}}'
+docker compose pull visicore-core
+docker compose up -d --no-deps --force-recreate visicore-core
 docker compose ps
 ```
+
+升级前，确认四个挂载目标仍分别使用 `visicore_postgres-data`、`visicore_visicore-config`、`visicore_visicore-backups`、`visicore_api-exports`。配置不同、卷组不完整或未找到正在运行的核心容器时，停止升级并先修正部署配置。受控的 Core Host Agent 会自动执行同一项检查并拒绝不连续的升级。
 
 升级前在后台创建并下载备份，离线保管恢复密钥。升级后检查：
 

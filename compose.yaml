@@ -2,7 +2,7 @@ name: visicore
 
 services:
   visicore-core:
-    image: ${VISICORE_CORE_IMAGE:-visicore/visicore-core:0.1.1}
+    image: ${VISICORE_CORE_IMAGE:-visicore/visicore-core:0.1.2}
     build:
       context: .
       dockerfile: deploy/core/Dockerfile
@@ -34,9 +34,13 @@ services:
 
 volumes:
   postgres-data:
+    name: ${VISICORE_POSTGRES_VOLUME:-visicore_postgres-data}
   visicore-config:
+    name: ${VISICORE_CONFIG_VOLUME:-visicore_visicore-config}
   api-exports:
+    name: ${VISICORE_EXPORTS_VOLUME:-visicore_api-exports}
   visicore-backups:
+    name: ${VISICORE_BACKUPS_VOLUME:-visicore_visicore-backups}
 
 networks:
   default:

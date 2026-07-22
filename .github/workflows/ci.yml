@@ -51,6 +51,7 @@ jobs:
       - run: dotnet restore src/VisiCore.EdgeNodeConfig/VisiCore.EdgeNodeConfig.csproj
       - run: dotnet restore tests/VisiCore.EdgeAgent.Tests/VisiCore.EdgeAgent.Tests.csproj
       - run: dotnet restore tests/VisiCore.Api.Tests/VisiCore.Api.Tests.csproj
+      - run: dotnet restore tests/VisiCore.CoreHostAgent.Tests/VisiCore.CoreHostAgent.Tests.csproj
       - run: dotnet restore tests/VisiCore.OnvifEdgeWorker.Tests/VisiCore.OnvifEdgeWorker.Tests.csproj
       - run: dotnet build src/VisiCore.Api/VisiCore.Api.csproj --configuration Release --no-restore
       - run: dotnet build src/VisiCore.Setup/VisiCore.Setup.csproj --configuration Release --no-restore
@@ -61,7 +62,14 @@ jobs:
       - run: dotnet build src/VisiCore.EdgeNodeConfig/VisiCore.EdgeNodeConfig.csproj --configuration Release --no-restore
       - run: dotnet test tests/VisiCore.Api.Tests/VisiCore.Api.Tests.csproj --configuration Release --no-restore
       - run: dotnet test tests/VisiCore.EdgeAgent.Tests/VisiCore.EdgeAgent.Tests.csproj --configuration Release --no-restore
+      - run: dotnet test tests/VisiCore.CoreHostAgent.Tests/VisiCore.CoreHostAgent.Tests.csproj --configuration Release --no-restore
       - run: dotnet test tests/VisiCore.OnvifEdgeWorker.Tests/VisiCore.OnvifEdgeWorker.Tests.csproj --configuration Release
+
+  core-container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/core-container-smoke.sh
 
   windows-edge-package:
     runs-on: windows-latest
