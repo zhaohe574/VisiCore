@@ -392,8 +392,8 @@ jobs:
             tar -xzf "$package" -C "$package_root"
             bundle_directory="$(find "$package_root" -mindepth 1 -maxdepth 1 -type d -print -quit)"
             cp "$sbom_file" "$cyclonedx_file" "$bundle_directory/release/"
-            tar -C "$package_root" -czf "${package}.next" "$(basename "$bundle_directory")"
-            mv "${package}.next" "$package"
+            rm -f "$package"
+            tar -C "$package_root" -czf "$package" "$(basename "$bundle_directory")"
             rm -rf "$package_root"
           done
           cat > artifacts/release/edge-release-windows-x64.json <<EOF
