@@ -158,6 +158,55 @@ public sealed class UpgradePlanService(PlatformDbContext dbContext)
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// 金丝雀批次稳定后，后续批次必须由运维人员明确确认，避免调度器自动扩大影响范围。
+    /// </summary>
+    public async Task<UpgradePlanEntity> ApproveBatchAsync(Guid planId, int batch, CancellationToken cancellationToken)
+    {
+        if (batch <= 1)
+        {
+            throw new UpgradePlanException("upgrade_batch_invalid");
+        }
+
+        var plan = await dbContext.UpgradePlans.SingleOrDefaultAsync(item => item.Id == planId, cancellationToken)
+            ?? throw new UpgradePlanException("upgrade_plan_not_found");
+        if (plan.Status != "running")
+        {
+            throw new UpgradePlanException("upgrade_plan_not_running");
+        }
+
+        var activeBatch = await dbContext.UpgradeTargets
+            .Where(item => item.UpgradePlanId == plan.Id &&
+                           (item.Status == "queued" || item.Status == "dispatched" || item.Status == "verifying"))
+            .Select(item => (int?)item.Batch)
+            .MinAsync(cancellationToken);
+        if (activeBatch is not null)
+        {
+            throw new UpgradePlanException("upgrade_batch_still_active");
+        }
+
+        var expectedBatch = await dbContext.UpgradeTargets
+            .Where(item => item.UpgradePlanId == plan.Id && item.Status == "awaiting_approval")
+            .Select(item => (int?)item.Batch)
+            .MinAsync(cancellationToken);
+        if (expectedBatch is null || expectedBatch != batch)
+        {
+            throw new UpgradePlanException("upgrade_batch_not_waiting_approval");
+        }
+
+        var targets = await dbContext.UpgradeTargets
+            .Where(item => item.UpgradePlanId == plan.Id && item.Batch == batch && item.Status == "awaiting_approval")
+            .ToListAsync(cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        foreach (var target in targets)
+        {
+            target.Status = "queued";
+            target.StartedAt = now;
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return plan;
+    }
+
     private static ReleaseArtifactDescriptor ResolveCoreArtifact(ReleaseDescriptor descriptor)
     {
         var architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.Arm64

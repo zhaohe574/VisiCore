@@ -32,3 +32,15 @@ artifacts/
 # 本地打包压缩包与 Python 测试缓存不属于源码。
 *.zip
 __pycache__/
+
+# 测试报告、浏览器缓存与临时发布元数据均由 CI 生成，禁止污染协作分支。
+TestResults/
+test-results/
+playwright-report/
+coverage/
+*.coverage
+*.trx
+*.nupkg
+*.snupkg
+**/.vite/
+**/.cache/

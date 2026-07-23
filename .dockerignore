@@ -11,6 +11,15 @@ Nginx
 **/dist
 **/build
 **/out
+TestResults
+test-results
+playwright-report
+coverage
+**/.vite
+**/.cache
+*.trx
+*.nupkg
+*.snupkg
 .env
 *.pem
 *.key

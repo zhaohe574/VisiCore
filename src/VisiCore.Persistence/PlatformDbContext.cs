@@ -23,6 +23,7 @@ public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> option
     public DbSet<EdgeAgentConfigurationEntity> EdgeAgentConfigurations => Set<EdgeAgentConfigurationEntity>();
     public DbSet<PlatformOperationEntity> PlatformOperations => Set<PlatformOperationEntity>();
     public DbSet<ReleaseCatalogEntity> ReleaseCatalog => Set<ReleaseCatalogEntity>();
+    public DbSet<ReleaseGovernanceRecordEntity> ReleaseGovernanceRecords => Set<ReleaseGovernanceRecordEntity>();
     public DbSet<UpgradePlanEntity> UpgradePlans => Set<UpgradePlanEntity>();
     public DbSet<UpgradeTargetEntity> UpgradeTargets => Set<UpgradeTargetEntity>();
     public DbSet<DeviceWorkerAssignmentEntity> DeviceWorkerAssignments => Set<DeviceWorkerAssignmentEntity>();
@@ -316,6 +317,27 @@ public sealed class PlatformDbContext(DbContextOptions<PlatformDbContext> option
             entity.Property(item => item.PublishedAt).HasColumnType("timestamp with time zone");
             entity.Property(item => item.ExpiresAt).HasColumnType("timestamp with time zone");
             entity.Property(item => item.CreatedAt).HasColumnType("timestamp with time zone");
+        });
+
+        modelBuilder.Entity<ReleaseGovernanceRecordEntity>(entity =>
+        {
+            entity.ToTable("release_governance_records");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.ReleaseCatalogId).IsUnique();
+            entity.HasIndex(item => item.RecordedAt);
+            entity.Property(item => item.ChangeIdsJson).HasColumnType("jsonb");
+            entity.Property(item => item.DossierUrl).HasMaxLength(2048);
+            entity.Property(item => item.ReleaseUrl).HasMaxLength(2048);
+            entity.Property(item => item.WorkflowRunUrl).HasMaxLength(2048);
+            entity.Property(item => item.ReleaseEvidenceUrl).HasMaxLength(2048);
+            entity.Property(item => item.StagingEvidenceUrl).HasMaxLength(2048);
+            entity.Property(item => item.SbomUrl).HasMaxLength(2048);
+            entity.Property(item => item.ProvenanceUrl).HasMaxLength(2048);
+            entity.Property(item => item.VerificationUrl).HasMaxLength(2048);
+            entity.Property(item => item.SourceCommit).HasMaxLength(40);
+            entity.Property(item => item.RecordedBy).HasMaxLength(128);
+            entity.Property(item => item.RecordedAt).HasColumnType("timestamp with time zone");
+            entity.HasOne<ReleaseCatalogEntity>().WithMany().HasForeignKey(item => item.ReleaseCatalogId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<UpgradePlanEntity>(entity =>
@@ -1205,6 +1227,24 @@ public sealed class ReleaseCatalogEntity
     public DateTimeOffset PublishedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+public sealed class ReleaseGovernanceRecordEntity
+{
+    public Guid Id { get; set; }
+    public Guid ReleaseCatalogId { get; set; }
+    public string ChangeIdsJson { get; set; } = "[]";
+    public string SourceCommit { get; set; } = string.Empty;
+    public string DossierUrl { get; set; } = string.Empty;
+    public string ReleaseUrl { get; set; } = string.Empty;
+    public string WorkflowRunUrl { get; set; } = string.Empty;
+    public string ReleaseEvidenceUrl { get; set; } = string.Empty;
+    public string StagingEvidenceUrl { get; set; } = string.Empty;
+    public string SbomUrl { get; set; } = string.Empty;
+    public string ProvenanceUrl { get; set; } = string.Empty;
+    public string VerificationUrl { get; set; } = string.Empty;
+    public string RecordedBy { get; set; } = string.Empty;
+    public DateTimeOffset RecordedAt { get; set; }
 }
 
 public sealed class UpgradePlanEntity

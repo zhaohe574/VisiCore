@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "v0.1.4",
+  "changeIds": ["v0-1-4-controlled-release"],
+  "documents": {
+    "proposal": "proposal.md",
+    "compatibility": "compatibility.md",
+    "tasks": "tasks.md",
+    "verification": "verification.md",
+    "evidence": "evidence.md",
+    "releaseNotes": "release-notes.md"
+  }
+}

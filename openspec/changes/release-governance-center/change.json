@@ -1,0 +1,8 @@
+{
+  "id": "release-governance-center",
+  "title": "发布治理中心与 OpenSpec 门禁",
+  "status": "verified",
+  "releaseId": "v0.1.5",
+  "affectedAreas": ["api", "persistence", "admin", "release", "documentation"],
+  "risk": "high"
+}

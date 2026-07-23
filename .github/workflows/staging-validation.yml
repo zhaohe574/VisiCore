@@ -1,0 +1,139 @@
+name: Staging Validation
+
+on:
+  workflow_call:
+    inputs:
+      candidate_tag:
+        description: '已发布的 RC 标签，例如 v0.1.4-rc.1'
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: '已发布的 RC 标签，例如 v0.1.4-rc.1'
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  linux-amd64:
+    name: Linux amd64 Core 与 Edge 演练
+    environment: staging
+    runs-on: [self-hosted, visicore-staging-linux-amd64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_tag }}
+      - name: 执行 v0.1.2 到 RC 演练
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VISICORE_STAGING_ADMIN_USERNAME: ${{ secrets.VISICORE_STAGING_ADMIN_USERNAME }}
+          VISICORE_STAGING_ADMIN_PASSWORD: ${{ secrets.VISICORE_STAGING_ADMIN_PASSWORD }}
+          VISICORE_STAGING_RECOVERY_KEY: ${{ secrets.VISICORE_STAGING_RECOVERY_KEY }}
+        run: bash tools/staging/run-linux-rc-validation.sh '${{ inputs.candidate_tag }}' linux-amd64
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-linux-amd64
+          path: artifacts/staging/linux-amd64-result.json
+          if-no-files-found: error
+
+  linux-arm64:
+    name: Linux arm64 Core 与 Edge 演练
+    environment: staging
+    runs-on: [self-hosted, visicore-staging-linux-arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_tag }}
+      - name: 执行 v0.1.2 到 RC 演练
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VISICORE_STAGING_ADMIN_USERNAME: ${{ secrets.VISICORE_STAGING_ADMIN_USERNAME }}
+          VISICORE_STAGING_ADMIN_PASSWORD: ${{ secrets.VISICORE_STAGING_ADMIN_PASSWORD }}
+          VISICORE_STAGING_RECOVERY_KEY: ${{ secrets.VISICORE_STAGING_RECOVERY_KEY }}
+        run: bash tools/staging/run-linux-rc-validation.sh '${{ inputs.candidate_tag }}' linux-arm64
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-linux-arm64
+          path: artifacts/staging/linux-arm64-result.json
+          if-no-files-found: error
+
+  windows-x64:
+    name: Windows x64 Edge 与 Viewer 演练
+    needs: linux-amd64
+    environment: staging
+    runs-on: [self-hosted, visicore-staging-windows-x64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_tag }}
+      - name: 执行 Edge 与 Viewer 演练
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VISICORE_STAGING_ADMIN_USERNAME: ${{ secrets.VISICORE_STAGING_ADMIN_USERNAME }}
+          VISICORE_STAGING_ADMIN_PASSWORD: ${{ secrets.VISICORE_STAGING_ADMIN_PASSWORD }}
+        run: ./tools/staging/run-windows-rc-validation.ps1 -CandidateTag '${{ inputs.candidate_tag }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-windows-x64
+          path: artifacts/staging/windows-x64-result.json
+          if-no-files-found: error
+
+  evidence:
+    name: 汇总并签名预发布证据
+    needs: [linux-amd64, linux-arm64, windows-x64]
+    if: always()
+    environment: staging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_tag }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: staging-*
+          path: artifacts/staging
+          merge-multiple: true
+      - name: 汇总并签名预发布证据
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          EDGE_RELEASE_SIGNING_KEY_BASE64: ${{ secrets.EDGE_RELEASE_SIGNING_KEY_BASE64 }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-rc\.([1-9][0-9]*)$ ]]
+          test -n "$EDGE_RELEASE_SIGNING_KEY_BASE64"
+          candidate_commit="$(git rev-parse HEAD)"
+          for platform in linux-amd64 linux-arm64 windows-x64; do
+            test -s "artifacts/staging/${platform}-result.json"
+            jq -e --arg platform "$platform" --arg candidate "$CANDIDATE_TAG" --arg commit "$candidate_commit" '
+              .platform == $platform and .candidateTag == $candidate and .sourceCommit == $commit and .result == "passed"
+            ' "artifacts/staging/${platform}-result.json" > /dev/null
+          done
+          mkdir -p artifacts/evidence
+          jq -n \
+            --arg candidate_tag "$CANDIDATE_TAG" \
+            --arg source_commit "$candidate_commit" \
+            --arg workflow_run "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --slurpfile linux_amd64 artifacts/staging/linux-amd64-result.json \
+            --slurpfile linux_arm64 artifacts/staging/linux-arm64-result.json \
+            --slurpfile windows_x64 artifacts/staging/windows-x64-result.json \
+            '{schemaVersion:1,candidateTag:$candidate_tag,sourceCommit:$source_commit,workflowRun:$workflow_run,result:"passed",platforms:{linuxAmd64:$linux_amd64[0],linuxArm64:$linux_arm64[0],windowsX64:$windows_x64[0]},artifacts:{core:$linux_amd64[0].artifacts.core,edge:$linux_amd64[0].artifacts.edge,edgeWindows:$windows_x64[0].artifacts.edgeWindows,viewer:$windows_x64[0].artifacts.viewer}}' > artifacts/evidence/staging-evidence.json
+          jq -cS -j . artifacts/evidence/staging-evidence.json > artifacts/evidence/.canonical.json
+          mv artifacts/evidence/.canonical.json artifacts/evidence/staging-evidence.json
+          key_file="$(mktemp)"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s' "$EDGE_RELEASE_SIGNING_KEY_BASE64" | base64 --decode > "$key_file"
+          openssl dgst -sha256 -sign "$key_file" -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 artifacts/evidence/staging-evidence.json | base64 -w 0 > artifacts/evidence/staging-evidence.signature.base64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: staging-evidence
+          retention-days: 180
+          path: artifacts/evidence/

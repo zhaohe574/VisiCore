@@ -14,11 +14,17 @@ public sealed record ReleaseDescriptor(
     string MinimumCoreVersion,
     string MinimumEdgeVersion,
     string DatabaseMigrationMode,
+    string RollbackStrategy,
+    string ReleaseId,
+    string SourceCommit,
+    string? PromotedFrom,
     DateTimeOffset IssuedAt,
     DateTimeOffset ExpiresAt,
     string SigningPublicKeyId)
 {
     private static readonly Regex SemVer = new("^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$", RegexOptions.CultureInvariant);
+    private static readonly Regex CommitSha = new("^[A-Fa-f0-9]{40}$", RegexOptions.CultureInvariant);
+    private static readonly Regex ReleaseIdPattern = new("^[A-Za-z0-9._-]{1,128}$", RegexOptions.CultureInvariant);
     private static readonly HashSet<string> SupportedComponents = new(StringComparer.Ordinal)
     {
         "core", "edge-docker", "edge-windows"
@@ -39,7 +45,7 @@ public sealed record ReleaseDescriptor(
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object ||
                 !ReadString(root, "productVersion", out var productVersion) || !IsSemVer(productVersion) ||
-                !ReadString(root, "channel", out var channel) || channel is not "stable" or "preview" ||
+                !ReadString(root, "channel", out var channel) || channel is not "stable" and not "preview" and not "rc" ||
                 !ReadString(root, "minimumCoreVersion", out var minimumCoreVersion) || !IsSemVer(minimumCoreVersion) ||
                 !ReadString(root, "minimumEdgeVersion", out var minimumEdgeVersion) || !IsSemVer(minimumEdgeVersion) ||
                 !ReadString(root, "databaseMigrationMode", out var databaseMigrationMode) || databaseMigrationMode is not ("automatic-backup" or "none") ||
@@ -47,6 +53,59 @@ public sealed record ReleaseDescriptor(
                 !ReadDate(root, "expiresAt", out var expiresAt) ||
                 !ReadString(root, "signingPublicKeyId", out var signingPublicKeyId) || !IsKeyId(signingPublicKeyId) ||
                 !root.TryGetProperty("artifacts", out var artifactsElement) || artifactsElement.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            var rollbackStrategy = databaseMigrationMode == "automatic-backup" ? "backup-restore" : "image-only";
+            if (root.TryGetProperty("rollbackStrategy", out var rollbackStrategyElement))
+            {
+                if (rollbackStrategyElement.ValueKind != JsonValueKind.String ||
+                    (rollbackStrategy = rollbackStrategyElement.GetString() ?? string.Empty) is not ("image-only" or "backup-restore"))
+                {
+                    return false;
+                }
+            }
+            if ((databaseMigrationMode == "automatic-backup" && rollbackStrategy != "backup-restore") ||
+                (databaseMigrationMode == "none" && rollbackStrategy != "image-only"))
+            {
+                return false;
+            }
+
+            var releaseId = $"{productVersion}-{channel}";
+            if (root.TryGetProperty("releaseId", out var releaseIdElement))
+            {
+                if (releaseIdElement.ValueKind != JsonValueKind.String ||
+                    !ReleaseIdPattern.IsMatch(releaseId = releaseIdElement.GetString() ?? string.Empty))
+                {
+                    return false;
+                }
+            }
+
+            var sourceCommit = string.Empty;
+            if (root.TryGetProperty("sourceCommit", out var sourceCommitElement))
+            {
+                if (sourceCommitElement.ValueKind != JsonValueKind.String ||
+                    !CommitSha.IsMatch(sourceCommit = sourceCommitElement.GetString() ?? string.Empty))
+                {
+                    return false;
+                }
+                sourceCommit = sourceCommit.ToLowerInvariant();
+            }
+
+            string? promotedFrom = null;
+            if (root.TryGetProperty("promotedFrom", out var promotedFromElement))
+            {
+                if (promotedFromElement.ValueKind == JsonValueKind.String && ReleaseIdPattern.IsMatch(promotedFromElement.GetString() ?? string.Empty))
+                {
+                    promotedFrom = promotedFromElement.GetString();
+                }
+                else if (promotedFromElement.ValueKind != JsonValueKind.Null)
+                {
+                    return false;
+                }
+            }
+            if (channel == "stable" && promotedFrom is not null && string.IsNullOrEmpty(sourceCommit))
             {
                 return false;
             }
@@ -76,6 +135,10 @@ public sealed record ReleaseDescriptor(
                 minimumCoreVersion,
                 minimumEdgeVersion,
                 databaseMigrationMode,
+                rollbackStrategy,
+                releaseId,
+                sourceCommit,
+                promotedFrom,
                 issuedAt,
                 expiresAt,
                 signingPublicKeyId);

@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { Activity, AlertTriangle, BellRing, Boxes, ChevronRight, CircleUserRound, Cpu, Database, FileDown, KeyRound, LoaderCircle, LockKeyhole, LogOut, Menu, PlugZap, ShieldAlert, ShieldCheck, UsersRound, Wrench, X } from 'lucide-react'
+import { Activity, AlertTriangle, BellRing, Boxes, ChevronRight, CircleUserRound, Cpu, Database, FileDown, Gauge, KeyRound, LoaderCircle, LockKeyhole, LogOut, Menu, PlugZap, ShieldAlert, ShieldCheck, UsersRound, Wrench, X } from 'lucide-react'
 import { api, session, type SetupDefaults, type SetupRequest } from './api'
 import type { Section } from './types'
 import { Button, Input, Select } from './ui'
 import { AccessPage, AlertsPage, AssetsPage, AuditPage, ExportsPage, OverviewPage, PluginsPage } from './pages'
 import { BackupsPage, CredentialsPage, EdgeAgentsPage, HttpsConfigurationPage, PlatformOperationsPage } from './platform-pages'
 import { PublicOfflineDevicesPage } from './public-offline-devices'
+import { ObservabilityPage } from './features/observability/ObservabilityPage'
+import { sectionFromPath, sectionPath } from './routes'
 
 const navigation: Array<{ id: Section; label: string; icon: typeof Activity }> = [
   { id: 'overview', label: '运行总览', icon: Activity },
+  { id: 'observability', label: '运行指标', icon: Gauge },
   { id: 'credentials', label: '设备凭据', icon: KeyRound },
   { id: 'edgeAgents', label: '边缘节点', icon: Cpu },
   { id: 'operations', label: '平台运维', icon: Wrench },
@@ -39,7 +42,7 @@ export default function App() {
   const [setupDefaults, setSetupDefaults] = useState<SetupDefaults | null>(null)
   const [setupError, setSetupError] = useState('')
   const [setupRecoveryKey, setSetupRecoveryKey] = useState<string | null>(null)
-  const [active, setActive] = useState<Section>('overview')
+  const [active, setActive] = useState<Section>(() => sectionFromPath(window.location.pathname))
   const [canManageHttps, setCanManageHttps] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [toast, setToast] = useState<{ message: string; tone: 'good' | 'bad' } | null>(null)
@@ -53,6 +56,11 @@ export default function App() {
     const timer = window.setTimeout(() => setToast(null), 3600)
     return () => window.clearTimeout(timer)
   }, [toast])
+  useEffect(() => {
+    const onPopState = () => setActive(sectionFromPath(window.location.pathname))
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
   const loadSetupStatus = async () => {
     try {
       const status = await api.setupStatus()
@@ -90,7 +98,12 @@ export default function App() {
     return () => window.clearInterval(timer)
   }, [setupState])
   const notify = (message: string, tone: 'good' | 'bad' = 'good') => setToast({ message, tone })
-  const select = (section: Section) => { setActive(section); setMenuOpen(false) }
+  const select = (section: Section) => {
+    const nextPath = sectionPath(section)
+    if (window.location.pathname !== nextPath) window.history.pushState({}, '', nextPath)
+    setActive(section)
+    setMenuOpen(false)
+  }
   const adminPath = isAdminPath(window.location.pathname)
   const publicOfflinePath = isPublicOfflinePath(window.location.pathname)
   const logout = async () => {
@@ -106,6 +119,7 @@ export default function App() {
   if (passwordChangeRequired) return <RequiredPasswordChangePage onFinished={() => { session.clear(); setPasswordChangeRequired(false); setAuthenticated(false) }} />
   if (!authenticated) return <LoginPage onLogin={required => { setPasswordChangeRequired(required); setAuthenticated(!required) }} />
   const page = active === 'overview' ? <OverviewPage notify={notify} />
+    : active === 'observability' ? <ObservabilityPage />
     : active === 'credentials' ? <CredentialsPage notify={notify} />
       : active === 'edgeAgents' ? <EdgeAgentsPage notify={notify} />
         : active === 'operations' ? <PlatformOperationsPage notify={notify} />

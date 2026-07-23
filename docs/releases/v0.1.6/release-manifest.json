@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "releaseId": "v0.1.6",
+  "changeIds": ["release-delivery-packages"],
+  "documents": {
+    "proposal": "proposal.md",
+    "compatibility": "compatibility.md",
+    "tasks": "tasks.md",
+    "verification": "verification.md",
+    "evidence": "evidence.md",
+    "releaseNotes": "release-notes.md"
+  }
+}

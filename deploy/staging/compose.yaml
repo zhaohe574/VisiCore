@@ -1,0 +1,39 @@
+name: visicore-staging
+
+services:
+  visicore-core:
+    image: ${VISICORE_CORE_IMAGE:?必须使用 RC 发行描述中的不可变 Core digest}
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_HTTP_BIND_ADDRESS:-127.0.0.1}:${ADMIN_HTTP_PORT:-18080}:8080"
+      - "${ADMIN_HTTPS_BIND_ADDRESS:-127.0.0.1}:${ADMIN_HTTPS_PORT:-18443}:8443"
+    environment:
+      VISICORE_HTTPS_ENABLED: "false"
+      CoreUpgrade__Enabled: "true"
+      CoreUpgrade__ExchangeDirectory: /var/lib/visicore/upgrade-exchange
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - visicore-config:/var/lib/visicore/config
+      - api-exports:/var/lib/visicore/exports
+      - visicore-backups:/var/lib/visicore/backups
+      - ./data/upgrade-exchange:/var/lib/visicore/upgrade-exchange
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+volumes:
+  postgres-data:
+    name: ${VISICORE_POSTGRES_VOLUME}
+  visicore-config:
+    name: ${VISICORE_CONFIG_VOLUME}
+  api-exports:
+    name: ${VISICORE_EXPORTS_VOLUME}
+  visicore-backups:
+    name: ${VISICORE_BACKUPS_VOLUME}
+
+networks:
+  default:
+    name: ${VISICORE_NETWORK}

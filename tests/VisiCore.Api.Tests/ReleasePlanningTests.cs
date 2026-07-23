@@ -113,6 +113,102 @@ public sealed class ReleasePlanningTests
         Assert.Equal("upgrade_plan_not_startable", exception.FailureKind);
     }
 
+    [Fact(DisplayName = "后续批次必须在稳定后由运维人员明确确认")]
+    public async Task AwaitingBatchRequiresExplicitApproval()
+    {
+        await using var dbContext = CreateContext();
+        var plan = new UpgradePlanEntity
+        {
+            Id = Guid.NewGuid(),
+            ReleaseCatalogId = Guid.NewGuid(),
+            TargetScope = "edge",
+            Status = "running",
+            RequestedBy = "tester",
+            RequestedAt = DateTimeOffset.UtcNow
+        };
+        dbContext.UpgradePlans.Add(plan);
+        dbContext.UpgradeTargets.Add(new UpgradeTargetEntity
+        {
+            Id = Guid.NewGuid(),
+            UpgradePlanId = plan.Id,
+            TargetType = "edge",
+            Component = "edge-docker",
+            Batch = 2,
+            Status = "awaiting_approval",
+            ExpectedVersion = "0.1.1",
+            RequestedAt = DateTimeOffset.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+
+        var service = new UpgradePlanService(dbContext);
+        await service.ApproveBatchAsync(plan.Id, 2, CancellationToken.None);
+
+        var target = await dbContext.UpgradeTargets.SingleAsync(item => item.UpgradePlanId == plan.Id);
+        Assert.Equal("queued", target.Status);
+        Assert.NotNull(target.StartedAt);
+    }
+
+    [Fact(DisplayName = "候选发行描述必须记录来源提交和备份回滚策略")]
+    public void CandidateDescriptorCarriesPromotionMetadata()
+    {
+        var descriptorJson = CreateDescriptorJson("test-release-key", "rc", "v0.1.1-rc.1", new string('b', 40));
+
+        Assert.True(ReleaseDescriptor.TryParse(descriptorJson, out var descriptor, out var failureKind), failureKind);
+        Assert.Equal("rc", descriptor.Channel);
+        Assert.Equal("v0.1.1-rc.1", descriptor.ReleaseId);
+        Assert.Equal(new string('b', 40), descriptor.SourceCommit);
+        Assert.Equal("backup-restore", descriptor.RollbackStrategy);
+
+        var invalidRollback = descriptorJson.Replace("backup-restore", "image-only", StringComparison.Ordinal);
+        Assert.False(ReleaseDescriptor.TryParse(invalidRollback, out _, out _));
+
+        var stableDescriptorJson = CreateDescriptorJson("test-release-key", "stable", "v0.1.1", new string('b', 40), "v0.1.1-rc.1");
+        Assert.True(ReleaseDescriptor.TryParse(stableDescriptorJson, out var stableDescriptor, out failureKind), failureKind);
+        Assert.Equal("v0.1.1-rc.1", stableDescriptor.PromotedFrom);
+    }
+
+    [Fact(DisplayName = "发行治理记录必须匹配已验签描述、受限 GitHub 仓库和候选 staging 证据")]
+    public async Task ReleaseGovernanceRecordRequiresTrustedImmutableLinks()
+    {
+        await using var dbContext = CreateContext();
+        using var rsa = RSA.Create(2048);
+        const string keyId = "governance-key";
+        const string sourceCommit = "dddddddddddddddddddddddddddddddddddddddd";
+        var descriptorJson = CreateDescriptorJson(keyId, "rc", "v0.1.1-rc.1", sourceCommit);
+        Assert.True(ReleaseDescriptor.TryCanonicalizeJson(descriptorJson, out var canonicalDescriptorJson));
+        var signature = Convert.ToBase64String(rsa.SignData(Encoding.UTF8.GetBytes(canonicalDescriptorJson), HashAlgorithmName.SHA256, RSASignaturePadding.Pss));
+        var trust = Options.Create(new ReleaseTrustOptions
+        {
+            Keys = [new ReleaseTrustKeyOptions { KeyId = keyId, PublicKeyPem = rsa.ExportRSAPublicKeyPem() }]
+        });
+        var catalog = new ReleaseCatalogService(dbContext, trust);
+        var release = await catalog.RegisterAsync(descriptorJson, signature, keyId, CancellationToken.None);
+        var governance = new ReleaseGovernanceService(dbContext, Options.Create(new ReleaseGovernanceOptions()));
+
+        var invalid = await Assert.ThrowsAsync<ReleaseGovernanceException>(() => governance.RegisterAsync(
+            release.Id,
+            CreateGovernanceRequest(sourceCommit, "https://example.test/not-allowed"),
+            "tester",
+            CancellationToken.None));
+        Assert.Equal("dossier_url_invalid", invalid.FailureKind);
+
+        var record = await governance.RegisterAsync(
+            release.Id,
+            CreateGovernanceRequest(sourceCommit, $"https://github.com/zhaohe574/VisiCore/blob/{sourceCommit}/docs/releases/v0.1.1/evidence.md"),
+            "tester",
+            CancellationToken.None);
+        Assert.Equal(release.Id, record.ReleaseCatalogId);
+        Assert.True(ReleaseGovernanceService.TryReadChangeIds(record.ChangeIdsJson, out var changeIds));
+        Assert.Equal(["release-governance-center"], changeIds);
+
+        var duplicate = await Assert.ThrowsAsync<ReleaseGovernanceException>(() => governance.RegisterAsync(
+            release.Id,
+            CreateGovernanceRequest(sourceCommit, $"https://github.com/zhaohe574/VisiCore/blob/{sourceCommit}/docs/releases/v0.1.1/evidence.md"),
+            "tester",
+            CancellationToken.None));
+        Assert.Equal("governance_record_exists", duplicate.FailureKind);
+    }
+
     [Fact(DisplayName = "发行目录迁移必须与当前关系模型一致")]
     public async Task ReleaseCatalogMigrationMatchesCurrentModel()
     {
@@ -140,16 +236,20 @@ public sealed class ReleasePlanningTests
         .UseNpgsql("Host=127.0.0.1;Port=5432;Database=visicore;Username=postgres;Password=design-time-only")
         .Options);
 
-    private static string CreateDescriptorJson(string keyId)
+    private static string CreateDescriptorJson(string keyId, string channel = "stable", string? releaseId = null, string? sourceCommit = null, string? promotedFrom = null)
     {
         var digest = new string('a', 64);
         return JsonSerializer.Serialize(new
         {
             productVersion = "0.1.1",
-            channel = "stable",
+            channel,
+            releaseId = releaseId ?? "v0.1.1",
+            sourceCommit = sourceCommit ?? new string('c', 40),
+            promotedFrom,
             minimumCoreVersion = "0.1.0",
             minimumEdgeVersion = "0.1.0",
             databaseMigrationMode = "automatic-backup",
+            rollbackStrategy = "backup-restore",
             issuedAt = DateTimeOffset.UtcNow,
             expiresAt = DateTimeOffset.UtcNow.AddDays(30),
             signingPublicKeyId = keyId,
@@ -160,4 +260,15 @@ public sealed class ReleasePlanningTests
             }
         });
     }
+
+    private static RegisterReleaseGovernanceRecord CreateGovernanceRequest(string sourceCommit, string dossierUrl) => new(
+        ["release-governance-center"],
+        dossierUrl,
+        "https://github.com/zhaohe574/VisiCore/releases/tag/v0.1.1-rc.1",
+        "https://github.com/zhaohe574/VisiCore/actions/runs/123456",
+        "https://github.com/zhaohe574/VisiCore/releases/download/v0.1.1-rc.1/release-evidence.json",
+        "https://github.com/zhaohe574/VisiCore/releases/download/v0.1.1-rc.1/staging-evidence.json",
+        "https://github.com/zhaohe574/VisiCore/releases/download/v0.1.1-rc.1/visicore-release-v0.1.1-rc.1.spdx.json",
+        "https://github.com/zhaohe574/VisiCore/attestations/123456",
+        $"https://github.com/zhaohe574/VisiCore/blob/{sourceCommit}/docs/releases/v0.1.1/verification.md");
 }

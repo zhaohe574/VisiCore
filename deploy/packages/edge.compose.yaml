@@ -1,0 +1,59 @@
+name: visicore-edge-node
+
+services:
+  edge-node-init:
+    image: ${VISICORE_EDGE_NODE_IMAGE:?请使用部署包生成的 .env 文件}
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        prepare_directory() {
+          directory="$$1"
+          mode="$$2"
+          mkdir -p "$$directory"
+          if [ -z "$$(find "$$directory" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+            chown 1654:1654 "$$directory"
+            chmod "$$mode" "$$directory"
+          fi
+        }
+        prepare_directory /var/lib/visicore/edge-agent 0700
+        prepare_directory /var/lib/visicore/edge-agent/bootstrap 0700
+        prepare_directory /var/lib/visicore/edge-host-agent 0770
+        prepare_directory /var/run/visicore-config 0770
+    volumes:
+      - ${EDGE_STATE_DIRECTORY:?请配置固定宿主状态目录}:/var/lib/visicore/edge-agent
+      - ${EDGE_HOST_EXCHANGE_DIRECTORY:?请配置 Host Agent 交换目录}:/var/lib/visicore/edge-host-agent
+      - ${EDGE_HOST_CONFIG_DIRECTORY:?请配置 Host Agent 配置通道目录}:/var/run/visicore-config
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  edge-node:
+    image: ${VISICORE_EDGE_NODE_IMAGE:?请使用部署包生成的 .env 文件}
+    restart: unless-stopped
+    environment:
+      EdgeAgent__BootstrapFilePath: /var/lib/visicore/edge-agent/bootstrap/bootstrap.json
+      VISICORE_EDGE_AGENT_CONFIGURATION_PATH: /var/lib/visicore/edge-agent/edge-agent.json
+      EdgeAgent__HeartbeatIntervalSeconds: ${EDGE_HEARTBEAT_INTERVAL_SECONDS:-30}
+      VISICORE_CONFIG_SOCKET_PATH: /var/run/visicore-config/host-agent.sock
+      VISICORE_CONFIG_TOKEN_PATH: /var/run/visicore-config/access.token
+    ports:
+      - "127.0.0.1:${EDGE_CONFIG_PORT:-18081}:8080"
+    depends_on:
+      edge-node-init:
+        condition: service_completed_successfully
+    volumes:
+      - ${EDGE_STATE_DIRECTORY:?请配置固定宿主状态目录}:/var/lib/visicore/edge-agent
+      - ${EDGE_HOST_EXCHANGE_DIRECTORY:?请配置 Host Agent 交换目录}:/var/lib/visicore/edge-host-agent
+      - ${EDGE_HOST_CONFIG_DIRECTORY:?请配置 Host Agent 配置通道目录}:/var/run/visicore-config
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8081/readyz && wget -q -O /dev/null http://127.0.0.1:8080/api/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s

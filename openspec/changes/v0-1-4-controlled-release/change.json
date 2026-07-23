@@ -1,0 +1,8 @@
+{
+  "id": "v0-1-4-controlled-release",
+  "title": "v0.1.4 RC 到 stable 受控发行试点",
+  "status": "verified",
+  "releaseId": "v0.1.4",
+  "affectedAreas": ["release", "upgrade", "staging"],
+  "risk": "high"
+}

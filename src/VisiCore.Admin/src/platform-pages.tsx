@@ -1,29 +1,11 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { AlertCircle, BellRing, Cpu, Download, KeyRound, LockKeyhole, PackageCheck, PackagePlus, PauseCircle, Pencil, PlayCircle, Plus, Power, RefreshCw, RotateCw, Server, ShieldCheck, Trash2, Upload } from 'lucide-react'
+import { useEffect, useState, type FormEvent } from 'react'
+import { AlertCircle, BellRing, Cpu, Download, ExternalLink, KeyRound, LockKeyhole, PackageCheck, PackagePlus, PauseCircle, Pencil, PlayCircle, Plus, Power, RefreshCw, RotateCw, Server, ShieldCheck, Trash2, Upload } from 'lucide-react'
 import { api, formatTime } from './api'
-import type { AgentCredentialEnvelope, AgentPublicKeyContract, DeviceCredential, EdgeAgent, EdgeAgentEnrollment, EdgeRelease, PlatformBackup, PlatformDeployment, PlatformDiagnosticCheck, PlatformDiagnosticResult, PlatformOperationsOverview, PlatformServiceStatus, ReleaseCatalogEntry, UpgradePlan } from './types'
+import type { AgentCredentialEnvelope, AgentPublicKeyContract, DeviceCredential, EdgeAgent, EdgeAgentEnrollment, EdgeRelease, PlatformBackup, PlatformDeployment, PlatformDiagnosticCheck, PlatformDiagnosticResult, PlatformOperationsOverview, PlatformServiceStatus, ReleaseCatalogEntry, UpgradePlan, UpgradePlanTimeline } from './types'
 import { Badge, Button, Dialog, EmptyState, ErrorState, Field, Form, Input, LoadingState, PageHeader, Panel, Select, Textarea } from './ui'
+import { useResource } from './features/shared/use-resource'
 
 type Notify = (message: string, tone?: 'good' | 'bad') => void
-
-function useResource<T>(loader: () => Promise<T>, dependencies: readonly unknown[] = []) {
-  const [data, setData] = useState<T | null>(null)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try {
-      setData(await loader())
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '加载失败')
-    } finally {
-      setLoading(false)
-    }
-  }, dependencies) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { void refresh() }, [refresh])
-  return { data, error, loading, refresh }
-}
 
 function statusKey(value: string | number | null | undefined) {
   return String(value ?? '').trim().toLowerCase()
@@ -33,7 +15,7 @@ function statusLabel(value: string | number | null | undefined) {
   const labels: Record<string, string> = {
     active: '可用', enabled: '已启用', ready: '就绪', healthy: '健康', online: '在线', connected: '已连接',
     available: '未使用', used: '已使用', expired: '已过期', pending: '等待中', enrolling: '配对中', running: '执行中', deploying: '发布中', upgrading: '升级中',
-    completed: '已完成', succeeded: '已完成', applied: '已生效', draft: '待确认', queued: '已排队', dispatched: '已下发', verifying: '稳定观察', paused: '已暂停', reboot_required: '等待重启',
+    completed: '已完成', succeeded: '已完成', applied: '已生效', draft: '待确认', queued: '已排队', dispatched: '已下发', verifying: '稳定观察', awaiting_approval: '等待批次确认', approved: '已确认', preflight: '升级预检', switching: '切换制品', observing: '稳定观察', manual_intervention: '需要人工介入', paused: '已暂停', reboot_required: '等待重启',
     disabled: '已停用', inactive: '未启用', offline: '离线', failed: '失败', error: '异常', revoked: '已撤销', stopped: '已停止', rolled_back: '已回退',
     not_configured: '未配置', unlimited: '未限制', applying: '正在应用', awaiting_agent: '等待 Agent', unsupported: '不支持'
   }
@@ -45,7 +27,7 @@ function statusTone(value: string | number | null | undefined): 'good' | 'bad' |
   const key = statusKey(value)
   if (['active', 'enabled', 'ready', 'healthy', 'online', 'connected', 'completed', 'succeeded', 'applied', 'rolled_back'].includes(key)) return 'good'
   if (['disabled', 'inactive', 'offline', 'failed', 'error', 'revoked', 'stopped'].includes(key)) return 'bad'
-  if (['expired', 'pending', 'enrolling', 'running', 'deploying', 'upgrading', 'draft', 'queued', 'dispatched', 'verifying', 'paused', 'reboot_required', 'applying', 'awaiting_agent'].includes(key)) return 'warn'
+  if (['expired', 'pending', 'enrolling', 'running', 'deploying', 'upgrading', 'draft', 'queued', 'dispatched', 'verifying', 'awaiting_approval', 'approved', 'preflight', 'switching', 'observing', 'manual_intervention', 'paused', 'reboot_required', 'applying', 'awaiting_agent'].includes(key)) return 'warn'
   if (key === 'used') return 'info'
   return 'neutral'
 }
@@ -425,6 +407,9 @@ export function PlatformOperationsPage({ notify }: { notify: Notify }) {
   const [descriptorRegisterOpen, setDescriptorRegisterOpen] = useState(false)
   const [deploymentRelease, setDeploymentRelease] = useState<EdgeRelease | null>(null)
   const [upgradeRelease, setUpgradeRelease] = useState<ReleaseCatalogEntry | null>(null)
+  const [upgradeTimeline, setUpgradeTimeline] = useState<UpgradePlanTimeline | null>(null)
+  const [governanceRelease, setGovernanceRelease] = useState<ReleaseCatalogEntry | null>(null)
+  const [governanceRegistrationRelease, setGovernanceRegistrationRelease] = useState<ReleaseCatalogEntry | null>(null)
   const resource = useResource(async () => {
     const [overview, deploymentResponse, releaseResponse, catalogResponse, planResponse, agentResponse] = await Promise.all([
       api.get<PlatformOperationsOverview>('/api/v1/admin/platform-operations/overview'),
@@ -449,14 +434,29 @@ export function PlatformOperationsPage({ notify }: { notify: Notify }) {
     <PageHeader title="版本中心与平台运维" description="集中管理中心镜像、Docker Edge 和 Windows Edge 的签名版本、灰度计划与回退记录。" actions={<div className="page-header__actions"><Button variant="secondary" icon={<RefreshCw size={16} />} onClick={() => void resource.refresh()}>刷新状态</Button><Button variant="secondary" icon={<PackagePlus size={16} />} onClick={() => setRegisterOpen(true)}>登记旧版发行</Button><Button icon={<PackageCheck size={16} />} onClick={() => setDescriptorRegisterOpen(true)}>登记统一版本</Button></div>} />
     <div className="metric-grid operations-metrics"><article className="metric"><Server size={18} /><span>已登记节点</span><strong>{registeredAgents}</strong><small>Docker / Windows Edge Agent</small></article><article className="metric"><Cpu size={18} /><span>在线节点</span><strong>{onlineAgents}</strong><small>两分钟内有心跳</small></article><article className="metric metric--alert"><BellRing size={18} /><span>诊断异常</span><strong>{unhealthyAgents}</strong><small>待进一步处置</small></article><article className="metric"><PackagePlus size={18} /><span>待处理任务</span><strong>{activeDeployments}</strong><small>发布、诊断或连接预检</small></article></div>
     <div className="split-grid operations-grid"><Panel title="近期运维任务" actions={<Badge tone={services.length ? 'info' : 'neutral'}>{services.length}</Badge>}>{services.length === 0 ? <EmptyState title="暂无近期运维任务" description="诊断、预检和发布任务会在此汇总。" /> : <div className="compact-list">{services.map((service: PlatformServiceStatus, index) => <div className="compact-row" key={service.id ?? service.name ?? index}><span className={`status-dot status-dot--${statusTone(service.status) === 'good' ? 'good' : statusTone(service.status) === 'bad' ? 'bad' : 'neutral'}`} /><div><strong>{service.name ?? '未命名任务'}</strong><small>{service.detail ?? '未返回摘要'}</small></div><Badge tone={statusTone(service.status)}>{statusLabel(service.status)}</Badge></div>)}</div>}</Panel><Panel title="当前运行态" actions={<Badge tone={onlineAgents === registeredAgents && registeredAgents > 0 ? 'good' : registeredAgents ? 'warn' : 'neutral'}>{registeredAgents ? `${onlineAgents}/${registeredAgents} 在线` : '未上报'}</Badge>}><div className="operations-facts"><div><span>已登记节点</span><strong>{registeredAgents}</strong></div><div><span>在线节点</span><strong>{onlineAgents}</strong></div><div><span>待处理运维任务</span><strong>{activeDeployments}</strong></div></div></Panel></div>
-    <Panel className="table-panel" title="统一发行版本" actions={<Badge tone={catalog.length ? 'info' : 'neutral'}>{catalog.length}</Badge>}>{catalog.length === 0 ? <EmptyState title="尚未登记统一版本" description="登记由发行密钥签名的版本描述后，才能创建中心或边缘灰度计划。" /> : <div className="table-scroll"><table><thead><tr><th>版本</th><th>制品</th><th>状态</th><th>有效期</th><th /></tr></thead><tbody>{catalog.map(release => <tr key={release.id}><td><strong>v{release.productVersion}</strong><small>{release.signingPublicKeyId}</small></td><td>{release.artifacts.map(item => `${item.component}/${item.platform}-${item.architecture}`).join('，')}</td><td><Badge tone={statusTone(release.status)}>{statusLabel(release.status)}</Badge></td><td>{formatTime(release.expiresAt)}</td><td><Button variant="ghost" icon={<PlayCircle size={15} />} onClick={() => setUpgradeRelease(release)}>创建计划</Button></td></tr>)}</tbody></table></div>}</Panel>
-    <Panel className="table-panel" title="灰度升级计划" actions={<Badge tone={plans.length ? 'info' : 'neutral'}>{plans.length}</Badge>}>{plans.length === 0 ? <EmptyState title="暂无灰度升级计划" description="确认计划后将依次执行首台、10% 和其余节点批次。" /> : <div className="table-scroll"><table><thead><tr><th>范围</th><th>状态</th><th>目标</th><th>失败原因</th><th /></tr></thead><tbody>{plans.map(plan => <tr key={plan.id}><td>{plan.targetScope === 'core' ? '中心镜像' : '边缘节点'}</td><td><Badge tone={statusTone(plan.status)}>{statusLabel(plan.status)}</Badge></td><td>{plan.targets.map(target => `第 ${target.batch} 批：${statusLabel(target.status)}`).join('；')}</td><td>{plan.failureSummary ?? '—'}</td><td><div className="table-actions">{plan.status === 'draft' ? <Button variant="ghost" icon={<PlayCircle size={15} />} onClick={() => void startUpgradePlan(plan.id)}>启动</Button> : null}{plan.status === 'running' ? <Button variant="ghost" icon={<PauseCircle size={15} />} onClick={() => void pauseUpgradePlan(plan.id)}>暂停</Button> : null}</div></td></tr>)}</tbody></table></div>}</Panel>
+    <Panel className="table-panel" title="统一发行版本" actions={<Badge tone={catalog.length ? 'info' : 'neutral'}>{catalog.length}</Badge>}>{catalog.length === 0 ? <EmptyState title="尚未登记统一版本" description="登记由发行密钥签名的版本描述后，才能创建中心或边缘灰度计划。" /> : <div className="table-scroll"><table><thead><tr><th>版本</th><th>制品</th><th>状态</th><th>有效期</th><th /></tr></thead><tbody>{catalog.map(release => <tr key={release.id}><td><strong>{release.releaseId || `v${release.productVersion}`}</strong><small>{release.channel} · {release.rollbackStrategy}</small></td><td>{release.artifacts.map(item => `${item.component}/${item.platform}-${item.architecture}`).join('，')}</td><td><Badge tone={statusTone(release.status)}>{statusLabel(release.status)}</Badge></td><td>{formatTime(release.expiresAt)}</td><td><Button variant="ghost" icon={<PlayCircle size={15} />} onClick={() => setUpgradeRelease(release)}>创建计划</Button></td></tr>)}</tbody></table></div>}</Panel>
+    <Panel className="table-panel" title="发行治理" actions={<Badge tone={catalog.filter(item => item.governance).length ? 'good' : 'neutral'}>{catalog.filter(item => item.governance).length}/{catalog.length}</Badge>}>
+      {catalog.length === 0 ? <EmptyState title="尚未登记可治理版本" description="先登记由发行公钥签名的统一发行描述，再关联 GitHub Release 与验证证据。" /> : <div className="table-scroll"><table><thead><tr><th>版本</th><th>变更档案</th><th>来源提交</th><th>证据状态</th><th /></tr></thead><tbody>{catalog.map(release => {
+        const governance = release.governance
+        const canRegisterGovernance = /^[a-f0-9]{40}$/i.test(release.sourceCommit)
+        return <tr key={release.id}><td><strong>{release.releaseId}</strong><small>{release.channel === 'stable' ? `由 ${release.promotedFrom ?? '候选版本'} 提升` : '候选发行'}</small></td><td>{governance ? governance.changeIds.join('、') : '—'}</td><td><code>{governance?.sourceCommit ? governance.sourceCommit.slice(0, 12) : release.sourceCommit ? release.sourceCommit.slice(0, 12) : '—'}</code></td><td><Badge tone={governance ? 'good' : 'neutral'}>{governance ? '证据已关联' : '历史未治理'}</Badge></td><td><div className="table-actions">{governance ? <Button variant="ghost" icon={<ExternalLink size={15} />} onClick={() => setGovernanceRelease(release)}>查看档案</Button> : canRegisterGovernance ? <Button variant="ghost" icon={<PackageCheck size={15} />} onClick={() => setGovernanceRegistrationRelease(release)}>登记治理</Button> : null}</div></td></tr>
+      })}</tbody></table></div>}
+    </Panel>
+    <Panel className="table-panel" title="灰度升级计划" actions={<Badge tone={plans.length ? 'info' : 'neutral'}>{plans.length}</Badge>}>
+      {plans.length === 0 ? <EmptyState title="暂无灰度升级计划" description="确认计划后将依次执行首台、10% 和其余节点批次。" /> : <div className="table-scroll"><table><thead><tr><th>范围</th><th>状态</th><th>目标</th><th>失败原因</th><th /></tr></thead><tbody>{plans.map(plan => {
+        const approvalBatch = plan.targets.find(target => target.status === 'awaiting_approval')?.batch
+        return <tr key={plan.id}><td>{plan.targetScope === 'core' ? '中心镜像' : '边缘节点'}</td><td><Badge tone={statusTone(plan.status)}>{statusLabel(plan.status)}</Badge></td><td>{plan.targets.map(target => `第 ${target.batch} 批：${statusLabel(target.status)}`).join('；')}</td><td>{plan.failureSummary ?? '—'}</td><td><div className="table-actions">{plan.status === 'draft' ? <Button variant="ghost" icon={<PlayCircle size={15} />} onClick={() => void startUpgradePlan(plan.id)}>启动</Button> : null}{approvalBatch ? <Button variant="ghost" icon={<PlayCircle size={15} />} onClick={() => void approveUpgradeBatch(plan.id, approvalBatch)}>确认第 {approvalBatch} 批</Button> : null}{plan.status === 'running' ? <Button variant="ghost" icon={<PauseCircle size={15} />} onClick={() => void pauseUpgradePlan(plan.id)}>暂停</Button> : null}<Button variant="ghost" icon={<RefreshCw size={15} />} onClick={() => void viewUpgradeTimeline(plan.id)}>过程</Button></div></td></tr>
+      })}</tbody></table></div>}
+    </Panel>
     <Panel className="table-panel" title="发行版本" actions={<Badge tone={releases.length ? 'info' : 'neutral'}>{releases.length}</Badge>}>{releases.length === 0 ? <EmptyState title="尚未登记发行版本" description="登记包含 SHA-256 与离线签名的发行清单后才能向节点发布。" /> : <div className="table-scroll"><table><thead><tr><th>版本</th><th>目标</th><th>最小 Host Agent</th><th>有效期</th><th /></tr></thead><tbody>{releases.map(release => <tr key={release.id}><td><strong>{release.releaseId}</strong><small>{release.publicKeyId}</small></td><td>{release.targetPlatform} / {release.targetArchitecture}</td><td>{release.minimumHostAgentVersion}</td><td>{formatTime(release.expiresAt)}</td><td><Button variant="ghost" icon={<PackagePlus size={14} />} onClick={() => setDeploymentRelease(release)}>发布</Button></td></tr>)}</tbody></table></div>}</Panel>
     <Panel className="table-panel operation-readiness-panel" title="任务记录" actions={<Badge tone={deployments.length ? 'info' : 'neutral'}>{deployments.length}</Badge>}>{deployments.length === 0 ? <EmptyState title="暂无运维任务记录" description="Host Agent 完成诊断、预检或发布后将在此保留历史。" /> : <div className="table-scroll"><table><thead><tr><th>状态</th><th>任务类型</th><th>任务摘要</th><th>目标节点</th><th>提交时间</th><th>完成时间</th></tr></thead><tbody>{deployments.map(deployment => <tr key={deployment.id}><td><Badge tone={statusTone(deployment.status)}>{statusLabel(deployment.status)}</Badge></td><td>{deployment.operationType ?? deployment.version ?? '运维任务'}</td><td>{deployment.summary ?? deployment.detail ?? '—'}</td><td>{deployment.edgeAgentId?.slice(0, 8) ?? '中心服务'}</td><td>{formatTime(deployment.requestedAt ?? deployment.startedAt)}</td><td>{formatTime(deployment.completedAt)}</td></tr>)}</tbody></table></div>}</Panel>
     <ReleaseRegistrationDialog open={registerOpen} onClose={() => setRegisterOpen(false)} onSaved={async () => { setRegisterOpen(false); notify('发行版本已登记'); await resource.refresh() }} notify={notify} />
     <ReleaseDescriptorRegistrationDialog open={descriptorRegisterOpen} onClose={() => setDescriptorRegisterOpen(false)} onSaved={async () => { setDescriptorRegisterOpen(false); notify('统一版本已登记'); await resource.refresh() }} notify={notify} />
     <ReleaseDeploymentDialog release={deploymentRelease} agents={registeredEdgeAgents} onClose={() => setDeploymentRelease(null)} onSaved={async () => { setDeploymentRelease(null); notify('发布任务已进入队列'); await resource.refresh() }} notify={notify} />
     <UpgradePlanDialog release={upgradeRelease} agents={registeredEdgeAgents} onClose={() => setUpgradeRelease(null)} onSaved={async () => { setUpgradeRelease(null); notify('灰度升级计划已创建'); await resource.refresh() }} notify={notify} />
+    <UpgradeTimelineDialog value={upgradeTimeline} onClose={() => setUpgradeTimeline(null)} />
+    <ReleaseGovernanceDialog release={governanceRelease} onClose={() => setGovernanceRelease(null)} />
+    <ReleaseGovernanceRegistrationDialog release={governanceRegistrationRelease} onClose={() => setGovernanceRegistrationRelease(null)} onSaved={async () => { setGovernanceRegistrationRelease(null); notify('发行治理记录已登记'); await resource.refresh() }} notify={notify} />
   </>
 
   async function startUpgradePlan(id: string) {
@@ -465,6 +465,14 @@ export function PlatformOperationsPage({ notify }: { notify: Notify }) {
 
   async function pauseUpgradePlan(id: string) {
     try { await api.post(`/api/v1/admin/upgrade-plans/${id}/pause`, { reason: 'paused_by_operator' }); notify('升级计划已暂停'); await resource.refresh() } catch (reason) { notify(reason instanceof Error ? reason.message : '无法暂停升级计划', 'bad') }
+  }
+
+  async function approveUpgradeBatch(id: string, batch: number) {
+    try { await api.post(`/api/v1/admin/upgrade-plans/${id}/batches/${batch}/approve`); notify(`第 ${batch} 批已确认`); await resource.refresh() } catch (reason) { notify(reason instanceof Error ? reason.message : '无法确认升级批次', 'bad') }
+  }
+
+  async function viewUpgradeTimeline(id: string) {
+    try { setUpgradeTimeline(await api.get<UpgradePlanTimeline>(`/api/v1/admin/upgrade-plans/${id}/timeline`)) } catch (reason) { notify(reason instanceof Error ? reason.message : '无法读取升级过程', 'bad') }
   }
 }
 
@@ -555,6 +563,52 @@ function ReleaseDescriptorRegistrationDialog({ open, onClose, onSaved, notify }:
   return <Dialog open={open} title="登记统一版本" description="描述必须包含中心、Docker Edge 或 Windows Edge 的不可变制品引用，并由后台已配置的发行公钥验签。" onClose={onClose}><Form onSubmit={submit}><Field label="发行公钥标识"><Input name="publicKeyId" required /></Field><Field label="签名（Base64）"><Textarea name="signatureBase64" rows={3} required /></Field><Field label="统一发行描述"><Textarea name="descriptorJson" rows={12} required /></Field><div className="dialog__footer"><Button variant="secondary" type="button" onClick={onClose}>取消</Button><Button disabled={submitting}>{submitting ? '正在登记' : '登记版本'}</Button></div></Form></Dialog>
 }
 
+function ReleaseGovernanceRegistrationDialog({ release, onClose, onSaved, notify }: { release: ReleaseCatalogEntry | null; onClose: () => void; onSaved: () => Promise<void>; notify: Notify }) {
+  const [submitting, setSubmitting] = useState(false)
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!release) return
+    const form = new FormData(event.currentTarget)
+    const changeIds = String(form.get('changeIds') ?? '').split(/[\s,，]+/).map(item => item.trim()).filter(Boolean)
+    if (changeIds.length === 0) {
+      notify('至少填写一个 OpenSpec change ID。', 'bad')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await api.post(`/api/v1/admin/release-catalog/${release.id}/governance-records`, {
+        changeIds,
+        dossierUrl: form.get('dossierUrl'),
+        releaseUrl: form.get('releaseUrl'),
+        workflowRunUrl: form.get('workflowRunUrl'),
+        releaseEvidenceUrl: form.get('releaseEvidenceUrl'),
+        stagingEvidenceUrl: form.get('stagingEvidenceUrl'),
+        sbomUrl: form.get('sbomUrl'),
+        provenanceUrl: form.get('provenanceUrl'),
+        verificationUrl: form.get('verificationUrl')
+      })
+      await onSaved()
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : '发行治理记录登记失败', 'bad')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+  return <Dialog open={!!release} title={`登记发行治理 · ${release?.releaseId ?? ''}`} description="记录只保存受限 GitHub 外链并匹配已验签发行描述。不会下载证据、保存 GitHub 凭据或触发发布。登记成功后不可改写。" onClose={onClose}><Form key={release?.id ?? 'empty'} onSubmit={submit}><div className="form-grid"><Field label="OpenSpec change ID" hint="多个 ID 用逗号或换行分隔。"><Textarea name="changeIds" rows={2} placeholder="release-governance-center" required /></Field><Field label="发行档案链接" hint="必须是来源提交下的 docs/releases 文档。"><Input name="dossierUrl" type="url" placeholder={`https://github.com/.../blob/${release?.sourceCommit ?? '<commit>'}/docs/releases/.../evidence.md`} required /></Field><Field label="GitHub Release"><Input name="releaseUrl" type="url" placeholder="https://github.com/.../releases/tag/vX.Y.Z" required /></Field><Field label="Actions 运行"><Input name="workflowRunUrl" type="url" placeholder="https://github.com/.../actions/runs/123" required /></Field><Field label="发行证据"><Input name="releaseEvidenceUrl" type="url" placeholder="https://github.com/.../releases/download/vX.Y.Z/release-evidence.json" required /></Field><Field label="staging 证据"><Input name="stagingEvidenceUrl" type="url" placeholder="https://github.com/.../releases/download/vX.Y.Z-rc.1/staging-evidence.json" required /></Field><Field label="SBOM"><Input name="sbomUrl" type="url" placeholder="https://github.com/.../releases/download/vX.Y.Z/..." required /></Field><Field label="GitHub provenance"><Input name="provenanceUrl" type="url" placeholder="https://github.com/.../attestations/..." required /></Field><Field label="验证清单链接" hint="必须是来源提交下的 verification.md。"><Input name="verificationUrl" type="url" placeholder={`https://github.com/.../blob/${release?.sourceCommit ?? '<commit>'}/docs/releases/.../verification.md`} required /></Field></div><div className="dialog__footer"><Button variant="secondary" type="button" onClick={onClose}>取消</Button><Button disabled={submitting}>{submitting ? '正在登记' : '登记不可变记录'}</Button></div></Form></Dialog>
+}
+
+function GovernanceExternalLink({ href, label }: { href: string; label: string }) {
+  return <a href={href} target="_blank" rel="noopener noreferrer" className="table-actions"><ExternalLink size={15} />{label}</a>
+}
+
+function ReleaseGovernanceDialog({ release, onClose }: { release: ReleaseCatalogEntry | null; onClose: () => void }) {
+  const governance = release?.governance
+  return <Dialog open={!!release} title={`发行治理 · ${release?.releaseId ?? ''}`} description={governance ? `登记人：${governance.recordedBy}；登记时间：${formatTime(governance.recordedAt)}。所有链接将在 GitHub 新窗口中打开。` : ''} onClose={onClose}>
+    {governance ? <div className="compact-list"><div className="compact-row"><ShieldCheck size={16} /><div><strong>OpenSpec 变更</strong><small>{governance.changeIds.join('、')}</small></div><code>{governance.sourceCommit.slice(0, 12)}</code></div><div className="compact-row"><div><strong>发行档案</strong><small>来源提交中的不可变文档</small></div><GovernanceExternalLink href={governance.dossierUrl} label="打开" /></div><div className="compact-row"><div><strong>GitHub Release 与 Actions</strong><small>候选或正式发行及执行记录</small></div><div className="table-actions"><GovernanceExternalLink href={governance.releaseUrl} label="Release" /><GovernanceExternalLink href={governance.workflowRunUrl} label="Actions" /></div></div><div className="compact-row"><div><strong>制品与 staging 证据</strong><small>发行摘要、预发布演练和依赖清单</small></div><div className="table-actions"><GovernanceExternalLink href={governance.releaseEvidenceUrl} label="摘要" /><GovernanceExternalLink href={governance.stagingEvidenceUrl} label="staging" /><GovernanceExternalLink href={governance.sbomUrl} label="SBOM" /></div></div><div className="compact-row"><div><strong>Provenance 与验证</strong><small>GitHub 证明和发行验证清单</small></div><div className="table-actions"><GovernanceExternalLink href={governance.provenanceUrl} label="provenance" /><GovernanceExternalLink href={governance.verificationUrl} label="验证" /></div></div></div> : <EmptyState title="该版本尚无治理记录" description="历史版本仍可用于既有升级计划；登记治理记录不会触发新的发布或升级。" />}
+    <div className="dialog__footer"><Button onClick={onClose}>关闭</Button></div>
+  </Dialog>
+}
+
 function UpgradePlanDialog({ release, agents, onClose, onSaved, notify }: { release: ReleaseCatalogEntry | null; agents: EdgeAgent[]; onClose: () => void; onSaved: () => Promise<void>; notify: Notify }) {
   const [scope, setScope] = useState<'core' | 'edge'>('edge')
   const [submitting, setSubmitting] = useState(false)
@@ -582,6 +636,13 @@ function UpgradePlanDialog({ release, agents, onClose, onSaved, notify }: { rele
     }
   }
   return <Dialog open={!!release} title={`创建 v${release?.productVersion ?? ''} 灰度计划`} description="计划不会自动开始；确认后由管理员启动，失败节点将回退并暂停后续批次。" onClose={onClose}><Form onSubmit={submit}><Field label="升级范围"><Select value={scope} onChange={event => setScope(event.target.value as 'core' | 'edge')}><option value="edge">全部在线边缘节点</option><option value="core">中心镜像</option></Select></Field>{scope === 'edge' ? <Field label="目标节点"><div className="compact-list">{activeAgents.length === 0 ? <small>当前没有在线节点。</small> : activeAgents.map(agent => <div className="compact-row" key={agent.id}><Server size={15} /><div><strong>{agent.name}</strong><small>{agent.platform}/{agent.architecture ?? '未知架构'} · {agent.agentVersion ?? '未上报版本'}</small></div></div>)}</div></Field> : <Field label="维护影响"><small>中心将创建加密保护备份后重启并执行健康检查，期间管理和播放服务会短暂中断。</small></Field>}<div className="dialog__footer"><Button variant="secondary" type="button" onClick={onClose}>取消</Button><Button disabled={submitting}>{submitting ? '正在创建' : '创建待确认计划'}</Button></div></Form></Dialog>
+}
+
+function UpgradeTimelineDialog({ value, onClose }: { value: UpgradePlanTimeline | null; onClose: () => void }) {
+  return <Dialog open={!!value} title={`升级过程 · ${value?.releaseId ?? ''}`} description={value ? `${value.channel} 通道 · 回滚策略：${value.rollbackStrategy}` : ''} onClose={onClose}>
+    {value ? <div className="table-scroll"><table><thead><tr><th>批次</th><th>阶段</th><th>制品摘要</th><th>保护备份</th><th>失败码</th><th>更新时间</th></tr></thead><tbody>{value.items.map(item => <tr key={item.targetId}><td>第 {item.batch} 批</td><td><Badge tone={statusTone(item.phase)}>{statusLabel(item.phase)}</Badge></td><td><code>{item.artifactSha256 ? item.artifactSha256.slice(0, 16) : '—'}</code></td><td>{item.protectionBackupId?.slice(0, 8) ?? '—'}</td><td>{item.failureKind ?? '—'}</td><td>{formatTime(item.completedAt ?? item.stableSince ?? item.startedAt ?? item.requestedAt)}</td></tr>)}</tbody></table></div> : null}
+    <div className="dialog__footer"><Button onClick={onClose}>关闭</Button></div>
+  </Dialog>
 }
 
 function ReleaseDeploymentDialog({ release, agents, onClose, onSaved, notify }: { release: EdgeRelease | null; agents: EdgeAgent[]; onClose: () => void; onSaved: () => Promise<void>; notify: Notify }) {

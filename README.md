@@ -11,18 +11,20 @@
 
 ## 首次安装
 
-### 1. 启动核心容器
+### 1. 下载、校验并启动核心容器
 
-安装 Docker Desktop 并启用 Docker Compose v2 后，在仓库根目录执行：
+生产 Linux 新装使用 GitHub Release 的目标架构部署包。先从 Release 页面下载 `visicore-core-<版本>-linux-<架构>.tar.gz` 与 `checksums.txt` 到同一目录，再执行：
 
-```powershell
-Copy-Item .env.example .env
-# 如需局域网初始化，编辑 .env 中的 ADMIN_HTTP_BIND_ADDRESS；公网使用 HTTPS。
-docker compose up -d --build
-docker compose ps
+```bash
+asset=visicore-core-0.1.6-linux-amd64.tar.gz
+grep -F "  ${asset}" checksums.txt | sha256sum --check -
+tar -xzf "$asset"
+sudo ./visicore-core/install.sh install
 ```
 
-不需要创建 PostgreSQL 或 MediaMTX 容器，也不需要配置数据库密码。看到 `visicore-core` 为 `healthy` 后，访问 <http://127.0.0.1:8080/admin>。
+部署包会验证内嵌发行描述、自动安装 Docker Engine 与 Compose 插件，并以 Docker Hub SHA-256 digest 启动唯一的 `visicore-core` 容器。支持 Ubuntu 22.04/24.04、Debian 12、RHEL/Rocky/AlmaLinux 9 的 amd64、arm64。安装完成后访问 <http://127.0.0.1:8080/admin>；不需要创建 PostgreSQL 或 MediaMTX 容器，也不需要配置数据库密码。
+
+仓库根目录的 Compose 仍用于开发或受控源码部署：复制 `.env.example` 到 `.env`，固定 `VISICORE_CORE_IMAGE` 为已验证 digest 后执行 `docker compose up -d`。不要在生产环境使用可变标签或 `--build` 作为升级方式。
 
 ### 2. 全新安装
 
@@ -76,6 +78,8 @@ Compose 通过 `VISICORE_POSTGRES_VOLUME`、`VISICORE_CONFIG_VOLUME`、`VISICORE
 
 当前单容器方案只支持全新安装或从本平台加密备份恢复。此前依赖外置 PostgreSQL 或外置 MediaMTX 的部署不提供原地迁移；应保持旧部署，或另行完成数据迁移评估后再切换。
 
+生产升级由平台后台的受签名升级计划执行。Linux 部署包内的 `release-descriptor.json` 固定 Core 的 `artifactReference`（`visicore/visicore-core@sha256:...`）；不要以 `latest` 或可变版本标签作为受控升级基线。Core Host Agent 会记录同一个 digest，并在升级前创建保护备份。
+
 常规镜像升级：
 
 ```powershell
@@ -98,13 +102,33 @@ Invoke-WebRequest http://127.0.0.1:8080/readyz
 
 ## 边缘与查看端
 
-边缘节点支持 Linux Docker 与 Windows Service。使用一次性注册码完成配对；设备凭据只以 `AgentEnvelope` 加密信封下发并在节点内存中短暂解封。详细的服务权限、升级、回滚和恢复边界见 [边缘节点部署](docs/edge-node-deployment.md)。
+边缘节点支持 Linux Docker 部署包与 Windows Service。Linux Edge 包与 Core 包采用相同的“先下载、后校验、再解压安装”流程，且同样自动准备 Docker。使用一次性注册码完成配对；设备凭据只以 `AgentEnvelope` 加密信封下发并在节点内存中短暂解封。详细的服务权限、升级、回滚和恢复边界见 [边缘节点部署](docs/edge-node-deployment.md)。
 
-Windows 查看端使用 `visicore-viewer-v<版本>.msi`。查看端只请求中心签发的视频会话，不保存摄像头地址、账号或密码。
+Windows Release 文件为 `visicore-edge-<发行版本>-windows-amd64.msi` 和 `visicore-viewer-<发行版本>-windows-amd64.msi`。不提供 Windows Server Core 的 Core 首次安装器；查看端只请求中心签发的视频会话，不保存摄像头地址、账号或密码。
 
 ## 版本边界
 
 根目录 `VERSION` 只表示整套 GitHub Release 的发行批次。Core、Edge、Viewer 的版本分别位于 [`versions/core.txt`](versions/core.txt)、[`versions/edge.txt`](versions/edge.txt)、[`versions/viewer.txt`](versions/viewer.txt)，管理端版本位于 `src/VisiCore.Admin/package.json`。各端可以独立递增；构建、镜像标签和 Windows MSI 使用对应端的版本，不再要求与发行批次相同。
+
+重要变更必须先建立 [`openspec/changes`](openspec/changes) 档案，并在 `docs/releases/vX.Y.Z/release-manifest.json` 关联。GitHub Actions 是 RC 与 stable 的唯一执行者；管理端只展示已验签发行描述关联的 GitHub Release、Actions 与证据外链，不保存 GitHub 或 Docker Hub 凭据，也不提供发布按钮。
+
+## 受控发布与验证
+
+发布先推送 `vX.Y.Z-rc.N`，或从 GitHub Actions 手工选择已推送的 RC 标签。RC 会复用完整 CI，生成四个 Linux Docker 部署包、Windows Edge／Viewer MSI、双架构 Core／Edge OCI 制品、SPDX、CycloneDX、RSA-PSS 签名、Cosign 签名和 GitHub provenance，但不会更新 `latest`。公开上传文件严格限于 `checksums.txt`、四个 Linux 包和两个 Windows MSI；治理证据只保存于 Actions 工件。
+
+RC Release 在候选制品发布后自动调用 `Staging Validation`：固定的 Linux amd64、Linux arm64 与 Windows x64 Runner 分别从 staging 专用 v0.1.2 基线演练升级、故障暂停和恢复。经 RSA-PSS 签名的 `staging-evidence.json` 与其余治理证据保存在同一 Release 工作流的内部工件。也可按候选标签手工重跑该工作流。
+
+预发布演练通过后，只有 production 环境审批过的 `Promote RC Release` 工作流可以创建 `vX.Y.Z`。该工作流验证候选的提交、签名、MSI SHA-256、OCI digest 和完整 staging 证据，并只为同一 digest 创建正式标签与 `latest`，不会重建产品制品。每个跨组件版本的提案、兼容性矩阵、任务、验证与证据均位于 [`docs/releases`](docs/releases)。
+
+在治理 Runner 中下载 RC 公开资产和同一 Release 工作流的 `visicore-release-governance` 工件后，可运行：
+
+```bash
+bash tools/verify-release-promotion.sh ./公开资产目录 ./治理工件目录 v0.1.6-rc.1
+cosign verify visicore/visicore-core@sha256:<发行描述中的摘要> --certificate-identity-regexp 'https://github.com/.+/.github/workflows/' --certificate-oidc-issuer https://token.actions.githubusercontent.com
+gh attestation verify release-sha256.txt --repo <组织>/<仓库>
+```
+
+第一个命令验证摘要、规范化 JSON 与 RSA-PSS；后两个命令分别验证镜像签名和 GitHub provenance。独立预发布环境模板与演练矩阵见 [`deploy/staging`](deploy/staging/README.md)。
 
 ## 开发与质量
 

@@ -2,7 +2,7 @@ name: visicore
 
 services:
   visicore-core:
-    image: ${VISICORE_CORE_IMAGE:-visicore/visicore-core:0.1.2}
+    image: ${VISICORE_CORE_IMAGE:-visicore/visicore-core:0.1.6}
     build:
       context: .
       dockerfile: deploy/core/Dockerfile
@@ -18,6 +18,7 @@ services:
       VISICORE_TLS_PRIVATE_KEY_FILE: ${VISICORE_TLS_PRIVATE_KEY_FILE:-/run/visicore/tls/tls.key}
       CoreUpgrade__Enabled: ${VISICORE_CORE_UPGRADE_ENABLED:-false}
       CoreUpgrade__ExchangeDirectory: /var/lib/visicore/upgrade-exchange
+      ReleaseGovernance__RepositoryUrl: ${VISICORE_RELEASE_GOVERNANCE_REPOSITORY_URL:-https://github.com/zhaohe574/VisiCore}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - visicore-config:/var/lib/visicore/config

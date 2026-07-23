@@ -1,0 +1,8 @@
+{
+  "id": "release-delivery-packages",
+  "title": "Linux Docker 部署包与精简发行资产",
+  "status": "verified",
+  "releaseId": "v0.1.6",
+  "affectedAreas": ["release", "deployment", "edge", "documentation"],
+  "risk": "high"
+}

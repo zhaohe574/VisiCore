@@ -1,0 +1,23 @@
+# VisiCore 的 OpenSpec 只管理重要变更，不承担源码冻结或制品存档职责。
+schemaVersion: 1
+language: zh-CN
+changeDirectory: openspec/changes
+releaseDirectory: docs/releases
+requiredChangeFiles:
+  - proposal.md
+  - design.md
+  - tasks.md
+  - verification.md
+  - change.json
+importantChangePaths:
+  - src/VisiCore.Api/
+  - src/VisiCore.Core/
+  - src/VisiCore.Persistence/
+  - src/VisiCore.Edge
+  - src/VisiCore.Setup/
+  - src/VisiCore.Admin/
+  - deploy/
+  - compose.yaml
+  - .github/workflows/
+  - versions/
+  - VERSION

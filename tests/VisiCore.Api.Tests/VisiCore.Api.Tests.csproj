@@ -12,6 +12,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" Version="8.0.11" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
+    <!-- OpenTelemetry 1.17 依赖 DiagnosticSource 10；直接固定副本可避免 testhost 回退到 .NET 8 共享框架版本。 -->
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.0" PrivateAssets="all" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
       <PrivateAssets>all</PrivateAssets>

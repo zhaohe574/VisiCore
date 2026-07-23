@@ -346,6 +346,15 @@ export interface PlatformDeployment {
   detail?: string | null
 }
 
+export interface PlatformObservability {
+  activeStreamSessions: number
+  onlineEdgeAgents: number
+  staleEdgeAgents: number
+  upgradeFailures: Record<string, number>
+  backupResults: Record<string, number>
+  collectedAt: string
+}
+
 export interface PlatformBackup {
   id: Id
   kind: string
@@ -381,15 +390,38 @@ export interface ReleaseArtifact {
   minimumHostAgentVersion: string
 }
 
+export interface ReleaseGovernanceRecord {
+  id: Id
+  releaseCatalogId: Id
+  changeIds: string[]
+  sourceCommit: string
+  dossierUrl: string
+  releaseUrl: string
+  workflowRunUrl: string
+  releaseEvidenceUrl: string
+  stagingEvidenceUrl: string
+  sbomUrl: string
+  provenanceUrl: string
+  verificationUrl: string
+  recordedBy: string
+  recordedAt: string
+}
+
 export interface ReleaseCatalogEntry {
   id: Id
   productVersion: string
   channel: string
+  releaseId: string
+  sourceCommit: string
+  promotedFrom?: string | null
+  databaseMigrationMode: string
+  rollbackStrategy: string
   status: string
   signingPublicKeyId: string
   publishedAt: string
   expiresAt: string
   artifacts: ReleaseArtifact[]
+  governance?: ReleaseGovernanceRecord | null
 }
 
 export interface UpgradeTarget {
@@ -419,6 +451,29 @@ export interface UpgradePlan {
   startedAt?: string | null
   completedAt?: string | null
   targets: UpgradeTarget[]
+}
+
+export interface UpgradeTimelineItem {
+  targetId: Id
+  edgeAgentId?: Id | null
+  batch: number
+  phase: string
+  artifactReference?: string | null
+  artifactSha256?: string | null
+  protectionBackupId?: Id | null
+  failureKind?: string | null
+  requestedAt: string
+  startedAt?: string | null
+  stableSince?: string | null
+  completedAt?: string | null
+}
+
+export interface UpgradePlanTimeline {
+  planId: Id
+  releaseId: string
+  channel: string
+  rollbackStrategy: string
+  items: UpgradeTimelineItem[]
 }
 
 export interface NotificationChannel {
@@ -532,4 +587,4 @@ export interface ExportArtifact {
   expiresAt: string
 }
 
-export type Section = 'overview' | 'credentials' | 'edgeAgents' | 'operations' | 'backups' | 'https' | 'assets' | 'plugins' | 'access' | 'workers' | 'exports' | 'alerts' | 'audit'
+export type Section = 'overview' | 'observability' | 'credentials' | 'edgeAgents' | 'operations' | 'backups' | 'https' | 'assets' | 'plugins' | 'access' | 'workers' | 'exports' | 'alerts' | 'audit'

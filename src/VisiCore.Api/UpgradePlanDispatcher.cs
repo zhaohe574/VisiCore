@@ -90,16 +90,30 @@ public sealed class UpgradePlanDispatcher(
             {
                 var receipt = await exchange.TryReadReceiptAsync(target.PlatformOperationId ?? Guid.Empty, cancellationToken);
                 if (receipt is null) continue;
+                var operation = target.PlatformOperationId is null
+                    ? null
+                    : await dbContext.PlatformOperations.SingleOrDefaultAsync(item => item.Id == target.PlatformOperationId, cancellationToken);
                 if (!receipt.Succeeded)
                 {
                     target.Status = "failed";
                     target.FailureSummary = receipt.FailureKind;
                     target.CompletedAt = receipt.CompletedAt;
+                    if (operation is not null)
+                    {
+                        operation.Status = "failed";
+                        operation.Summary = $"中心升级失败：{receipt.FailureKind ?? "core_upgrade_failed"}";
+                        operation.CompletedAt = receipt.CompletedAt;
+                    }
                     await PausePlanAsync(plan, receipt.FailureKind ?? "core_upgrade_failed", dbContext, cancellationToken);
                     continue;
                 }
                 target.Status = "verifying";
                 target.StableSince ??= receipt.CompletedAt;
+                if (operation is not null)
+                {
+                    operation.Status = "verifying";
+                    operation.Summary = "中心升级完成，正在稳定观察";
+                }
             }
             else
             {
@@ -145,6 +159,16 @@ public sealed class UpgradePlanDispatcher(
         {
             target.Status = "succeeded";
             target.CompletedAt = DateTimeOffset.UtcNow;
+            if (target.PlatformOperationId is { } operationId)
+            {
+                var operation = await dbContext.PlatformOperations.SingleOrDefaultAsync(item => item.Id == operationId, cancellationToken);
+                if (operation is not null)
+                {
+                    operation.Status = "succeeded";
+                    operation.Summary = "升级稳定观察完成";
+                    operation.CompletedAt = target.CompletedAt;
+                }
+            }
         }
     }
 
@@ -167,10 +191,29 @@ public sealed class UpgradePlanDispatcher(
             await PausePlanAsync(plan, target.FailureSummary, dbContext, cancellationToken);
             return;
         }
+        PlatformOperationEntity? operation = null;
         try
         {
             var backup = await backupService.CreateAsync("upgrade-protection", cancellationToken);
             var operationId = Guid.NewGuid();
+            operation = new PlatformOperationEntity
+            {
+                Id = operationId,
+                OperationType = "core-upgrade",
+                Status = "preflight",
+                Summary = $"中心升级预检：{descriptor.ReleaseId}",
+                DetailsJson = JsonSerializer.Serialize(new
+                {
+                    releaseId = descriptor.ReleaseId,
+                    channel = descriptor.Channel,
+                    artifactReference = artifact.ArtifactReference,
+                    artifactSha256 = artifact.ArtifactSha256,
+                    protectionBackupId = backup.Id,
+                    rollbackStrategy = descriptor.RollbackStrategy
+                }),
+                RequestedAt = DateTimeOffset.UtcNow
+            };
+            dbContext.PlatformOperations.Add(operation);
             await exchange.SubmitAsync(new CoreUpgradeMessage(
                 operationId,
                 descriptor.ProductVersion,
@@ -183,11 +226,19 @@ public sealed class UpgradePlanDispatcher(
             target.PlatformOperationId = operationId;
             target.Status = "dispatched";
             target.StartedAt = DateTimeOffset.UtcNow;
+            operation.Status = "dispatched";
+            operation.Summary = "中心升级已下发，等待 Host Agent 切换制品";
         }
         catch (CoreUpgradeExchangeException exception)
         {
             target.Status = "failed";
             target.FailureSummary = exception.FailureKind;
+            if (operation is not null)
+            {
+                operation.Status = "failed";
+                operation.Summary = $"中心升级预检失败：{exception.FailureKind}";
+                operation.CompletedAt = DateTimeOffset.UtcNow;
+            }
             await PausePlanAsync(plan, exception.FailureKind, dbContext, cancellationToken);
         }
     }
@@ -213,7 +264,9 @@ public sealed class UpgradePlanDispatcher(
             Summary = $"受控升级到 {descriptor.ProductVersion}",
             DetailsJson = JsonSerializer.Serialize(new
             {
-                releaseId = descriptor.ProductVersion,
+                releaseId = descriptor.ReleaseId,
+                channel = descriptor.Channel,
+                rollbackStrategy = descriptor.RollbackStrategy,
                 releaseDescriptorJson = release.DescriptorJson,
                 signatureBase64 = release.SignatureBase64,
                 publicKeyId = release.SigningPublicKeyId,
@@ -242,7 +295,7 @@ public sealed class UpgradePlanDispatcher(
         }
         await dbContext.UpgradeTargets
             .Where(item => item.UpgradePlanId == plan.Id && item.Batch == nextBatch && item.Status == "pending")
-            .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.Status, "queued").SetProperty(item => item.StartedAt, DateTimeOffset.UtcNow), cancellationToken);
+            .ExecuteUpdateAsync(setters => setters.SetProperty(item => item.Status, "awaiting_approval"), cancellationToken);
     }
 
     private static async Task PausePlanAsync(UpgradePlanEntity plan, string failureKind, PlatformDbContext dbContext, CancellationToken cancellationToken)

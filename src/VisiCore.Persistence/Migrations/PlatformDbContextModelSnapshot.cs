@@ -1268,6 +1268,82 @@ namespace VisiCore.Persistence.Migrations
                     b.ToTable("release_catalog", (string)null);
                 });
 
+            modelBuilder.Entity("VisiCore.Persistence.ReleaseGovernanceRecordEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ChangeIdsJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("DossierUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<string>("ProvenanceUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<DateTimeOffset>("RecordedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RecordedBy")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<Guid>("ReleaseCatalogId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReleaseEvidenceUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<string>("ReleaseUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<string>("SbomUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<string>("SourceCommit")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<string>("StagingEvidenceUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<string>("VerificationUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.Property<string>("WorkflowRunUrl")
+                        .IsRequired()
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RecordedAt");
+
+                    b.HasIndex("ReleaseCatalogId")
+                        .IsUnique();
+
+                    b.ToTable("release_governance_records", (string)null);
+                });
+
             modelBuilder.Entity("VisiCore.Persistence.UpgradePlanEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2360,6 +2436,15 @@ namespace VisiCore.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("EdgeAgentId")
                         .OnDelete(DeleteBehavior.SetNull);
+                });
+
+            modelBuilder.Entity("VisiCore.Persistence.ReleaseGovernanceRecordEntity", b =>
+                {
+                    b.HasOne("VisiCore.Persistence.ReleaseCatalogEntity", null)
+                        .WithMany()
+                        .HasForeignKey("ReleaseCatalogId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("VisiCore.Persistence.UpgradePlanEntity", b =>

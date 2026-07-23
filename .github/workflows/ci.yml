@@ -1,6 +1,12 @@
 name: CI
 
 on:
+  workflow_call:
+    inputs:
+      ref:
+        description: '需要验证的 Git ref；留空时验证触发当前工作流的提交。'
+        required: false
+        type: string
   pull_request:
   push:
     branches: [main]
@@ -9,12 +15,49 @@ permissions:
   contents: read
 
 jobs:
+  openspec-pull-request:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/verify-openspec-governance.py --pr-event "$GITHUB_EVENT_PATH" --base-sha "${{ github.event.pull_request.base.sha }}"
+
+  openspec-release:
+    if: inputs.ref != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tools/verify-openspec-governance.py --release "${{ inputs.ref }}"
+
+  openspec-self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python tests/openspec_governance_tests.py
+      - run: python tools/verify-openspec-governance.py --release v0.1.4
+
   dco:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
       - run: bash tools/verify-dco.sh "${{ github.event.pull_request.base.sha }}"
 
@@ -23,6 +66,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref || github.sha }}
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
         env:
@@ -33,12 +77,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/dependency-review-action@v4
 
   windows-validation:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
@@ -53,6 +101,9 @@ jobs:
       - run: dotnet restore tests/VisiCore.Api.Tests/VisiCore.Api.Tests.csproj
       - run: dotnet restore tests/VisiCore.CoreHostAgent.Tests/VisiCore.CoreHostAgent.Tests.csproj
       - run: dotnet restore tests/VisiCore.OnvifEdgeWorker.Tests/VisiCore.OnvifEdgeWorker.Tests.csproj
+      - run: dotnet restore tests/VisiCore.StreamGateway.Tests/VisiCore.StreamGateway.Tests.csproj
+      - run: dotnet restore tests/VisiCore.DeviceWorker.Tests/VisiCore.DeviceWorker.Tests.csproj
+      - run: dotnet restore tests/VisiCore.NotificationWorker.Tests/VisiCore.NotificationWorker.Tests.csproj
       - run: dotnet build src/VisiCore.Api/VisiCore.Api.csproj --configuration Release --no-restore
       - run: dotnet build src/VisiCore.Setup/VisiCore.Setup.csproj --configuration Release --no-restore
       - run: dotnet build src/VisiCore.EdgeAgent/VisiCore.EdgeAgent.csproj --configuration Release --no-restore
@@ -64,17 +115,35 @@ jobs:
       - run: dotnet test tests/VisiCore.EdgeAgent.Tests/VisiCore.EdgeAgent.Tests.csproj --configuration Release --no-restore
       - run: dotnet test tests/VisiCore.CoreHostAgent.Tests/VisiCore.CoreHostAgent.Tests.csproj --configuration Release --no-restore
       - run: dotnet test tests/VisiCore.OnvifEdgeWorker.Tests/VisiCore.OnvifEdgeWorker.Tests.csproj --configuration Release
+      - run: dotnet test tests/VisiCore.StreamGateway.Tests/VisiCore.StreamGateway.Tests.csproj --configuration Release --no-restore
+      - run: dotnet test tests/VisiCore.DeviceWorker.Tests/VisiCore.DeviceWorker.Tests.csproj --configuration Release --no-restore
+      - run: dotnet test tests/VisiCore.NotificationWorker.Tests/VisiCore.NotificationWorker.Tests.csproj --configuration Release --no-restore
 
   core-container-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - run: bash tools/core-container-smoke.sh
+
+  linux-deployment-packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: 校验部署包脚本与结构
+        run: |
+          bash -n deploy/packages/install-core.sh deploy/packages/install-edge.sh tools/build-linux-deployment-packages.sh tools/verify-release-promotion.sh tools/staging/run-linux-rc-validation.sh
+          python3 tests/linux_deployment_packages_tests.py
 
   windows-edge-package:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
@@ -106,6 +175,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: jurplel/install-qt-action@v4
         with:
           version: '6.10.3'
@@ -128,6 +199,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
@@ -194,6 +267,8 @@ jobs:
         working-directory: src/VisiCore.Admin
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -202,3 +277,31 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+
+  admin-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/VisiCore.Admin/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm --prefix src/VisiCore.Admin ci
+      - run: npm --prefix src/VisiCore.Admin run build
+      - run: python -m pip install playwright==1.52.0
+      - run: python -m playwright install --with-deps chromium
+      - run: |
+          npm --prefix src/VisiCore.Admin run dev -- --host 127.0.0.1 > "$RUNNER_TEMP/visicore-admin-vite.log" 2>&1 &
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:5173/admin > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/visicore-admin-vite.log"
+          exit 1
+      - run: python tests/admin-ui-smoke.py

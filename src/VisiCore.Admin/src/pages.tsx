@@ -1,8 +1,9 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Fragment, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { AlertCircle, BellRing, Camera, Cpu, Download, FileDown, KeyRound, PackagePlus, Pencil, Plus, Power, RefreshCw, RotateCw, Send, Server, ShieldCheck, Trash2, UserRoundCog, X } from 'lucide-react'
 import { api, connectivityLabel, formatTime } from './api'
 import type { AlertIncident, AlertRule, AuditLog, Camera as CameraType, DeadLetter, DeviceCredential, DevicePlugin, DeviceWorker, DeviceWorkerOperationStatus, EdgeAgent, ExportCamera, Id, NotificationChannel, NotificationDelivery, PlaybackExport, RecorderResponse, Region, Role, User } from './types'
 import { Badge, Button, Dialog, EmptyState, ErrorState, Field, Form, Input, LoadingState, PageHeader, Panel, Select, StatusBadge, Textarea } from './ui'
+import { useResource } from './features/shared/use-resource'
 
 type Notify = (message: string, tone?: 'good' | 'bad') => void
 
@@ -22,19 +23,6 @@ function systemPermissionLabels(value: number) {
 
 function readSystemPermissions(form: FormData) {
   return form.getAll('systemPermissions').reduce((value, current) => value | Number(current), 0)
-}
-
-function useResource<T>(loader: () => Promise<T>, dependencies: readonly unknown[] = []) {
-  const [data, setData] = useState<T | null>(null)
-  const [error, setError] = useState('')
-  const [loading, setLoading] = useState(true)
-  const refresh = useCallback(async () => {
-    setLoading(true)
-    setError('')
-    try { setData(await loader()) } catch (reason) { setError(reason instanceof Error ? reason.message : '加载失败') } finally { setLoading(false) }
-  }, dependencies) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { void refresh() }, [refresh])
-  return { data, error, loading, refresh }
 }
 
 function connectivityTone(value: number | string): 'good' | 'bad' | 'warn' | 'neutral' {

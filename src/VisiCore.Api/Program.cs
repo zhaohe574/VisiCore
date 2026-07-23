@@ -15,6 +15,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OpenTelemetry.Exporter;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using VisiCore.Api;
 using VisiCore.Core;
 using VisiCore.NotificationWorker;
@@ -35,23 +40,6 @@ static string? ReadCommandLineOption(string[] arguments, string optionName)
         }
     }
     return null;
-}
-
-static bool TryGetBrowserOrigin(HttpRequest request, out Uri browserOrigin)
-{
-    browserOrigin = null!;
-    var suppliedOrigin = request.Headers.Origin.ToString();
-    if (string.IsNullOrWhiteSpace(suppliedOrigin) ||
-        !Uri.TryCreate(suppliedOrigin, UriKind.Absolute, out var parsedOrigin) ||
-        !string.IsNullOrEmpty(parsedOrigin.UserInfo) ||
-        !string.IsNullOrEmpty(parsedOrigin.Query) ||
-        !string.IsNullOrEmpty(parsedOrigin.Fragment))
-    {
-        return false;
-    }
-
-    browserOrigin = new Uri(parsedOrigin.GetLeftPart(UriPartial.Authority) + "/", UriKind.Absolute);
-    return true;
 }
 
 var configuredWebRootPath = ReadCommandLineOption(args, "--webroot") ?? Environment.GetEnvironmentVariable("WebRootPath");
@@ -93,12 +81,46 @@ else
     builder.Logging.AddDebug();
 }
 var connectionString = builder.Configuration.GetConnectionString("Platform");
+var otlpEndpoint = builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"];
+builder.Services.AddSingleton<PlatformTelemetry>();
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(PlatformTelemetry.ServiceName, serviceVersion: RuntimeVersion.ProductVersion))
+    .WithTracing(tracing =>
+    {
+        tracing.AddAspNetCoreInstrumentation();
+        tracing.AddSource(PlatformTelemetry.ActivitySourceName);
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+        {
+            tracing.AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint));
+        }
+    })
+    .WithMetrics(metrics =>
+    {
+        metrics.AddAspNetCoreInstrumentation();
+        metrics.AddRuntimeInstrumentation();
+        metrics.AddMeter(PlatformTelemetry.MeterName);
+        if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+        {
+            metrics.AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint));
+        }
+    });
+if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+{
+    builder.Logging.AddOpenTelemetry(logging =>
+    {
+        logging.IncludeFormattedMessage = true;
+        logging.IncludeScopes = true;
+        logging.ParseStateValues = true;
+        logging.AddOtlpExporter(options => options.Endpoint = new Uri(otlpEndpoint));
+    });
+}
 var healthChecks = builder.Services.AddHealthChecks();
 var embeddedRuntimeSettings = EmbeddedRuntimeSettings.FromEnvironment();
 builder.Services.AddSingleton(embeddedRuntimeSettings);
 builder.Services.AddSingleton(new InstallationService(runtimeConfigurationPath, embeddedRuntimeSettings));
 builder.Services.Configure<PlatformBackupOptions>(builder.Configuration.GetSection("PlatformBackup"));
 builder.Services.Configure<ReleaseTrustOptions>(builder.Configuration.GetSection("ReleaseTrust"));
+builder.Services.Configure<ReleaseGovernanceOptions>(builder.Configuration.GetSection("ReleaseGovernance"));
 var coreUpgradeOptions = builder.Configuration.GetSection("CoreUpgrade").Get<CoreUpgradeOptions>() ?? new CoreUpgradeOptions();
 builder.Services.AddSingleton(coreUpgradeOptions);
 builder.Services.AddSingleton<CoreUpgradeExchange>();
@@ -218,6 +240,7 @@ else
     builder.Services.AddScoped<PlatformAccessService>();
     builder.Services.AddScoped<AuditService>();
     builder.Services.AddScoped<ReleaseCatalogService>();
+    builder.Services.AddScoped<ReleaseGovernanceService>();
     builder.Services.AddScoped<UpgradePlanService>();
     builder.Services.AddScoped<DevicePluginService>();
     builder.Services.Configure<DevicePluginTrustOptions>(builder.Configuration.GetSection("DevicePlugins"));
@@ -256,6 +279,7 @@ else
     builder.Services.AddHostedService<RecorderClockObservationCleanupService>();
     builder.Services.AddHostedService<PlatformBackupScheduler>();
     builder.Services.AddHostedService<UpgradePlanDispatcher>();
+    builder.Services.AddHostedService<PlatformTelemetryCollector>();
     builder.Services
         .AddAuthentication(PlatformSessionAuthenticationHandler.SchemeName)
         .AddScheme<AuthenticationSchemeOptions, PlatformSessionAuthenticationHandler>(PlatformSessionAuthenticationHandler.SchemeName, _ => { });
@@ -288,15 +312,9 @@ app.UseExceptionHandler(exceptionApp =>
         var statusCode = feature?.Error is BadHttpRequestException
             ? StatusCodes.Status400BadRequest
             : StatusCodes.Status500InternalServerError;
-        context.Response.StatusCode = statusCode;
-        context.Response.ContentType = "application/problem+json";
         var title = statusCode == StatusCodes.Status400BadRequest ? "请求格式无效" : "请求处理失败";
-        await context.Response.WriteAsync(JsonSerializer.Serialize(new
-        {
-            type = "about:blank",
-            title,
-            status = statusCode
-        }));
+        var code = statusCode == StatusCodes.Status400BadRequest ? "request_invalid" : "internal_error";
+        await ApiProblems.WriteAsync(context, statusCode, title, code);
     });
 });
 if (Directory.Exists(app.Environment.WebRootPath))
@@ -320,111 +338,7 @@ if (Directory.Exists(app.Environment.WebRootPath))
 }
 app.MapHealthChecks("/healthz", new HealthCheckOptions { Predicate = _ => false });
 app.MapHealthChecks("/readyz", new HealthCheckOptions { Predicate = _ => true });
-app.MapGet("/api/v1/system/version", () => Results.Ok(new
-{
-    version = RuntimeVersion.ProductVersion,
-    runtime = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
-    architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()
-}));
-
-app.MapGet("/api/v1/setup/status", (InstallationService installationService) =>
-{
-    var status = installationService.GetStatus();
-    return Results.Ok(new
-    {
-        state = status.State.ToString().ToLowerInvariant(),
-        defaults = status.Defaults
-    });
-});
-
-app.MapPost("/api/v1/setup/initialize", async (
-    InstallationRequest request,
-    HttpContext context,
-    InstallationService installationService,
-    IHostApplicationLifetime applicationLifetime,
-    ILoggerFactory loggerFactory,
-    CancellationToken cancellationToken) =>
-{
-    if (!TryGetBrowserOrigin(context.Request, out var browserOrigin))
-    {
-        return Results.Problem(
-            statusCode: StatusCodes.Status400BadRequest,
-            title: "初始化来源无效",
-            detail: "请从当前视枢初始化页面提交配置，不要通过跨域请求调用此接口。");
-    }
-
-    try
-    {
-        var installation = await installationService.InitializeAsync(request, browserOrigin, cancellationToken);
-        _ = Task.Run(async () =>
-        {
-            await Task.Delay(TimeSpan.FromSeconds(1));
-            applicationLifetime.StopApplication();
-        });
-        return Results.Accepted("/api/v1/setup/status", new { state = "restarting", recoveryKey = installation.RecoveryKey });
-    }
-    catch (InstallationConflictException exception)
-    {
-        return Results.Problem(
-            statusCode: StatusCodes.Status409Conflict,
-            title: "初始化已拒绝",
-            detail: exception.Message);
-    }
-    catch (InstallationValidationException exception)
-    {
-        return Results.Problem(
-            statusCode: StatusCodes.Status400BadRequest,
-            title: "初始化参数无效",
-            detail: exception.Message);
-    }
-    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-    {
-        return Results.Problem(
-            statusCode: StatusCodes.Status503ServiceUnavailable,
-            title: "初始化已取消",
-            detail: "初始化请求已取消，未保存运行配置。请检查核心容器运行状态后重试。");
-    }
-    catch (Exception)
-    {
-        // 初始化请求可能包含管理员密码；日志仅保留固定事件，不输出异常对象或请求内容。
-        loggerFactory.CreateLogger("VisiCore.Api.Setup").LogWarning("首次初始化未完成，运行配置未写入。");
-        return Results.Problem(
-            statusCode: StatusCodes.Status502BadGateway,
-            title: "初始化失败",
-            detail: "无法完成内置服务校验或数据库初始化。请检查核心容器状态后重试。");
-    }
-});
-
-app.MapPost("/api/v1/setup/restore", async (
-    IFormFile backup,
-    string recoveryKey,
-    HttpContext context,
-    InstallationService installationService,
-    BootstrapRestoreService restoreService,
-    CancellationToken cancellationToken) =>
-{
-    if (!TryGetBrowserOrigin(context.Request, out _))
-    {
-        return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "初始化来源无效", detail: "请从当前视枢初始化页面提交恢复请求。 ");
-    }
-    if (installationService.GetStatus().State != InstallationState.Unconfigured)
-    {
-        return Results.Conflict(new { message = "当前核心已完成初始化，恢复请从后台备份页执行。" });
-    }
-    try
-    {
-        await restoreService.StageAsync(backup, recoveryKey, cancellationToken);
-        return Results.Accepted("/api/v1/setup/status", new { state = "restarting" });
-    }
-    catch (InvalidDataException exception)
-    {
-        return Results.ValidationProblem(new Dictionary<string, string[]> { ["backup"] = [exception.Message] });
-    }
-    catch (InvalidOperationException exception)
-    {
-        return Results.Conflict(new { message = exception.Message });
-    }
-});
+app.MapEndpointModules(EndpointModulePhase.Bootstrap);
 
 if (string.IsNullOrWhiteSpace(connectionString))
 {
@@ -459,179 +373,7 @@ else
     app.UseRateLimiter();
     app.UseAuthorization();
 
-    app.MapPost("/api/v1/auth/login", async (
-        LoginRequest request,
-        PlatformDbContext dbContext,
-        Argon2PasswordHasher passwordHasher,
-        ILoggerFactory loggerFactory,
-        CancellationToken cancellationToken) =>
-    {
-        try
-        {
-            if (!PlatformUsernamePolicy.TryNormalize(request.Username, out var username, out _))
-            {
-                return Results.Unauthorized();
-            }
-            var user = await dbContext.Users.SingleOrDefaultAsync(item => item.Username == username && item.DisabledAt == null, cancellationToken);
-            if (user is null || !passwordHasher.Verify(request.Password, user.PasswordHash))
-            {
-                return Results.Unauthorized();
-            }
-
-            var token = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
-            dbContext.UserSessions.Add(new UserSessionEntity
-            {
-                Id = Guid.NewGuid(),
-                UserId = user.Id,
-                TokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token))),
-                CreatedAt = DateTimeOffset.UtcNow,
-                ExpiresAt = DateTimeOffset.UtcNow.AddHours(12)
-            });
-            await dbContext.SaveChangesAsync(cancellationToken);
-            return Results.Ok(new LoginResponse(
-                token,
-                DateTimeOffset.UtcNow.AddHours(12),
-                user.Username,
-                user.RequiresPasswordChange));
-        }
-        catch (DbException exception)
-        {
-            loggerFactory.CreateLogger("VisiCore.Api.Login").LogError(exception, "登录时无法访问平台数据库。");
-            return Results.Problem(
-                statusCode: StatusCodes.Status503ServiceUnavailable,
-                title: "中心账号服务暂不可用",
-                detail: "平台数据库连接失败，请稍后重试。");
-        }
-    });
-
-    app.MapPost("/api/v1/auth/logout", async (
-        ClaimsPrincipal principal,
-        StreamSessionOrchestrator orchestrator,
-        PtzControlService ptzControlService,
-        CancellationToken cancellationToken) =>
-    {
-        var sessionId = principal.FindFirstValue(ClaimTypes.Sid);
-        if (!Guid.TryParse(sessionId, out var parsedSessionId))
-        {
-            return Results.Unauthorized();
-        }
-
-        try
-        {
-            await ptzControlService.RevokeForUserSessionAsync(parsedSessionId, "client_logout", cancellationToken);
-            await orchestrator.RevokeLoginSessionAsync(parsedSessionId, "client_logout", cancellationToken);
-            return Results.NoContent();
-        }
-        catch (StreamSessionConflictException exception)
-        {
-            return Results.Conflict(new { message = exception.Message });
-        }
-    }).RequireAuthorization();
-
-    app.MapPut("/api/v1/auth/password", async (
-        ChangePasswordRequest request,
-        ClaimsPrincipal principal,
-        AccountPasswordService passwordService,
-        IServiceScopeFactory scopeFactory,
-        ILoggerFactory loggerFactory,
-        CancellationToken cancellationToken) =>
-    {
-        if (!Guid.TryParse(principal.FindFirstValue(ClaimTypes.NameIdentifier), out var userId))
-        {
-            return Results.Unauthorized();
-        }
-
-        var result = await passwordService.ChangeAsync(
-            userId,
-            request.CurrentPassword,
-            request.NewPassword,
-            cancellationToken);
-        if (result == AccountPasswordChangeResult.UserUnavailable)
-        {
-            return Results.Unauthorized();
-        }
-        if (result == AccountPasswordChangeResult.CurrentPasswordIncorrect)
-        {
-            return Results.ValidationProblem(new Dictionary<string, string[]>
-            {
-                ["currentPassword"] = ["当前密码不正确。"]
-            });
-        }
-        if (result == AccountPasswordChangeResult.NewPasswordInvalid)
-        {
-            return Results.ValidationProblem(new Dictionary<string, string[]>
-            {
-                ["newPassword"] = ["新密码长度必须为 12 至 256 位。"]
-            });
-        }
-        if (result == AccountPasswordChangeResult.PasswordUnchanged)
-        {
-            return Results.ValidationProblem(new Dictionary<string, string[]>
-            {
-                ["newPassword"] = ["新密码不能与当前密码相同。"]
-            });
-        }
-
-        var cleanupErrors = new List<Exception>();
-        async Task AttemptCleanupAsync(Func<IServiceProvider, Task> action)
-        {
-            try
-            {
-                await using var scope = scopeFactory.CreateAsyncScope();
-                await action(scope.ServiceProvider);
-            }
-            catch (Exception exception)
-            {
-                cleanupErrors.Add(exception);
-            }
-        }
-
-        await AttemptCleanupAsync(services => services.GetRequiredService<StreamSessionOrchestrator>()
-            .RevokeForUserAsync(userId, "password_changed", CancellationToken.None));
-        await AttemptCleanupAsync(services => services.GetRequiredService<PtzControlService>()
-            .RevokeForUserAsync(userId, "password_changed", CancellationToken.None));
-        await AttemptCleanupAsync(services => CancelUnauthorizedExportsForUsersAsync(
-            [userId],
-            true,
-            services.GetRequiredService<PlatformDbContext>(),
-            services.GetRequiredService<PlatformAccessService>(),
-            services.GetRequiredService<EdgeCommandControlService>(),
-            CancellationToken.None));
-        await AttemptCleanupAsync(services => services.GetRequiredService<AuditService>().WriteAsync(
-            principal,
-            "user.password.change",
-            "user",
-            userId,
-            new { CleanupIncomplete = cleanupErrors.Count > 0 },
-            CancellationToken.None));
-        if (cleanupErrors.Count > 0)
-        {
-            loggerFactory.CreateLogger("VisiCore.Api.AccountPasswordChange").LogError(
-                new AggregateException(cleanupErrors),
-                "账号 {UserId} 密码已修改，但后续安全清理存在失败。",
-                userId);
-        }
-        return Results.NoContent();
-    }).RequireAuthorization().RequireRateLimiting("account-password-change");
-
-    app.MapGet("/api/v1/public/offline-devices", async (
-        string? region,
-        string? name,
-        string? deviceType,
-        int? page,
-        int? pageSize,
-        HttpResponse response,
-        PublicOfflineDeviceService offlineDeviceService,
-        CancellationToken cancellationToken) =>
-    {
-        if (!PublicOfflineDeviceQuery.TryCreate(region, name, deviceType, page, pageSize, out var query, out var validationError))
-        {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["query"] = [validationError] });
-        }
-
-        response.Headers.CacheControl = "no-store";
-        return Results.Ok(await offlineDeviceService.ListAsync(query, cancellationToken));
-    }).AllowAnonymous().RequireRateLimiting("public-offline-devices");
+    app.MapEndpointModules(EndpointModulePhase.Configured);
 
     var cameras = app.MapGroup("/api/v1/cameras").RequireAuthorization();
     cameras.MapGet("/", async (ClaimsPrincipal principal, PlatformAccessService accessService, DevicePluginCapabilityService capabilityService, PluginOperationEligibilityService eligibilityService, CancellationToken cancellationToken) =>
@@ -1626,269 +1368,7 @@ else
         }
     });
 
-    var edgeAgents = app.MapGroup("/api/v1/edge-agents");
-    edgeAgents.MapPost("/enroll", async (
-        EnrollEdgeAgentRequest request,
-        EdgeAgentControlService edgeAgentControl,
-        CancellationToken cancellationToken) =>
-    {
-        try
-        {
-            return Results.Ok(await edgeAgentControl.EnrollAsync(request, cancellationToken));
-        }
-        catch (ArgumentException exception)
-        {
-            return Results.BadRequest(new { message = exception.Message });
-        }
-        catch (InvalidOperationException exception)
-        {
-            return Results.Conflict(new { message = exception.Message });
-        }
-        catch (UnauthorizedAccessException exception)
-        {
-            return Results.Problem(statusCode: StatusCodes.Status403Forbidden, title: "设备插件签名不受信任", detail: exception.Message);
-        }
-    });
-
-    edgeAgents.MapPost("/{agentId:guid}/heartbeat", async (
-        Guid agentId,
-        EdgeAgentHeartbeatRequest request,
-        HttpRequest httpRequest,
-        EdgeAgentControlService edgeAgentControl,
-        CancellationToken cancellationToken) =>
-    {
-        var agent = await edgeAgentControl.AuthenticateAsync(httpRequest, agentId, cancellationToken);
-        if (agent is null) return Results.Unauthorized();
-        try
-        {
-            await edgeAgentControl.HeartbeatAsync(agent, request, cancellationToken);
-            return Results.NoContent();
-        }
-        catch (ArgumentException exception)
-        {
-            return Results.BadRequest(new { message = exception.Message });
-        }
-    });
-
-    edgeAgents.MapGet("/{agentId:guid}/configuration", async (
-        Guid agentId,
-        HttpRequest httpRequest,
-        EdgeAgentControlService edgeAgentControl,
-        CancellationToken cancellationToken) =>
-    {
-        var agent = await edgeAgentControl.AuthenticateAsync(httpRequest, agentId, cancellationToken);
-        return agent is null ? Results.Unauthorized() : Results.Ok(await edgeAgentControl.GetConfigurationAsync(agent, cancellationToken));
-    });
-
-    edgeAgents.MapPost("/{agentId:guid}/configuration-status", async (
-        Guid agentId,
-        EdgeAgentConfigurationStatusReport report,
-        HttpRequest httpRequest,
-        EdgeAgentControlService edgeAgentControl,
-        CancellationToken cancellationToken) =>
-    {
-        var agent = await edgeAgentControl.AuthenticateAsync(httpRequest, agentId, cancellationToken);
-        if (agent is null) return Results.Unauthorized();
-        try
-        {
-            await edgeAgentControl.ReportConfigurationStatusAsync(agent, report, cancellationToken);
-            return Results.NoContent();
-        }
-        catch (ArgumentException exception)
-        {
-            return Results.BadRequest(new { message = exception.Message });
-        }
-    });
-
-    edgeAgents.MapGet("/{agentId:guid}/credentials", async (
-        Guid agentId,
-        HttpRequest httpRequest,
-        EdgeAgentControlService edgeAgentControl,
-        CancellationToken cancellationToken) =>
-    {
-        var agent = await edgeAgentControl.AuthenticateAsync(httpRequest, agentId, cancellationToken);
-        return agent is null ? Results.Unauthorized() : Results.Ok(await edgeAgentControl.GetCredentialEnvelopesAsync(agent, cancellationToken));
-    });
-
-    edgeAgents.MapGet("/{agentId:guid}/operations", async (
-        Guid agentId,
-        HttpRequest httpRequest,
-        EdgeAgentControlService edgeAgentControl,
-        CancellationToken cancellationToken) =>
-    {
-        var agent = await edgeAgentControl.AuthenticateAsync(httpRequest, agentId, cancellationToken);
-        return agent is null ? Results.Unauthorized() : Results.Ok(await edgeAgentControl.GetPendingOperationsAsync(agent, cancellationToken));
-    });
-
-    edgeAgents.MapPost("/{agentId:guid}/diagnostics", async (
-        Guid agentId,
-        EdgeAgentDiagnosticReport report,
-        HttpRequest httpRequest,
-        EdgeAgentControlService edgeAgentControl,
-        CancellationToken cancellationToken) =>
-    {
-        var agent = await edgeAgentControl.AuthenticateAsync(httpRequest, agentId, cancellationToken);
-        if (agent is null) return Results.Unauthorized();
-        try
-        {
-            await edgeAgentControl.ReportDiagnosticAsync(agent, report, cancellationToken);
-            return Results.NoContent();
-        }
-        catch (ArgumentException exception)
-        {
-            return Results.BadRequest(new { message = exception.Message });
-        }
-    });
-
     var admin = app.MapGroup("/api/v1/admin").RequireAuthorization();
-
-    admin.MapGet("/https-configuration", async (
-        ClaimsPrincipal principal,
-        PlatformAccessService accessService,
-        HttpsConfigurationService httpsConfigurationService,
-        CancellationToken cancellationToken) =>
-    {
-        if (!await IsSystemAdministratorAsync(principal, accessService, cancellationToken))
-        {
-            return Results.Forbid();
-        }
-
-        try
-        {
-            return Results.Ok(httpsConfigurationService.GetStatus());
-        }
-        catch (HttpsConfigurationValidationException exception)
-        {
-            return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "HTTPS 配置不可用", detail: exception.Message);
-        }
-    });
-
-    admin.MapPut("/https-configuration", async (
-        HttpsConfigurationUpdate request,
-        ClaimsPrincipal principal,
-        PlatformAccessService accessService,
-        HttpsConfigurationService httpsConfigurationService,
-        AuditService auditService,
-        CancellationToken cancellationToken) =>
-    {
-        if (!await IsSystemAdministratorAsync(principal, accessService, cancellationToken))
-        {
-            return Results.Forbid();
-        }
-
-        try
-        {
-            var status = await httpsConfigurationService.SaveAsync(request, cancellationToken);
-            await auditService.WriteAsync(principal, "https_configuration.save", "https_configuration",
-                HttpsConfigurationService.AuditResourceId,
-                new { status.PendingEnabled, status.PendingPublicBaseUri }, cancellationToken);
-            return Results.Ok(status);
-        }
-        catch (HttpsConfigurationValidationException exception)
-        {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["publicBaseUri"] = [exception.Message] });
-        }
-        catch (IOException)
-        {
-            return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "HTTPS 配置保存失败", detail: "无法安全写入核心配置卷，请检查中心容器的配置卷权限。");
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "HTTPS 配置保存失败", detail: "无法安全写入核心配置卷，请检查中心容器的配置卷权限。");
-        }
-    });
-
-    admin.MapPost("/https-configuration/certificate", async (
-        HttpContext context,
-        IFormFile? certificate,
-        IFormFile? privateKey,
-        ClaimsPrincipal principal,
-        PlatformAccessService accessService,
-        HttpsConfigurationService httpsConfigurationService,
-        AuditService auditService,
-        CancellationToken cancellationToken) =>
-    {
-        if (!await IsSystemAdministratorAsync(principal, accessService, cancellationToken))
-        {
-            return Results.Forbid();
-        }
-        if (!HttpsCertificateUploadTransportPolicy.Allows(context))
-        {
-            return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "拒绝明文私钥上传", detail: "证书上传仅允许 HTTPS，或本机回环 HTTP 请求。");
-        }
-        if (certificate is null || privateKey is null || certificate.Length <= 0 || privateKey.Length <= 0 ||
-            certificate.Length > 1024 * 1024 || privateKey.Length > 1024 * 1024)
-        {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["certificate"] = ["请同时提供不超过 1 MiB 的 PEM 证书链和未加密 PEM 私钥。"] });
-        }
-
-        try
-        {
-            await using var certificateStream = certificate.OpenReadStream();
-            await using var privateKeyStream = privateKey.OpenReadStream();
-            var status = await httpsConfigurationService.UploadCertificateAsync(certificateStream, privateKeyStream, cancellationToken);
-            await auditService.WriteAsync(principal, "https_certificate.upload", "https_configuration",
-                HttpsConfigurationService.AuditResourceId,
-                new
-                {
-                    status.PendingEnabled,
-                    FingerprintSha256 = status.PendingCertificate.FingerprintSha256,
-                    ExpiresAt = status.PendingCertificate.NotAfter
-                }, cancellationToken);
-            return Results.Ok(status);
-        }
-        catch (HttpsConfigurationValidationException exception)
-        {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["certificate"] = [exception.Message] });
-        }
-        catch (IOException)
-        {
-            return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "证书保存失败", detail: "无法安全写入核心配置卷，现有证书未被修改。");
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return Results.Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "证书保存失败", detail: "无法安全写入核心配置卷，现有证书未被修改。");
-        }
-    })
-        .DisableAntiforgery();
-
-    admin.MapPost("/https-configuration/apply", async (
-        ClaimsPrincipal principal,
-        PlatformAccessService accessService,
-        HttpsConfigurationService httpsConfigurationService,
-        AuditService auditService,
-        IHostApplicationLifetime applicationLifetime,
-        CancellationToken cancellationToken) =>
-    {
-        if (!await IsSystemAdministratorAsync(principal, accessService, cancellationToken))
-        {
-            return Results.Forbid();
-        }
-
-        try
-        {
-            var validation = httpsConfigurationService.ValidatePendingForApply();
-            await auditService.WriteAsync(principal, "https_configuration.apply", "https_configuration",
-                HttpsConfigurationService.AuditResourceId,
-                new
-                {
-                    validation.Configuration.Enabled,
-                    validation.Configuration.PublicBaseUri,
-                    FingerprintSha256 = validation.Certificate?.FingerprintSha256,
-                    ExpiresAt = validation.Certificate?.NotAfter
-                }, cancellationToken);
-            _ = Task.Run(async () =>
-            {
-                await Task.Delay(TimeSpan.FromSeconds(1));
-                applicationLifetime.StopApplication();
-            });
-            return Results.Accepted("/api/v1/admin/https-configuration", new { state = "restarting" });
-        }
-        catch (HttpsConfigurationValidationException exception)
-        {
-            return Results.Problem(statusCode: StatusCodes.Status409Conflict, title: "HTTPS 配置不能应用", detail: exception.Message);
-        }
-    });
 
     admin.MapGet("/edge-agents", async (ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, CancellationToken cancellationToken) =>
     {
@@ -2107,94 +1587,6 @@ else
         return Results.Accepted($"/api/v1/edge-agents/{agent.Id}/configuration", new EdgeAgentConfigurationResponse(configuration.Version, configuration.ConfigurationJson, configuration.Status));
     });
 
-    admin.MapGet("/backups", async (ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, CancellationToken cancellationToken) =>
-    {
-        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken)) return Results.Forbid();
-        var backups = await dbContext.PlatformBackups.AsNoTracking().OrderByDescending(item => item.CreatedAt).Take(200).ToListAsync(cancellationToken);
-        return Results.Ok(backups.Select(ToPlatformBackupResponse));
-    });
-
-    admin.MapPost("/backups", async (ClaimsPrincipal principal, PlatformAccessService accessService, PlatformBackupService backupService, AuditService auditService, CancellationToken cancellationToken) =>
-    {
-        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken)) return Results.Forbid();
-        try
-        {
-            var backup = await backupService.CreateAsync("manual", cancellationToken);
-            await auditService.WriteAsync(principal, "platform_backup.create", "platform_backup", backup.Id, new { backup.Kind, backup.SizeBytes, backup.Sha256 }, cancellationToken);
-            return Results.Created($"/api/v1/admin/backups/{backup.Id}", ToPlatformBackupResponse(backup));
-        }
-        catch (Exception exception)
-        {
-            return Results.Problem(statusCode: StatusCodes.Status502BadGateway, title: "备份创建失败", detail: exception.Message);
-        }
-    });
-
-    admin.MapPost("/backups/upload", async (IFormFile backup, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformBackupService backupService, AuditService auditService, CancellationToken cancellationToken) =>
-    {
-        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken)) return Results.Forbid();
-        try
-        {
-            var stored = await backupService.StoreUploadedAsync(backup, cancellationToken);
-            await auditService.WriteAsync(principal, "platform_backup.upload", "platform_backup", stored.Id, new { stored.SizeBytes, stored.Sha256 }, cancellationToken);
-            return Results.Created($"/api/v1/admin/backups/{stored.Id}", ToPlatformBackupResponse(stored));
-        }
-        catch (InvalidDataException exception)
-        {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["backup"] = [exception.Message] });
-        }
-    }).DisableAntiforgery();
-
-    admin.MapGet("/backups/{backupId:guid}/download", async (Guid backupId, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, PlatformBackupService backupService, AuditService auditService, CancellationToken cancellationToken) =>
-    {
-        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken)) return Results.Forbid();
-        try
-        {
-            var backup = await dbContext.PlatformBackups.AsNoTracking().SingleOrDefaultAsync(item => item.Id == backupId, cancellationToken);
-            if (backup is null) return Results.NotFound();
-            var path = await backupService.GetDownloadPathAsync(backupId, cancellationToken);
-            await auditService.WriteAsync(principal, "platform_backup.download", "platform_backup", backupId, new { backup.SizeBytes, backup.Sha256 }, cancellationToken);
-            return Results.File(path, "application/octet-stream", backup.FileName, enableRangeProcessing: true);
-        }
-        catch (FileNotFoundException exception)
-        {
-            return Results.Problem(statusCode: StatusCodes.Status410Gone, title: "备份文件不可用", detail: exception.Message);
-        }
-    });
-
-    admin.MapPost("/backups/{backupId:guid}/restore", async (Guid backupId, RestorePlatformBackupRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformBackupService backupService, AuditService auditService, CancellationToken cancellationToken) =>
-    {
-        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken)) return Results.Forbid();
-        if (!string.Equals(request.Confirmation?.Trim(), $"恢复 {backupId}", StringComparison.OrdinalIgnoreCase))
-        {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["confirmation"] = ["请准确输入恢复确认文本。"] });
-        }
-        try
-        {
-            await backupService.RequestRestoreAsync(backupId, request.RecoveryKey ?? string.Empty, principal.Identity?.Name ?? "unknown", cancellationToken);
-            await auditService.WriteAsync(principal, "platform_backup.restore.request", "platform_backup", backupId, new { source = "admin" }, cancellationToken);
-            return Results.Accepted($"/api/v1/admin/backups/{backupId}", new { state = "restarting" });
-        }
-        catch (Exception exception) when (exception is InvalidDataException or InvalidOperationException or FileNotFoundException or KeyNotFoundException)
-        {
-            return Results.Problem(statusCode: StatusCodes.Status400BadRequest, title: "恢复请求已拒绝", detail: exception.Message);
-        }
-    });
-
-    admin.MapDelete("/backups/{backupId:guid}", async (Guid backupId, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformBackupService backupService, AuditService auditService, CancellationToken cancellationToken) =>
-    {
-        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken)) return Results.Forbid();
-        try
-        {
-            await backupService.DeleteAsync(backupId, cancellationToken);
-            await auditService.WriteAsync(principal, "platform_backup.delete", "platform_backup", backupId, new { }, cancellationToken);
-            return Results.NoContent();
-        }
-        catch (KeyNotFoundException)
-        {
-            return Results.NotFound();
-        }
-    });
-
     admin.MapGet("/platform-operations/overview", async (ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, CancellationToken cancellationToken) =>
     {
         if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
@@ -2295,7 +1687,28 @@ else
             .OrderByDescending(item => item.PublishedAt)
             .Take(100)
             .ToListAsync(cancellationToken);
-        return Results.Ok(entries.Select(ToReleaseCatalogResponse));
+        var entryIds = entries.Select(item => item.Id).ToArray();
+        var governanceByRelease = await dbContext.ReleaseGovernanceRecords.AsNoTracking()
+            .Where(item => entryIds.Contains(item.ReleaseCatalogId))
+            .ToDictionaryAsync(item => item.ReleaseCatalogId, cancellationToken);
+        return Results.Ok(entries.Select(item => ToReleaseCatalogResponse(item, governanceByRelease.GetValueOrDefault(item.Id))));
+    });
+
+    admin.MapGet("/release-catalog/{releaseCatalogId:guid}/governance-records", async (Guid releaseCatalogId, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        if (!await dbContext.ReleaseCatalog.AsNoTracking().AnyAsync(item => item.Id == releaseCatalogId, cancellationToken))
+        {
+            return Results.NotFound();
+        }
+        var records = await dbContext.ReleaseGovernanceRecords.AsNoTracking()
+            .Where(item => item.ReleaseCatalogId == releaseCatalogId)
+            .OrderBy(item => item.RecordedAt)
+            .ToListAsync(cancellationToken);
+        return Results.Ok(records.Select(ToReleaseGovernanceRecordResponse));
     });
 
     admin.MapPost("/release-catalog", async (
@@ -2328,11 +1741,58 @@ else
         }
         catch (ReleaseCatalogException exception) when (exception.FailureKind == "release_already_registered")
         {
-            return Results.Conflict(new { message = "该稳定通道版本已登记。" });
+            return Results.Conflict(new { message = "该发行通道版本已登记。" });
         }
         catch (ReleaseCatalogException exception)
         {
             return Results.ValidationProblem(new Dictionary<string, string[]> { ["release"] = [$"发行描述校验失败：{exception.FailureKind}。"] });
+        }
+    });
+
+    admin.MapPost("/release-catalog/{releaseCatalogId:guid}/governance-records", async (
+        Guid releaseCatalogId,
+        RegisterReleaseGovernanceRecordRequest request,
+        ClaimsPrincipal principal,
+        PlatformAccessService accessService,
+        ReleaseGovernanceService releaseGovernance,
+        AuditService auditService,
+        CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        try
+        {
+            var record = await releaseGovernance.RegisterAsync(
+                releaseCatalogId,
+                new RegisterReleaseGovernanceRecord(
+                    request.ChangeIds,
+                    request.DossierUrl,
+                    request.ReleaseUrl,
+                    request.WorkflowRunUrl,
+                    request.ReleaseEvidenceUrl,
+                    request.StagingEvidenceUrl,
+                    request.SbomUrl,
+                    request.ProvenanceUrl,
+                    request.VerificationUrl),
+                principal.Identity?.Name ?? "unknown",
+                cancellationToken);
+            await auditService.WriteAsync(principal, "release_governance.register", "release_governance", record.Id,
+                new { record.ReleaseCatalogId, record.SourceCommit, record.RecordedAt }, cancellationToken);
+            return Results.Created($"/api/v1/admin/release-catalog/{releaseCatalogId}/governance-records/{record.Id}", ToReleaseGovernanceRecordResponse(record));
+        }
+        catch (ReleaseGovernanceException exception) when (exception.FailureKind == "release_catalog_not_found")
+        {
+            return Results.NotFound();
+        }
+        catch (ReleaseGovernanceException exception) when (exception.FailureKind == "governance_record_exists")
+        {
+            return Results.Conflict(new { message = "该发行版本已经登记治理记录，不能改写。" });
+        }
+        catch (ReleaseGovernanceException exception)
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]> { ["governance"] = [$"发行治理记录校验失败：{exception.FailureKind}。"] });
         }
     });
 
@@ -2352,6 +1812,34 @@ else
             .OrderBy(item => item.Batch)
             .ToListAsync(cancellationToken);
         return Results.Ok(plans.Select(plan => ToUpgradePlanResponse(plan, targets.Where(target => target.UpgradePlanId == plan.Id).ToList())));
+    });
+
+    admin.MapGet("/upgrade-plans/{planId:guid}/timeline", async (Guid planId, ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        var plan = await dbContext.UpgradePlans.AsNoTracking().SingleOrDefaultAsync(item => item.Id == planId, cancellationToken);
+        if (plan is null)
+        {
+            return Results.NotFound();
+        }
+        var release = await dbContext.ReleaseCatalog.AsNoTracking().SingleOrDefaultAsync(item => item.Id == plan.ReleaseCatalogId, cancellationToken);
+        if (release is null || !ReleaseCatalogService.TryReadDescriptor(release, out var descriptor))
+        {
+            return Results.NotFound();
+        }
+        var targets = await dbContext.UpgradeTargets.AsNoTracking().Where(item => item.UpgradePlanId == plan.Id).OrderBy(item => item.Batch).ToListAsync(cancellationToken);
+        var operationIds = targets.Where(item => item.PlatformOperationId is not null).Select(item => item.PlatformOperationId!.Value).ToArray();
+        var operations = await dbContext.PlatformOperations.AsNoTracking().Where(item => operationIds.Contains(item.Id)).ToListAsync(cancellationToken);
+        var operationById = operations.ToDictionary(item => item.Id);
+        return Results.Ok(new UpgradePlanTimelineResponse(
+            plan.Id,
+            descriptor.ReleaseId,
+            descriptor.Channel,
+            descriptor.RollbackStrategy,
+            targets.Select(target => ToUpgradeTimelineItemResponse(target, descriptor, operationById)).ToList()));
     });
 
     admin.MapPost("/upgrade-plans", async (
@@ -2420,6 +1908,25 @@ else
         catch (UpgradePlanException)
         {
             return Results.NotFound();
+        }
+    });
+
+    admin.MapPost("/upgrade-plans/{planId:guid}/batches/{batch:int}/approve", async (Guid planId, int batch, ClaimsPrincipal principal, PlatformAccessService accessService, UpgradePlanService upgradePlans, PlatformDbContext dbContext, AuditService auditService, CancellationToken cancellationToken) =>
+    {
+        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageOperations, cancellationToken))
+        {
+            return Results.Forbid();
+        }
+        try
+        {
+            var plan = await upgradePlans.ApproveBatchAsync(planId, batch, cancellationToken);
+            var targets = await dbContext.UpgradeTargets.AsNoTracking().Where(item => item.UpgradePlanId == plan.Id).OrderBy(item => item.Batch).ToListAsync(cancellationToken);
+            await auditService.WriteAsync(principal, "upgrade_plan.batch.approve", "upgrade_plan", plan.Id, new { batch }, cancellationToken);
+            return Results.Accepted($"/api/v1/admin/upgrade-plans/{plan.Id}", ToUpgradePlanResponse(plan, targets));
+        }
+        catch (UpgradePlanException exception)
+        {
+            return Results.Conflict(new { message = $"无法确认升级批次：{exception.FailureKind}。" });
         }
     });
 
@@ -2796,89 +2303,6 @@ else
         }
         await auditService.WriteAsync(principal, "region.update", "region", region.Id, new { region.Code, region.Name, region.ParentId }, cancellationToken);
         return Results.Ok(region);
-    });
-
-    admin.MapGet("/device-plugins", async (ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, CancellationToken cancellationToken) =>
-    {
-        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageAssets, cancellationToken))
-        {
-            return Results.Forbid();
-        }
-        var plugins = await dbContext.DevicePlugins.AsNoTracking().OrderBy(item => item.Name).ToListAsync(cancellationToken);
-        var usages = await dbContext.Recorders.AsNoTracking()
-            .Where(item => item.DevicePluginId != null)
-            .GroupBy(item => item.DevicePluginId!.Value)
-            .Select(group => new { PluginId = group.Key, Count = group.Count() })
-            .ToDictionaryAsync(item => item.PluginId, item => item.Count, cancellationToken);
-        return Results.Ok(plugins.Select(item => ToDevicePluginResponse(item, usages.GetValueOrDefault(item.Id))));
-    });
-
-    admin.MapPost("/device-plugins/install", async (InstallDevicePluginRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, DevicePluginService pluginService, AuditService auditService, CancellationToken cancellationToken) =>
-    {
-        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageAssets, cancellationToken))
-        {
-            return Results.Forbid();
-        }
-        try
-        {
-            var plugin = await pluginService.InstallAsync(request.Manifest, cancellationToken);
-            await auditService.WriteAsync(principal, "device-plugin.install", "device_plugin", plugin.Id,
-                new { plugin.Key, plugin.Version, plugin.ProtocolType, plugin.RuntimeType, plugin.PackageHash }, cancellationToken);
-            return Results.Ok(ToDevicePluginResponse(plugin, 0));
-        }
-        catch (ArgumentException exception)
-        {
-            return Results.ValidationProblem(new Dictionary<string, string[]> { ["manifest"] = [exception.Message] });
-        }
-        catch (InvalidOperationException exception)
-        {
-            return Results.Conflict(new { message = exception.Message });
-        }
-    });
-
-    admin.MapPatch("/device-plugins/{pluginId:guid}/status", async (Guid pluginId, SetDevicePluginStatusRequest request, ClaimsPrincipal principal, PlatformAccessService accessService, DevicePluginService pluginService, AuditService auditService, CancellationToken cancellationToken) =>
-    {
-        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageAssets, cancellationToken))
-        {
-            return Results.Forbid();
-        }
-        try
-        {
-            var plugin = await pluginService.SetEnabledAsync(pluginId, request.Enabled, cancellationToken);
-            await auditService.WriteAsync(principal, request.Enabled ? "device-plugin.enable" : "device-plugin.disable", "device_plugin", plugin.Id,
-                new { plugin.Key, plugin.Version }, cancellationToken);
-            return Results.Ok(ToDevicePluginResponse(plugin, 0));
-        }
-        catch (KeyNotFoundException)
-        {
-            return Results.NotFound();
-        }
-        catch (InvalidOperationException exception)
-        {
-            return Results.Conflict(new { message = exception.Message });
-        }
-    });
-
-    admin.MapDelete("/device-plugins/{pluginId:guid}", async (Guid pluginId, ClaimsPrincipal principal, PlatformAccessService accessService, DevicePluginService pluginService, AuditService auditService, CancellationToken cancellationToken) =>
-    {
-        if (!await HasSystemPermissionAsync(principal, accessService, SystemPermission.ManageAssets, cancellationToken))
-        {
-            return Results.Forbid();
-        }
-        try
-        {
-            await pluginService.RemoveAsync(pluginId, cancellationToken);
-            await auditService.WriteAsync(principal, "device-plugin.remove", "device_plugin", pluginId, new { pluginId }, cancellationToken);
-            return Results.NoContent();
-        }
-        catch (KeyNotFoundException)
-        {
-            return Results.NotFound();
-        }
-        catch (InvalidOperationException exception)
-        {
-            return Results.Conflict(new { message = exception.Message });
-        }
     });
 
     admin.MapGet("/recorders", async (ClaimsPrincipal principal, PlatformAccessService accessService, PlatformDbContext dbContext, CancellationToken cancellationToken) =>
@@ -4499,25 +3923,6 @@ static Task<bool> HasSystemPermissionAsync(
     CancellationToken cancellationToken) =>
     accessService.HasSystemPermissionAsync(principal, requiredPermission, cancellationToken);
 
-static DevicePluginResponse ToDevicePluginResponse(DevicePluginEntity plugin, int usageCount) =>
-    new(
-        plugin.Id,
-        plugin.Key,
-        plugin.Name,
-        plugin.Version,
-        plugin.ProtocolType,
-        plugin.RuntimeType,
-        plugin.AdapterType,
-        plugin.Vendor,
-        plugin.Description,
-        plugin.PackageHash,
-        plugin.IsBuiltIn,
-        plugin.Enabled,
-        plugin.InstalledAt,
-        plugin.UpdatedAt,
-        usageCount,
-        DevicePluginService.ParseManifest(plugin));
-
 static AdminCameraResponse ToAdminCameraResponse(
     CameraEntity camera,
     RecorderEntity recorder,
@@ -5015,25 +4420,18 @@ static PlatformOperationResponse ToPlatformOperationResponse(PlatformOperationEn
     operation.RequestedAt,
     operation.CompletedAt);
 
-static PlatformBackupResponse ToPlatformBackupResponse(PlatformBackupEntity backup) => new(
-    backup.Id,
-    backup.Kind,
-    backup.Status,
-    backup.FileName,
-    backup.SizeBytes,
-    backup.Sha256,
-    backup.CreatedAt,
-    backup.RetainUntil,
-    backup.LastRestoredAt,
-    backup.FailureDetail);
-
-static ReleaseCatalogResponse ToReleaseCatalogResponse(ReleaseCatalogEntity entry)
+static ReleaseCatalogResponse ToReleaseCatalogResponse(ReleaseCatalogEntity entry, ReleaseGovernanceRecordEntity? governance = null)
 {
     var descriptorValid = ReleaseCatalogService.TryReadDescriptor(entry, out var descriptor);
     return new ReleaseCatalogResponse(
         entry.Id,
         entry.ProductVersion,
         entry.Channel,
+        descriptorValid ? descriptor.ReleaseId : $"{entry.ProductVersion}-{entry.Channel}",
+        descriptorValid ? descriptor.SourceCommit : string.Empty,
+        descriptorValid ? descriptor.PromotedFrom : null,
+        descriptorValid ? descriptor.DatabaseMigrationMode : "unknown",
+        descriptorValid ? descriptor.RollbackStrategy : "unknown",
         entry.Status,
         entry.SigningPublicKeyId,
         entry.PublishedAt,
@@ -5047,7 +4445,79 @@ static ReleaseCatalogResponse ToReleaseCatalogResponse(ReleaseCatalogEntity entr
                 item.ArtifactSha256,
                 item.SizeBytes,
                 item.MinimumHostAgentVersion)).ToList()
-            : []);
+            : [],
+        governance is null ? null : ToReleaseGovernanceRecordResponse(governance));
+}
+
+static ReleaseGovernanceRecordResponse ToReleaseGovernanceRecordResponse(ReleaseGovernanceRecordEntity record)
+{
+    var changeIds = ReleaseGovernanceService.TryReadChangeIds(record.ChangeIdsJson, out var parsed) ? parsed : [];
+    return new ReleaseGovernanceRecordResponse(
+        record.Id,
+        record.ReleaseCatalogId,
+        changeIds,
+        record.SourceCommit,
+        record.DossierUrl,
+        record.ReleaseUrl,
+        record.WorkflowRunUrl,
+        record.ReleaseEvidenceUrl,
+        record.StagingEvidenceUrl,
+        record.SbomUrl,
+        record.ProvenanceUrl,
+        record.VerificationUrl,
+        record.RecordedBy,
+        record.RecordedAt);
+}
+
+static UpgradeTimelineItemResponse ToUpgradeTimelineItemResponse(
+    UpgradeTargetEntity target,
+    ReleaseDescriptor descriptor,
+    IReadOnlyDictionary<Guid, PlatformOperationEntity> operations)
+{
+    var artifact = descriptor.Artifacts.FirstOrDefault(item => string.Equals(item.Component, target.Component, StringComparison.Ordinal));
+    operations.TryGetValue(target.PlatformOperationId ?? Guid.Empty, out var operation);
+    return new UpgradeTimelineItemResponse(
+        target.Id,
+        target.EdgeAgentId,
+        target.Batch,
+        ResolveUpgradePhase(target.Status, operation?.Status),
+        artifact?.ArtifactReference,
+        artifact?.ArtifactSha256,
+        TryReadProtectionBackupId(operation?.DetailsJson),
+        target.FailureSummary,
+        target.RequestedAt,
+        target.StartedAt ?? operation?.RequestedAt,
+        target.StableSince,
+        target.CompletedAt ?? operation?.CompletedAt);
+}
+
+static string ResolveUpgradePhase(string targetStatus, string? operationStatus) => targetStatus switch
+{
+    "pending" => "preflight",
+    "awaiting_approval" => "awaiting_approval",
+    "queued" => "approved",
+    "dispatched" => operationStatus is "preflight" or "dispatched" ? operationStatus : "switching",
+    "verifying" => "observing",
+    "succeeded" => "completed",
+    "failed" => "failed",
+    "reboot_required" => "manual_intervention",
+    _ => targetStatus
+};
+
+static Guid? TryReadProtectionBackupId(string? detailsJson)
+{
+    if (string.IsNullOrWhiteSpace(detailsJson)) return null;
+    try
+    {
+        using var document = JsonDocument.Parse(detailsJson);
+        return document.RootElement.TryGetProperty("protectionBackupId", out var value) && value.ValueKind == JsonValueKind.String && Guid.TryParse(value.GetString(), out var backupId)
+            ? backupId
+            : null;
+    }
+    catch (JsonException)
+    {
+        return null;
+    }
 }
 
 static UpgradePlanResponse ToUpgradePlanResponse(UpgradePlanEntity plan, IReadOnlyList<UpgradeTargetEntity> targets) => new(
@@ -5510,6 +4980,16 @@ public sealed record UpdateEdgeAgentConfigurationRequest(string ConfigurationJso
 public sealed record DirectCameraPreflightRequest(Guid EdgeAgentId, Guid CredentialId, string MainStreamUrl, string? SubStreamUrl = null);
 public sealed record RegisterEdgeReleaseRequest(string ManifestJson, string SignatureBase64, string PublicKeyId);
 public sealed record RegisterReleaseDescriptorRequest(string DescriptorJson, string SignatureBase64, string PublicKeyId);
+public sealed record RegisterReleaseGovernanceRecordRequest(
+    IReadOnlyList<string>? ChangeIds,
+    string? DossierUrl,
+    string? ReleaseUrl,
+    string? WorkflowRunUrl,
+    string? ReleaseEvidenceUrl,
+    string? StagingEvidenceUrl,
+    string? SbomUrl,
+    string? ProvenanceUrl,
+    string? VerificationUrl);
 public sealed record CreateUpgradePlanRequest(Guid ReleaseCatalogId, string? TargetScope, IReadOnlyList<Guid>? EdgeAgentIds = null);
 public sealed record PauseUpgradePlanRequest(string? Reason);
 public sealed record RequestPlatformDeploymentRequest(Guid EdgeAgentId, string ReleaseId);
@@ -5536,11 +5016,17 @@ public sealed record ReleaseCatalogResponse(
     Guid Id,
     string ProductVersion,
     string Channel,
+    string ReleaseId,
+    string SourceCommit,
+    string? PromotedFrom,
+    string DatabaseMigrationMode,
+    string RollbackStrategy,
     string Status,
     string SigningPublicKeyId,
     DateTimeOffset PublishedAt,
     DateTimeOffset ExpiresAt,
-    IReadOnlyList<ReleaseArtifactResponse> Artifacts);
+    IReadOnlyList<ReleaseArtifactResponse> Artifacts,
+    ReleaseGovernanceRecordResponse? Governance);
 public sealed record ReleaseArtifactResponse(
     string Component,
     string Platform,
@@ -5549,6 +5035,21 @@ public sealed record ReleaseArtifactResponse(
     string ArtifactSha256,
     long SizeBytes,
     string MinimumHostAgentVersion);
+public sealed record ReleaseGovernanceRecordResponse(
+    Guid Id,
+    Guid ReleaseCatalogId,
+    IReadOnlyList<string> ChangeIds,
+    string SourceCommit,
+    string DossierUrl,
+    string ReleaseUrl,
+    string WorkflowRunUrl,
+    string ReleaseEvidenceUrl,
+    string StagingEvidenceUrl,
+    string SbomUrl,
+    string ProvenanceUrl,
+    string VerificationUrl,
+    string RecordedBy,
+    DateTimeOffset RecordedAt);
 public sealed record UpgradePlanResponse(
     Guid Id,
     Guid ReleaseCatalogId,
@@ -5570,6 +5071,25 @@ public sealed record UpgradeTargetResponse(
     string ExpectedVersion,
     string? PreviousVersion,
     string? FailureSummary,
+    DateTimeOffset RequestedAt,
+    DateTimeOffset? StartedAt,
+    DateTimeOffset? StableSince,
+    DateTimeOffset? CompletedAt);
+public sealed record UpgradePlanTimelineResponse(
+    Guid PlanId,
+    string ReleaseId,
+    string Channel,
+    string RollbackStrategy,
+    IReadOnlyList<UpgradeTimelineItemResponse> Items);
+public sealed record UpgradeTimelineItemResponse(
+    Guid TargetId,
+    Guid? EdgeAgentId,
+    int Batch,
+    string Phase,
+    string? ArtifactReference,
+    string? ArtifactSha256,
+    Guid? ProtectionBackupId,
+    string? FailureKind,
     DateTimeOffset RequestedAt,
     DateTimeOffset? StartedAt,
     DateTimeOffset? StableSince,

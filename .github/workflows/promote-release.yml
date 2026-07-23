@@ -1,0 +1,201 @@
+name: Promote RC Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: '已验收的 RC 标签，例如 v0.1.6-rc.1'
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  promote:
+    name: 提升 RC 到正式版本
+    environment: production
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_tag }}
+          fetch-depth: 0
+      - name: 验证候选发行档案
+        run: python3 tools/verify-openspec-governance.py --release "${{ inputs.candidate_tag }}"
+
+      - id: candidate
+        name: 验证候选制品、内部证据与 staging 演练
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$CANDIDATE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-rc\.([1-9][0-9]*)$ ]]
+          product_version="${BASH_REMATCH[1]}"
+          candidate_id="${CANDIDATE_TAG#v}"
+          stable_tag="v${product_version}"
+          test "$product_version" = "$(tr -d '\r\n' < VERSION)"
+          test -f "docs/releases/${stable_tag}/release-notes.md"
+          git fetch --force --tags origin
+          candidate_commit="$(git rev-list -n 1 "$CANDIDATE_TAG")"
+          ! git rev-parse --verify --quiet "refs/tags/${stable_tag}" > /dev/null
+          test "$(gh release view "$CANDIDATE_TAG" --json isDraft,isPrerelease --jq '.isPrerelease == true and .isDraft == false')" = true
+
+          mkdir -p artifacts/candidate/public artifacts/candidate/governance artifacts/candidate/staging
+          gh release download "$CANDIDATE_TAG" --dir artifacts/candidate/public --clobber
+          release_run_id="$(gh run list --workflow Release --branch "$CANDIDATE_TAG" --status success --limit 1 --json databaseId --jq '.[0].databaseId')"
+          [[ "$release_run_id" =~ ^[0-9]+$ ]]
+          gh run download "$release_run_id" --name visicore-release-governance --dir artifacts/candidate/governance
+          gh run download "$release_run_id" --name visicore-staging-evidence --dir artifacts/candidate/staging
+          bash tools/verify-release-promotion.sh artifacts/candidate/public artifacts/candidate/governance "$CANDIDATE_TAG"
+
+          descriptor=artifacts/candidate/governance/release-descriptor.json
+          evidence=artifacts/candidate/governance/release-evidence.json
+          core_image="$(jq -r '.artifacts[] | select(.component == "core" and .platform == "linux" and .architecture == "amd64") | .artifactReference' "$descriptor")"
+          edge_image="$(jq -r '.artifacts[] | select(.component == "edge-docker" and .platform == "linux" and .architecture == "amd64") | .artifactReference' "$descriptor")"
+          windows_file="$(jq -r '.artifacts[] | select(.component == "edge-windows") | .artifactReference | split("/")[-1]' "$descriptor")"
+          windows_hash="$(jq -r '.artifacts[] | select(.component == "edge-windows") | .artifactSha256' "$descriptor")"
+          test "$windows_hash" = "$(sha256sum "artifacts/candidate/public/${windows_file}" | cut -d ' ' -f1)"
+          for component in core edge; do
+            for architecture in amd64 arm64; do
+              name="visicore-${component}-${candidate_id}-linux-${architecture}.tar.gz"
+              expected="$(jq -r --arg component "$component" --arg architecture "$architecture" '.artifacts.linuxPackages[(if $component == "core" then (if $architecture == "amd64" then "coreAmd64" else "coreArm64" end) else (if $architecture == "amd64" then "edgeAmd64" else "edgeArm64" end) end)].sha256' "$evidence")"
+              test "$expected" = "$(sha256sum "artifacts/candidate/public/${name}" | cut -d ' ' -f1)"
+            done
+          done
+
+          staging=artifacts/candidate/staging/staging-evidence.json
+          staging_signature=artifacts/candidate/staging/staging-evidence.signature.base64
+          jq -cS -j . "$staging" > artifacts/candidate/staging/staging-evidence.canonical.json
+          cmp --silent "$staging" artifacts/candidate/staging/staging-evidence.canonical.json
+          base64 --decode "$staging_signature" > artifacts/candidate/staging/staging-evidence.signature
+          openssl dgst -sha256 -verify artifacts/candidate/governance/visicore-edge-release-public-key.pem -signature artifacts/candidate/staging/staging-evidence.signature -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 "$staging" > /dev/null
+          viewer_hash="$(jq -r '.artifacts.viewer.sha256' "$evidence")"
+          jq -e --arg candidate "$CANDIDATE_TAG" --arg commit "$candidate_commit" --arg core "$core_image" --arg edge "$edge_image" --arg windows "$windows_hash" --arg viewer "$viewer_hash" '
+            .schemaVersion == 1 and .result == "passed" and .candidateTag == $candidate and .sourceCommit == $commit and
+            (.platforms.linuxAmd64.result == "passed") and (.platforms.linuxArm64.result == "passed") and (.platforms.windowsX64.result == "passed") and
+            .artifacts.core.reference == $core and .artifacts.edge.reference == $edge and .artifacts.edgeWindows.sha256 == $windows and .artifacts.viewer.sha256 == $viewer
+          ' "$staging" > /dev/null
+          printf 'product_version=%s\n' "$product_version" >> "$GITHUB_OUTPUT"
+          printf 'candidate_id=%s\n' "$candidate_id" >> "$GITHUB_OUTPUT"
+          printf 'stable_tag=%s\n' "$stable_tag" >> "$GITHUB_OUTPUT"
+          printf 'candidate_commit=%s\n' "$candidate_commit" >> "$GITHUB_OUTPUT"
+          printf 'core_image=%s\n' "$core_image" >> "$GITHUB_OUTPUT"
+          printf 'edge_image=%s\n' "$edge_image" >> "$GITHUB_OUTPUT"
+          printf 'staging_evidence_sha256=%s\n' "$(sha256sum "$staging" | cut -d ' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: 提升同一 OCI digest
+        env:
+          PRODUCT_VERSION: ${{ steps.candidate.outputs.product_version }}
+          CORE_IMAGE: ${{ steps.candidate.outputs.core_image }}
+          EDGE_IMAGE: ${{ steps.candidate.outputs.edge_image }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create --tag "visicore/visicore-core:${PRODUCT_VERSION}" --tag visicore/visicore-core:latest "$CORE_IMAGE"
+          docker buildx imagetools create --tag "visicore/visicore-edge:${PRODUCT_VERSION}" --tag visicore/visicore-edge:latest "$EDGE_IMAGE"
+          test "$(docker buildx imagetools inspect "visicore/visicore-core:${PRODUCT_VERSION}" --format '{{.Manifest.Digest}}')" = "${CORE_IMAGE##*@}"
+          test "$(docker buildx imagetools inspect "visicore/visicore-edge:${PRODUCT_VERSION}" --format '{{.Manifest.Digest}}')" = "${EDGE_IMAGE##*@}"
+
+      - name: 创建同一提交的正式标签
+        env:
+          STABLE_TAG: ${{ steps.candidate.outputs.stable_tag }}
+          CANDIDATE_COMMIT: ${{ steps.candidate.outputs.candidate_commit }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$STABLE_TAG" "$CANDIDATE_COMMIT" -m "Promote ${CANDIDATE_TAG} without rebuilding artifacts"
+          git push origin "refs/tags/${STABLE_TAG}"
+
+      - name: 生成 stable 证据与公开资产
+        env:
+          EDGE_RELEASE_SIGNING_KEY_BASE64: ${{ secrets.EDGE_RELEASE_SIGNING_KEY_BASE64 }}
+          EDGE_RELEASE_SIGNING_KEY_ID: ${{ vars.EDGE_RELEASE_SIGNING_KEY_ID }}
+          STABLE_TAG: ${{ steps.candidate.outputs.stable_tag }}
+          PRODUCT_VERSION: ${{ steps.candidate.outputs.product_version }}
+          CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+          CANDIDATE_ID: ${{ steps.candidate.outputs.candidate_id }}
+          CANDIDATE_COMMIT: ${{ steps.candidate.outputs.candidate_commit }}
+          STAGING_EVIDENCE_SHA256: ${{ steps.candidate.outputs.staging_evidence_sha256 }}
+        run: |
+          set -euo pipefail
+          test -n "$EDGE_RELEASE_SIGNING_KEY_BASE64"
+          test -n "$EDGE_RELEASE_SIGNING_KEY_ID"
+          mkdir -p artifacts/stable/public artifacts/stable/governance
+          for source in artifacts/candidate/public/*; do
+            name="$(basename "$source")"
+            [[ "$name" == checksums.txt ]] && continue
+            target="${name/${CANDIDATE_ID}/${PRODUCT_VERSION}}"
+            cp "$source" "artifacts/stable/public/${target}"
+          done
+          key_file="$(mktemp)"
+          trap 'rm -f "$key_file"' EXIT
+          printf '%s' "$EDGE_RELEASE_SIGNING_KEY_BASE64" | base64 --decode > "$key_file"
+          checksum_body="$(mktemp)"
+          trap 'rm -f "$key_file" "$checksum_body"' EXIT
+          (
+            cd artifacts/stable/public
+            sha256sum "visicore-core-${PRODUCT_VERSION}-linux-amd64.tar.gz" "visicore-core-${PRODUCT_VERSION}-linux-arm64.tar.gz" "visicore-edge-${PRODUCT_VERSION}-linux-amd64.tar.gz" "visicore-edge-${PRODUCT_VERSION}-linux-arm64.tar.gz" "visicore-edge-${PRODUCT_VERSION}-windows-amd64.msi" "visicore-viewer-${PRODUCT_VERSION}-windows-amd64.msi"
+          ) > "$checksum_body"
+          signature="$(openssl dgst -sha256 -sign "$key_file" -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 "$checksum_body" | base64 -w 0)"
+          {
+            echo "# VisiCore ${STABLE_TAG} 下载制品 SHA-256"
+            cat "$checksum_body"
+            echo "# signingPublicKeyId: ${EDGE_RELEASE_SIGNING_KEY_ID}"
+            echo "# rsaPssSha256: ${signature}"
+          } > artifacts/stable/public/checksums.txt
+          [[ "$(find artifacts/stable/public -maxdepth 1 -type f | wc -l | tr -d ' ')" == 7 ]]
+
+          cp artifacts/candidate/governance/* artifacts/stable/governance/
+          cp artifacts/candidate/staging/staging-evidence.json artifacts/candidate/staging/staging-evidence.signature.base64 artifacts/stable/governance/
+          candidate_descriptor=artifacts/candidate/governance/release-descriptor.json
+          edge_file="visicore-edge-${PRODUCT_VERSION}-windows-amd64.msi"
+          stable_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${STABLE_TAG}/${edge_file}"
+          jq -cS -j --arg stable "$STABLE_TAG" --arg candidate "$CANDIDATE_TAG" --arg commit "$CANDIDATE_COMMIT" --arg url "$stable_url" '
+            .channel = "stable" | .releaseId = $stable | .sourceCommit = $commit | .promotedFrom = $candidate |
+            .artifacts |= map(if .component == "edge-windows" then .artifactReference = $url else . end)
+          ' "$candidate_descriptor" > artifacts/stable/governance/release-descriptor.json
+          openssl dgst -sha256 -sign "$key_file" -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 artifacts/stable/governance/release-descriptor.json | base64 -w 0 > artifacts/stable/governance/release-descriptor.signature.base64
+          jq -n --slurpfile candidate artifacts/candidate/governance/release-evidence.json --arg release "$STABLE_TAG" --arg candidate_tag "$CANDIDATE_TAG" --arg candidate_id "$CANDIDATE_ID" --arg product_version "$PRODUCT_VERSION" --arg commit "$CANDIDATE_COMMIT" --arg staging "$STAGING_EVIDENCE_SHA256" --arg workflow "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" '
+            $candidate[0].artifacts
+            | walk(if type == "object" and has("file") then .file |= sub($candidate_id; $product_version) else . end)
+            | {releaseId:$release,channel:"stable",sourceCommit:$commit,promotedFrom:$candidate_tag,promotionMode:"no-rebuild",artifacts:.,stagingEvidenceSha256:$staging,workflowRun:$workflow}
+          ' > artifacts/stable/governance/release-evidence.json
+          find artifacts/stable/public artifacts/stable/governance -type f ! -name release-sha256.txt ! -name release-sha256.signature.base64 -print0 | sort -z | xargs -0 sha256sum > artifacts/stable/governance/release-sha256.txt
+          openssl dgst -sha256 -sign "$key_file" -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-1 artifacts/stable/governance/release-sha256.txt | base64 -w 0 > artifacts/stable/governance/release-sha256.signature.base64
+
+      - name: 生成正式提升 provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: artifacts/stable/governance/release-sha256.txt
+      - uses: sigstore/cosign-installer@v3
+      - name: 复验同一 OCI digest 的 Cosign 签名
+        env:
+          CORE_IMAGE: ${{ steps.candidate.outputs.core_image }}
+          EDGE_IMAGE: ${{ steps.candidate.outputs.edge_image }}
+        run: |
+          set -euo pipefail
+          cosign verify "$CORE_IMAGE" --certificate-identity-regexp 'https://github.com/.+/.github/workflows/' --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+          cosign verify "$EDGE_IMAGE" --certificate-identity-regexp 'https://github.com/.+/.github/workflows/' --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: visicore-stable-release-governance
+          retention-days: 180
+          path: artifacts/stable/governance/
+      - name: 创建正式 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STABLE_TAG: ${{ steps.candidate.outputs.stable_tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$STABLE_TAG" artifacts/stable/public/* --title "VisiCore ${STABLE_TAG}" --notes-file "docs/releases/${STABLE_TAG}/release-notes.md"

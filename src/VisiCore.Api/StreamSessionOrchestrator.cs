@@ -19,7 +19,8 @@ public sealed class StreamSessionOrchestrator(
     IOptions<StreamGatewayOptions> options,
     RecorderOperationRoutingService operationRoutingService,
     PlatformAccessService accessService,
-    DevicePluginCapabilityService? capabilityService = null)
+    DevicePluginCapabilityService? capabilityService = null,
+    PlatformTelemetry? telemetry = null)
 {
     public const string PlaybackRelayAggregateType = "playback_relay_session";
     private static readonly string[] PlaybackRelayStartCommandTypes =
@@ -43,6 +44,8 @@ public sealed class StreamSessionOrchestrator(
         Guid clientRequestId,
         CancellationToken cancellationToken)
     {
+        using var activity = telemetry?.StartActivity("visicore.stream.session.issue");
+        activity?.SetTag("visicore.stream.operation", "live");
         var settings = GetValidatedSettings();
         if (operation != CameraPermission.LiveView)
         {
@@ -140,6 +143,8 @@ public sealed class StreamSessionOrchestrator(
                 await dbContext.SaveChangesAsync(cancellationToken);
                 var issued = await IssueTicketAsync(session, settings, now, cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
+                telemetry?.RecordStreamSessionIssued("live");
+                activity?.SetTag("visicore.stream.issued", true);
                 return issued;
             }
             catch (Exception exception) when (IsRetryableDatabaseException(exception) && attempt < 3)
@@ -165,6 +170,8 @@ public sealed class StreamSessionOrchestrator(
         PlaybackSessionRequest request,
         CancellationToken cancellationToken)
     {
+        using var activity = telemetry?.StartActivity("visicore.stream.session.issue");
+        activity?.SetTag("visicore.stream.operation", "playback");
         var settings = GetValidatedSettings();
         ValidatePlaybackRequest(userSessionId, request);
         for (var attempt = 1; attempt <= 3; attempt++)
@@ -266,6 +273,8 @@ public sealed class StreamSessionOrchestrator(
                 dbContext.EdgeCommands.Add(startCommand);
                 await dbContext.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
+                telemetry?.RecordStreamSessionIssued("playback");
+                activity?.SetTag("visicore.stream.issued", true);
                 return new CreatedPlaybackSession(session, new PlaybackRelaySessionState(
                     PlaybackRelayStatus.Pending,
                     startCommand.Id,
