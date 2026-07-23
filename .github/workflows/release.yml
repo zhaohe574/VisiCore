@@ -370,6 +370,7 @@ jobs:
             --arg tag "$release_tag" \
             --arg source_commit "$source_commit" \
             --arg created "$issued_at" \
+            --arg core_version "$core_version" \
             --arg core_reference "$core_image" \
             --arg core_digest "$core_digest" \
             --arg edge_reference "$edge_image" \
