@@ -183,6 +183,7 @@ jobs:
           arch: 'win64_mingw'
           tools: 'tools_mingw1310'
       - shell: pwsh
+        working-directory: src/VisiCore.QtViewer
         run: |
           $qtRoot = $env:QT_ROOT_DIR
           if ([string]::IsNullOrWhiteSpace($qtRoot) -or -not (Test-Path -LiteralPath (Join-Path $qtRoot 'lib\cmake\Qt6\Qt6Config.cmake'))) { throw 'install-qt-action 未提供有效的 QT_ROOT_DIR。' }
@@ -192,7 +193,7 @@ jobs:
           $env:Path = "$($mingwBin.FullName)\bin;$env:Path"
           cmake --preset windows-release
           cmake --build --preset windows-release --parallel 1
-          ctest --test-dir src\VisiCore.QtViewer\build\release --output-on-failure
+          ctest --test-dir build\release --output-on-failure
 
   windows-viewer-package:
     if: ${{ vars.VISICORE_MPV_RUNTIME_URL != '' && vars.VISICORE_MPV_RUNTIME_SHA256 != '' && vars.VISICORE_MPV_RUNTIME_VERSION != '' && vars.VISICORE_MPV_RUNTIME_LICENSE_URL != '' && vars.VISICORE_QT_LICENSE_URL != '' && vars.VISICORE_QT_LICENSE_SHA256 != '' }}
@@ -299,9 +300,9 @@ jobs:
       - run: |
           npm --prefix src/VisiCore.Admin run dev -- --host 127.0.0.1 > "$RUNNER_TEMP/visicore-admin-vite.log" 2>&1 &
           for attempt in {1..30}; do
-            if curl --fail --silent http://127.0.0.1:5173/admin > /dev/null; then exit 0; fi
+            if curl --fail --silent http://127.0.0.1:5178/admin > /dev/null; then exit 0; fi
             sleep 1
           done
           cat "$RUNNER_TEMP/visicore-admin-vite.log"
           exit 1
-      - run: python tests/admin-ui-smoke.py
+      - run: python tests/admin-ui-smoke.py --base-url http://127.0.0.1:5178
