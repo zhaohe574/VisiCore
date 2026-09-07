@@ -1,0 +1,107 @@
+<Window x:Class="VideoPlatform.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="京华安防平台" Width="1440" Height="900" MinWidth="1000" MinHeight="680"
+        WindowStartupLocation="CenterScreen" FontFamily="Microsoft YaHei UI" FontSize="13" UseLayoutRounding="True"
+        Background="{StaticResource PageBrush}" Foreground="{StaticResource TextBrush}"
+        Deactivated="WindowDeactivated" Closing="WindowClosing" Loaded="WindowLoaded"
+        PreviewKeyDown="WindowKeyDown" PreviewMouseLeftButtonUp="PtzStopClick">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="VisibleWhenTrue" />
+        <Style TargetType="TreeViewItem">
+            <Setter Property="IsExpanded" Value="True" /><Setter Property="Foreground" Value="{StaticResource TextBrush}" /><Setter Property="Padding" Value="4,7" />
+            <Setter Property="Visibility" Value="{Binding IsVisible, Converter={StaticResource VisibleWhenTrue}}" />
+            <Style.Resources><SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#514047" /><SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}" Color="#3B3E44" /></Style.Resources>
+        </Style>
+    </Window.Resources>
+    <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="48" /><RowDefinition Height="42" /><RowDefinition Height="*" /><RowDefinition Height="30" /></Grid.RowDefinitions>
+        <Border Grid.Row="0" Background="#16181B" Padding="18,0">
+            <DockPanel LastChildFill="False">
+                <StackPanel Orientation="Horizontal"><Image Source="Assets/Brand.png" Width="28" Height="28" Margin="0,0,10,0" /><TextBlock Text="京华安防平台" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="客户端" Foreground="{StaticResource MutedBrush}" Margin="14,0,0,0" FontSize="11" /></StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center"><TextBlock x:Name="UserText" Text="未登录" Foreground="{StaticResource MutedBrush}" Margin="0,0,12,0" /><Button x:Name="AccountButton" Style="{StaticResource IconButton}" Content="&#xE77B;" ToolTip="登录平台" Click="AccountClick" /><Button Style="{StaticResource IconButton}" Content="&#xE713;" ToolTip="系统设置" Click="ShowSettingsClick" /></StackPanel>
+            </DockPanel>
+        </Border>
+        <Border Grid.Row="1" Background="#25282C" BorderBrush="#17191C" BorderThickness="0,0,0,1">
+            <DockPanel LastChildFill="False">
+                <StackPanel Orientation="Horizontal">
+                    <RadioButton x:Name="LiveTab" Style="{StaticResource TabButton}" GroupName="Module" Tag="live" IsChecked="True" Click="ModuleClick"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE714;" Margin="0,0,9,0" /><TextBlock Text="主预览" /></StackPanel></RadioButton>
+                    <RadioButton x:Name="PlaybackTab" Style="{StaticResource TabButton}" GroupName="Module" Tag="playback" Click="ModuleClick"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE823;" Margin="0,0,9,0" /><TextBlock Text="远程回放" /></StackPanel></RadioButton>
+                    <RadioButton x:Name="AlarmsTab" Style="{StaticResource TabButton}" GroupName="Module" Tag="alarms" Click="ModuleClick"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xEA8F;" Margin="0,0,9,0" /><TextBlock Text="报警中心" /></StackPanel></RadioButton>
+                    <RadioButton x:Name="SettingsTab" Style="{StaticResource TabButton}" GroupName="Module" Tag="settings" Click="ModuleClick"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" Margin="0,0,9,0" /><TextBlock Text="系统设置" /></StackPanel></RadioButton>
+                </StackPanel>
+                <TextBlock DockPanel.Dock="Right" x:Name="ConnectionText" Text="平台未连接" Foreground="{StaticResource MutedBrush}" FontSize="12" Margin="12,0,20,0" />
+            </DockPanel>
+        </Border>
+        <Grid Grid.Row="2" x:Name="WorkspacePanel">
+            <Grid x:Name="MediaPanel">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="268" MinWidth="240" MaxWidth="360" /><ColumnDefinition Width="4" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <Border Background="{StaticResource PanelBrush}">
+                    <DockPanel>
+                        <Grid DockPanel.Dock="Top" Margin="16,12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="资源" FontSize="14" FontWeight="SemiBold" /><TextBlock x:Name="ChannelCountText" Text="尚未同步通道" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,5,0,0" /></StackPanel><Button Grid.Column="1" Style="{StaticResource IconButton}" Content="&#xE72C;" ToolTip="同步通道" Click="RefreshChannelsClick" /></Grid>
+                        <Grid DockPanel.Dock="Top" Margin="12,0,12,10">
+                            <TextBox x:Name="ChannelSearchText" TextChanged="ChannelSearchChanged" Padding="30,7,8,7" ToolTip="搜索车间、区域、机组或通道" AutomationProperties.Name="搜索通道" />
+                            <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE721;" Foreground="{StaticResource MutedBrush}" Margin="10,0,0,0" IsHitTestVisible="False" HorizontalAlignment="Left" />
+                            <TextBlock Text="搜索资源" Foreground="{StaticResource MutedBrush}" Margin="31,0,0,0" IsHitTestVisible="False"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Setter Property="VerticalAlignment" Value="Center" /><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=ChannelSearchText}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+                        </Grid>
+                        <Border x:Name="PtzPanel" DockPanel.Dock="Bottom" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Padding="16,12">
+                            <StackPanel><TextBlock Text="云台控制" FontWeight="SemiBold" Margin="0,0,0,10" />
+                                <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="120" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <Grid Width="110" Height="102"><Grid.RowDefinitions><RowDefinition /><RowDefinition /><RowDefinition /></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                                        <Button Grid.Column="1" Style="{StaticResource IconButton}" Content="&#xE70E;" ToolTip="向上" Tag="up" PreviewMouseLeftButtonDown="PtzStartClick" PreviewMouseLeftButtonUp="PtzStopClick" MouseLeave="PtzStopClick" />
+                                        <Button Grid.Row="1" Style="{StaticResource IconButton}" Content="&#xE76B;" ToolTip="向左" Tag="left" PreviewMouseLeftButtonDown="PtzStartClick" PreviewMouseLeftButtonUp="PtzStopClick" MouseLeave="PtzStopClick" />
+                                        <Button Grid.Row="1" Grid.Column="1" Style="{StaticResource IconButton}" Content="&#xE71A;" ToolTip="停止云台" Click="PtzStopButtonClick" />
+                                        <Button Grid.Row="1" Grid.Column="2" Style="{StaticResource IconButton}" Content="&#xE76C;" ToolTip="向右" Tag="right" PreviewMouseLeftButtonDown="PtzStartClick" PreviewMouseLeftButtonUp="PtzStopClick" MouseLeave="PtzStopClick" />
+                                        <Button Grid.Row="2" Grid.Column="1" Style="{StaticResource IconButton}" Content="&#xE70D;" ToolTip="向下" Tag="down" PreviewMouseLeftButtonDown="PtzStartClick" PreviewMouseLeftButtonUp="PtzStopClick" MouseLeave="PtzStopClick" />
+                                    </Grid>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center"><TextBlock Text="变倍" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Center" Margin="0,0,0,8" /><StackPanel Orientation="Horizontal"><Button Style="{StaticResource IconButton}" Content="&#xE8A3;" ToolTip="缩小" Tag="zoomOut" PreviewMouseLeftButtonDown="PtzStartClick" PreviewMouseLeftButtonUp="PtzStopClick" MouseLeave="PtzStopClick" /><Button Style="{StaticResource IconButton}" Content="&#xE8A4;" ToolTip="放大" Tag="zoomIn" PreviewMouseLeftButtonDown="PtzStartClick" PreviewMouseLeftButtonUp="PtzStopClick" MouseLeave="PtzStopClick" /></StackPanel></StackPanel>
+                                </Grid>
+                                <DockPanel Margin="0,10,0,0"><TextBlock Text="速度" Foreground="{StaticResource MutedBrush}" Margin="0,0,12,0" /><TextBlock DockPanel.Dock="Right" Text="{Binding Value, ElementName=PtzSpeedSlider, StringFormat=F0}" Width="20" TextAlignment="Right" /><Slider x:Name="PtzSpeedSlider" Minimum="1" Maximum="7" Value="4" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" AutomationProperties.Name="云台速度" /></DockPanel>
+                            </StackPanel>
+                        </Border>
+                        <ScrollViewer x:Name="RecordingSearchPanel" DockPanel.Dock="Bottom" MaxHeight="290" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                            <StackPanel Margin="14,12"><TextBlock Text="录像检索" FontWeight="SemiBold" Margin="0,0,0,10" /><TextBlock Text="通道号" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,4" /><TextBox x:Name="PlaybackChannelText" Text="8" AutomationProperties.Name="检索通道号" /><TextBlock Text="开始时间" Foreground="{StaticResource MutedBrush}" Margin="0,8,0,4" /><TextBox x:Name="StartText" AutomationProperties.Name="开始时间" /><TextBlock Text="结束时间" Foreground="{StaticResource MutedBrush}" Margin="0,8,0,4" /><TextBox x:Name="EndText" AutomationProperties.Name="结束时间" /><Button Content="检索录像" Click="SearchRecordingsClick" Background="{StaticResource AccentBrush}" Margin="0,12,0,0" /></StackPanel>
+                        </ScrollViewer>
+                        <TreeView x:Name="ChannelTree" Background="Transparent" BorderThickness="0" Foreground="{StaticResource TextBrush}" Margin="8,0,4,8" SelectedItemChanged="ChannelTreeSelected" MouseDoubleClick="ChannelTreeDoubleClick" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <TreeView.ItemTemplate><HierarchicalDataTemplate ItemsSource="{Binding Children}"><StackPanel Orientation="Horizontal"><CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Visibility="{Binding IsChannel, Converter={StaticResource VisibleWhenTrue}}" Checked="ChannelChecked" Unchecked="ChannelChecked" Margin="0,0,8,0" VerticalAlignment="Center" ToolTip="选择通道" /><TextBlock FontFamily="Segoe MDL2 Assets" Text="{Binding Icon}" Foreground="{StaticResource MutedBrush}" Margin="0,0,8,0" /><TextBlock Text="{Binding Label}" TextTrimming="CharacterEllipsis" MaxWidth="230" ToolTip="{Binding Label}" /></StackPanel></HierarchicalDataTemplate></TreeView.ItemTemplate></TreeView>
+                    </DockPanel>
+                </Border>
+                <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Stretch" Background="#202225" />
+                <Grid Grid.Column="2"><Grid.RowDefinitions><RowDefinition Height="38" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="44" /></Grid.RowDefinitions>
+                    <Border Background="#2C2F34" Padding="14,0"><DockPanel><TextBlock x:Name="ViewTitleText" Text="主预览" FontSize="12" /><TextBlock x:Name="ActiveWindowText" DockPanel.Dock="Right" Text="窗口 01" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right" FontSize="12" /></DockPanel></Border>
+                    <UniformGrid Grid.Row="1" x:Name="VideoGrid" Rows="2" Columns="2" Background="#191B1E" />
+                    <Grid Grid.Row="2" x:Name="PlaybackPanel" Visibility="Collapsed" Height="176" Background="#2A2D31">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="300" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <DockPanel Margin="14,10"><TextBlock DockPanel.Dock="Top" Text="录像片段" FontWeight="SemiBold" Margin="0,0,0,5" /><ListView x:Name="RecordingList" ScrollViewer.HorizontalScrollBarVisibility="Disabled"><ListView.ItemTemplate><DataTemplate><Button Tag="{Binding}" Click="RecordingClick" HorizontalContentAlignment="Left" Padding="3,5"><TextBlock Text="{Binding Display}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Display}" /></Button></DataTemplate></ListView.ItemTemplate></ListView></DockPanel>
+                        <StackPanel Grid.Column="1" Margin="18,14"><TextBlock Text="同步回放" FontWeight="SemiBold" /><Slider x:Name="PlaybackSlider" Minimum="0" Maximum="100" TickFrequency="10" Margin="0,16,0,8" PreviewMouseLeftButtonUp="PlaybackSliderMouseUp" AutomationProperties.Name="回放进度" /><TextBlock x:Name="PlaybackStatusText" Text="暂无回放会话" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" MaxHeight="20" /><StackPanel Orientation="Horizontal" Margin="0,10,0,0"><Button Style="{StaticResource IconButton}" Content="&#xE768;" ToolTip="继续回放" Click="ResumeClick" /><Button Style="{StaticResource IconButton}" Content="&#xE769;" ToolTip="暂停回放" Click="PauseClick" /><Button Style="{StaticResource IconButton}" Content="&#xEB9E;" ToolTip="减慢回放" Tag="slow" Click="PlaybackSpeedClick" /><Button Content="1×" ToolTip="恢复正常速度" Tag="normal" Click="PlaybackSpeedClick" Padding="10,0" /><Button Style="{StaticResource IconButton}" Content="&#xEB9D;" ToolTip="加快回放" Tag="fast" Click="PlaybackSpeedClick" /></StackPanel></StackPanel>
+                    </Grid>
+                    <Border Grid.Row="3" Background="#303338" Padding="8,5"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal"><Button Click="StartMediaClick" Padding="8,0" ToolTip="播放勾选通道"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE768;" Margin="0,0,7,0" /><TextBlock Text="播放" /></StackPanel></Button><Button Style="{StaticResource IconButton}" Content="&#xE71A;" ToolTip="停止全部窗口" Click="StopClick" /><Button Style="{StaticResource IconButton}" Content="&#xE74E;" ToolTip="停止当前窗口" Click="StopWindowClick" /><Button Style="{StaticResource IconButton}" Content="&#xE722;" ToolTip="当前窗口截图" Click="CaptureClick" /><Border Width="1" Height="18" Background="{StaticResource LineBrush}" Margin="6,0" /><StackPanel x:Name="StreamPanel" Orientation="Horizontal" VerticalAlignment="Center"><RadioButton x:Name="MainStreamButton" Style="{StaticResource SegmentButton}" GroupName="Stream" Content="主码流" Tag="1" Click="StreamTypeClick" /><RadioButton x:Name="SubStreamButton" Style="{StaticResource SegmentButton}" GroupName="Stream" Content="子码流" Tag="2" IsChecked="True" Click="StreamTypeClick" /></StackPanel></StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><RadioButton x:Name="Layout1Button" GroupName="Layout" Style="{StaticResource SegmentButton}" Content="1" Tag="1" ToolTip="单窗口" Click="LayoutClick" /><RadioButton x:Name="Layout4Button" GroupName="Layout" Style="{StaticResource SegmentButton}" Content="4" Tag="4" ToolTip="四分屏" IsChecked="True" Click="LayoutClick" /><RadioButton x:Name="Layout9Button" GroupName="Layout" Style="{StaticResource SegmentButton}" Content="9" Tag="9" ToolTip="九分屏" Click="LayoutClick" /><RadioButton x:Name="Layout16Button" GroupName="Layout" Style="{StaticResource SegmentButton}" Content="16" Tag="16" ToolTip="十六分屏" Click="LayoutClick" /><Border Width="1" Height="18" Background="{StaticResource LineBrush}" Margin="6,0" /><Button Style="{StaticResource IconButton}" Content="&#xE740;" ToolTip="全屏／退出全屏" Click="FullscreenClick" /></StackPanel>
+                    </Grid></Border>
+                </Grid>
+            </Grid>
+        </Grid>
+        <Grid Grid.Row="2" x:Name="AlarmPanel" Visibility="Collapsed" Background="{StaticResource PageBrush}" Margin="24">
+            <Grid.RowDefinitions><RowDefinition Height="52" /><RowDefinition Height="32" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+            <DockPanel><TextBlock Text="实时报警" FontSize="20" FontWeight="SemiBold" /><Button DockPanel.Dock="Right" Content="全部标为已读" Click="ReadAlarmsClick" Background="{StaticResource PanelBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" /></DockPanel>
+            <Border Grid.Row="1" Background="{StaticResource PanelBrush}" Padding="12,0"><TextBlock Text="事件时间 ／ 通道 ／ 报警内容" Foreground="{StaticResource MutedBrush}" FontSize="12" /></Border>
+            <ListBox Grid.Row="2" x:Name="AlarmList" />
+            <TextBlock Grid.Row="2" Text="暂无报警记录" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Items.Count, ElementName=AlarmList}" Value="0"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
+        </Grid>
+        <ScrollViewer Grid.Row="2" x:Name="SettingsPanel" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="40,30" Width="580" HorizontalAlignment="Left"><TextBlock Text="系统设置" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,28" /><TextBlock Text="平台连接" FontSize="15" Margin="0,0,0,16" /><TextBlock Text="平台地址" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,8" /><TextBox Text="{Binding Text, ElementName=ApiBaseText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="{Binding IsReadOnly, ElementName=ApiBaseText}" /><StackPanel Orientation="Horizontal" Margin="0,16,0,0"><Button Content="保存设置" Background="{StaticResource PanelBrush}" Click="SaveSettingsClick" /><Button Content="登录平台" Click="ShowLoginClick" Margin="12,0,0,0" /></StackPanel><Border Height="1" Background="{StaticResource LineBrush}" Margin="0,30" /><TextBlock Text="客户端版本" FontSize="15" Margin="0,0,0,16" /><TextBlock x:Name="VersionText" Foreground="{StaticResource MutedBrush}" /><StackPanel Orientation="Horizontal" Margin="0,16,0,0"><Button Content="检查更新" Background="{StaticResource PanelBrush}" Click="CheckUpdateClick" /><Button Content="打开截图文件夹" Click="OpenCapturesClick" Margin="12,0,0,0" /></StackPanel><TextBlock x:Name="UpdateText" Foreground="{StaticResource MutedBrush}" Margin="0,12,0,0" TextWrapping="Wrap" /></StackPanel>
+        </ScrollViewer>
+        <Border Grid.Row="2" x:Name="LoginPanel" Background="#24272B" Panel.ZIndex="10">
+            <StackPanel Width="350" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Image Source="Assets/Brand.png" Width="48" Height="48" HorizontalAlignment="Left" Margin="0,0,0,14" /><TextBlock Text="京华安防平台" FontSize="26" FontWeight="SemiBold" /><TextBlock Text="客户端登录" Foreground="{StaticResource MutedBrush}" Margin="0,8,0,20" />
+                <TextBlock Text="平台地址" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6" /><TextBox x:Name="ApiBaseText" Text="https://10.37.200.74" AutomationProperties.Name="平台地址" />
+                <TextBlock Text="用户名" Foreground="{StaticResource MutedBrush}" Margin="0,12,0,6" /><TextBox x:Name="UsernameText" Text="admin" AutomationProperties.Name="用户名" />
+                <TextBlock Text="密码" Foreground="{StaticResource MutedBrush}" Margin="0,12,0,6" /><PasswordBox x:Name="PasswordText" AutomationProperties.Name="密码" />
+                <TextBlock x:Name="LoginErrorText" Foreground="#F09A9F" TextWrapping="Wrap" Margin="0,10,0,0" MaxHeight="44" />
+                <Button x:Name="LoginButton" Content="登录" Click="LoginClick" Background="{StaticResource AccentBrush}" Margin="0,12,0,0" Height="40" IsDefault="True" /><Button Content="暂不登录" Click="DismissLoginClick" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0" />
+            </StackPanel>
+        </Border>
+        <Border Grid.Row="3" Background="#191C1F" Padding="14,0"><DockPanel><Button DockPanel.Dock="Right" Click="ShowAlarmsClick" Padding="0" Margin="12,0,0,0"><StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xEA8F;" Foreground="#D9AD62" Margin="0,0,8,0" /><TextBlock x:Name="AlarmText" Text="暂无未读报警" Foreground="{StaticResource MutedBrush}" FontSize="11" /></StackPanel></Button><TextBlock x:Name="StatusText" Text="请输入平台账号登录" FontSize="11" Foreground="{StaticResource MutedBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" /></DockPanel></Border>
+    </Grid>
+</Window>

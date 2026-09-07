@@ -1,0 +1,14 @@
+artifacts/
+**/bin/
+**/obj/
+*.user
+*.suo
+*.env
+SdkLog_*/
+**/node_modules/
+**/dist/
+**/__pycache__/
+HCNetSDK*/
+.wix/
+tools/wix/
+tools/wix6/

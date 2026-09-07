@@ -1,0 +1,11 @@
+services:
+  zlmediakit:
+    image: docker.1panel.live/zlmediakit/zlmediakit:master
+    container_name: video-platform-zlm
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./config:/opt/media/conf:ro
+      - ./data:/opt/media/bin/www
+    environment:
+      TZ: Asia/Shanghai

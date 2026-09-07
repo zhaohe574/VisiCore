@@ -1,0 +1,19 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <?ifndef TestVersion ?><?define TestVersion="1.0.0" ?><?endif ?>
+  <Package Name="VideoPlatform 更新器验收" Manufacturer="Local QA" Version="$(var.TestVersion)" UpgradeCode="4BE2B57A-D4D7-47AB-B361-774F1A3BE14A" Scope="perUser">
+    <MediaTemplate EmbedCab="yes" />
+    <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="测试包版本不允许降级。" />
+    <Feature Id="Main"><ComponentRef Id="Marker" /></Feature>
+    <?ifdef FailUpgrade ?>
+    <CustomAction Id="FailUpgrade" Error="测试用：主动触发升级事务回滚。" />
+    <InstallExecuteSequence><Custom Action="FailUpgrade" Before="InstallFinalize" Condition="NOT Installed" /></InstallExecuteSequence>
+    <?endif ?>
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="QADirectory" Name="VideoPlatform-Updater-QA">
+        <Component Id="Marker" Guid="*">
+          <File Source="$(sys.SOURCEFILEDIR)updater-test-marker.txt" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+  </Package>
+</Wix>

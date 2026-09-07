@@ -1,0 +1,24 @@
+[Unit]
+Description=海康设备适配服务
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=liteware
+Group=liteware
+WorkingDirectory=/opt/video-platform
+EnvironmentFile=/home/liteware/.config/video-platform/hikvision-adapter.env
+Environment=LD_LIBRARY_PATH=/opt/video-platform/sdk/hikvision
+ExecStartPre=/usr/bin/test -x /opt/video-platform/Hikvision.Adapter
+ExecStartPre=/usr/bin/test -f /opt/video-platform/sdk/hikvision/libhcnetsdk.so
+ExecStart=/opt/video-platform/Hikvision.Adapter
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/liteware/.local/share/video-platform
+
+[Install]
+WantedBy=multi-user.target

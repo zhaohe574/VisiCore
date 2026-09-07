@@ -1,0 +1,22 @@
+[Unit]
+Description=ZLMediaKit 媒体服务
+Wants=network-online.target
+After=network-online.target video-platform-api.service
+
+[Service]
+Type=simple
+User=liteware
+Group=liteware
+WorkingDirectory=/opt/video-platform/zlm
+ExecStartPre=/usr/bin/test -x /opt/video-platform/zlm/MediaServer
+ExecStart=/opt/video-platform/zlm/MediaServer -c /opt/video-platform/zlm/config.ini
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/video-platform/zlm/www /opt/video-platform/zlm/log
+
+[Install]
+WantedBy=multi-user.target

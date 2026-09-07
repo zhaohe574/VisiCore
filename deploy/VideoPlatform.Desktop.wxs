@@ -1,0 +1,65 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <?define PublishDir="$(sys.SOURCEFILEDIR)..\artifacts\desktop-win-x64" ?>
+  <Package Name="京华安防平台" Manufacturer="Liteware" Version="!(bind.fileVersion.DesktopExecutable)" UpgradeCode="8D1D5A6B-5E3C-4CF8-9D5E-9A7B1E5B7A11" Scope="perMachine" Language="2052" Codepage="65001">
+    <SummaryInformation Description="京华安防平台桌面客户端安装程序" />
+    <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="已安装更高版本的京华安防平台。" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Icon Id="AppIcon" SourceFile="$(sys.SOURCEFILEDIR)..\src\VideoPlatform.Desktop\Assets\AppIcon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="AppIcon" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" Sequence="both" />
+    <Property Id="INSTALLFOLDER" Secure="yes" />
+    <Property Id="SAVEDINSTALLDIR">
+      <RegistrySearch Id="PreviousInstallDirectory" Root="HKLM" Key="Software\Liteware\VideoPlatform.Desktop" Name="InstallDir" Type="raw" Bitness="always64" />
+    </Property>
+    <SetProperty Id="INSTALLFOLDER" Value="[SAVEDINSTALLDIR]" Before="CostFinalize" Sequence="both" Condition="SAVEDINSTALLDIR AND NOT INSTALLFOLDER" />
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(sys.SOURCEFILEDIR)..\src\VideoPlatform.Desktop\Assets\InstallerBanner.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(sys.SOURCEFILEDIR)..\src\VideoPlatform.Desktop\Assets\InstallerDialog.bmp" />
+    <UI>
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2" Condition="NOT Installed" />
+      <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" Condition="1" />
+    </UI>
+    <Feature Id="MainFeature" Title="京华安防平台" Level="1">
+      <ComponentGroupRef Id="ApplicationFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcutComponent" />
+      <ComponentRef Id="InstallDirectoryRegistry" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="VideoPlatform.Desktop" />
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder"><Directory Id="ProductMenuFolder" Name="京华安防平台" /></StandardDirectory>
+    <StandardDirectory Id="DesktopFolder" />
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ApplicationFiles" Directory="INSTALLFOLDER">
+      <Component Id="DesktopExecutableComponent" Guid="*">
+        <File Id="DesktopExecutable" Source="$(var.PublishDir)\VideoPlatform.Desktop.exe" KeyPath="yes" />
+      </Component>
+      <Files Include="$(var.PublishDir)\**">
+        <Exclude Files="$(var.PublishDir)\VideoPlatform.Desktop.exe" />
+        <Exclude Files="$(var.PublishDir)\**\*.pdb" />
+      </Files>
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <Component Id="StartMenuShortcut" Directory="ProductMenuFolder" Guid="*">
+      <Shortcut Id="StartMenuLink" Name="京华安防平台" Target="[INSTALLFOLDER]VideoPlatform.Desktop.exe" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
+      <Shortcut Id="UninstallLink" Name="卸载京华安防平台" Target="[SystemFolder]msiexec.exe" Arguments="/x [ProductCode]" Icon="AppIcon" />
+      <RemoveFolder Id="RemoveProductMenuFolder" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\Liteware\VideoPlatform.Desktop" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+    <Component Id="DesktopShortcutComponent" Directory="DesktopFolder" Guid="*">
+      <Shortcut Id="DesktopLink" Name="京华安防平台" Target="[INSTALLFOLDER]VideoPlatform.Desktop.exe" WorkingDirectory="INSTALLFOLDER" Icon="AppIcon" />
+      <RegistryValue Root="HKCU" Key="Software\Liteware\VideoPlatform.Desktop" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+    <Component Id="InstallDirectoryRegistry" Directory="INSTALLFOLDER" Guid="*">
+      <RegistryValue Root="HKLM" Key="Software\Liteware\VideoPlatform.Desktop" Name="InstallDir" Value="[INSTALLFOLDER]" Type="string" KeyPath="yes" />
+    </Component>
+  </Fragment>
+</Wix>
