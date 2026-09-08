@@ -6,6 +6,16 @@ internal static class AdapterEndpoints
     public static void Map(WebApplication app, DeviceRegistry registry, ExportService exports)
     {
         app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "hikvision-adapter", version = "2.0.0", detail = registry.Health }));
+        app.MapGet("/manifest", () => Results.Ok(new
+        {
+            id = "hikvision",
+            name = "海康威视网络设备驱动",
+            vendor = "Hikvision",
+            version = "2.0.0",
+            description = "支持海康威视全系列网络摄像机（IPC）、嵌入式录像机（NVR/DVR）及存储服务器，支持 ISAPI 与 HCNetSDK 混合协议，纯透传零转码。",
+            protocol = "http",
+            capabilities = new[] { "live", "playback", "recordings", "ptz", "alarms", "presets" }
+        }));
         app.MapPut("/internal/devices/{deviceId:long}", async (long deviceId, DeviceRegistration request) => Results.Ok(await registry.RegisterAsync(deviceId, request)));
         app.MapDelete("/internal/devices/{deviceId:long}", async (long deviceId) => { await registry.DeleteAsync(deviceId); return Results.NoContent(); });
         app.MapPost("/internal/devices/{deviceId:long}/sync", async (long deviceId) => Results.Ok(await registry.SyncAsync(deviceId)));

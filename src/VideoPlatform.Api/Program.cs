@@ -118,6 +118,7 @@ app.MapAlarmEndpoints();
 app.MapExportEndpoints();
 app.MapReleaseEndpoints();
 app.MapAdministrationEndpoints();
+app.MapPluginEndpoints();
 app.MapHub<EventHub>("/hubs/v2/events").RequireAuthorization();
 app.Run();
 

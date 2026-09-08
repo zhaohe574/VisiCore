@@ -29,7 +29,10 @@ public static class ApiContractCatalog
             ["UploadRelease"] = new(201, typeof(ReleaseDto)), ["GetLatestRelease"] = new(200, typeof(LatestReleaseDto)),
             ["DownloadExport"] = new(200, null, ContentTypes: ["video/mp4", "application/zip"]),
             ["DownloadRelease"] = new(200, null, ContentTypes: ["application/octet-stream"]),
-            ["GetAlarmImage"] = new(200, null, ContentTypes: ["image/jpeg", "image/png"])
+            ["GetAlarmImage"] = new(200, null, ContentTypes: ["image/jpeg", "image/png"]),
+            ["ListPlugins"] = new(200, typeof(DevicePluginDto[])),
+            ["UpdatePluginStatus"] = new(200, typeof(DevicePluginDto)),
+            ["GetPluginHealth"] = new(200, null)
         };
         foreach (var id in new[] { "StartLive", "GetliveSession", "RenewliveSession" }) values[id] = new(200, typeof(LiveSessionDto));
         foreach (var id in new[] { "StartPlayback", "GetplaybackSession", "RenewplaybackSession" }) values[id] = new(200, typeof(PlaybackSessionDto));

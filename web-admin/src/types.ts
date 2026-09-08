@@ -8,8 +8,23 @@ export type User = SchemaDto<'UserDto'>
 export type LoginResult = SchemaDto<'AuthResponse'>
 export type Role = SchemaDto<'AdministrationRoleDto'>
 export type Permission = SchemaDto<'PermissionDto'>
-export type Device = SchemaDto<'DeviceDto'>
-export type DeviceInput = Omit<SchemaDto<'DeviceRequest'>, 'password'> & { password?: string | null }
+export type Device = SchemaDto<'DeviceDto'> & { pluginId?: string | null; pluginName?: string | null }
+export type DeviceInput = Omit<SchemaDto<'DeviceRequest'>, 'password'> & { password?: string | null; pluginId?: string | null }
+export interface DevicePlugin {
+  id: string
+  name: string
+  vendor: string
+  version: string
+  description?: string | null
+  status: 'active' | 'disabled'
+  endpointUrl: string
+  capabilities: string[]
+  configSchema?: Record<string, unknown> | null
+  deviceCount: number
+  healthStatus?: 'online' | 'offline' | 'disabled' | 'unknown' | null
+  createdAt: string
+  updatedAt: string
+}
 export type Channel = SchemaDto<'ChannelDto'> & { alias?: string | null }
 export type OrganizationNode = SchemaDto<'OrganizationNodeDto'>
 export type Organization = SchemaDto<'OrganizationTreeDto'>

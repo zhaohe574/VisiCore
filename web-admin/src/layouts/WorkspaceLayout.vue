@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Bell, Camera, Collection, Connection, Download, Expand, FolderOpened, House, List, Lock, Monitor, Setting, SwitchButton, User, VideoCamera, VideoPlay } from '@element-plus/icons-vue'
+import { Bell, Camera, Collection, Connection, Cpu, Download, Expand, FolderOpened, House, List, Lock, Monitor, Setting, SwitchButton, User, VideoCamera, VideoPlay } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAuth } from '../stores/auth'
 import { useEvents } from '../stores/events'
@@ -11,7 +11,7 @@ const auth = useAuth(), events = useEvents(), route = useRoute(), router = useRo
 const mobileOpen = ref(false), leaving = ref(false)
 const sections = [
   { name: '值守中心', links: [{ path: '/app', title: '运行总览', icon: House, permission: 'statistics.read' }, { path: '/app/live', title: '实时预览', icon: VideoCamera, permission: 'live.view' }, { path: '/app/playback', title: '录像回放', icon: VideoPlay, permission: 'playback.view' }, { path: '/app/alarms', title: '报警中心', icon: Bell, permission: 'alarm.read' }, { path: '/app/exports', title: '录像导出', icon: Download, permission: 'export.create' }, { path: '/app/layouts', title: '收藏与轮巡', icon: Collection, permission: 'live.view' }] },
-  { name: '平台管理', links: [{ path: '/app/devices', title: '设备管理', icon: Camera, permission: 'device.read' }, { path: '/app/organization', title: '组织与通道', icon: FolderOpened, permission: 'area.read' }, { path: '/app/accounts', title: '账号与角色', icon: User, permission: 'user.read' }, { path: '/app/sessions', title: '在线会话', icon: Connection, permission: 'session.manage' }, { path: '/app/audit', title: '操作审计', icon: List, permission: 'audit.read' }, { path: '/app/releases', title: '版本发布', icon: Monitor, permission: 'desktop.release.manage' }, { path: '/app/settings', title: '系统设置', icon: Setting, permission: 'settings.manage' }] },
+  { name: '平台管理', links: [{ path: '/app/devices', title: '设备管理', icon: Camera, permission: 'device.read' }, { path: '/app/plugins', title: '插件管理', icon: Cpu, permission: 'device.manage' }, { path: '/app/organization', title: '组织与通道', icon: FolderOpened, permission: 'area.read' }, { path: '/app/accounts', title: '账号与角色', icon: User, permission: 'user.read' }, { path: '/app/sessions', title: '在线会话', icon: Connection, permission: 'session.manage' }, { path: '/app/audit', title: '操作审计', icon: List, permission: 'audit.read' }, { path: '/app/releases', title: '版本发布', icon: Monitor, permission: 'desktop.release.manage' }, { path: '/app/settings', title: '系统设置', icon: Setting, permission: 'settings.manage' }] },
 ]
 const visibleSections = computed(() => sections.map(section => ({ ...section, links: section.links.filter(link => link.path === '/app/accounts' ? auth.can('user.read') || auth.can('role.read') : auth.can(link.permission)) })).filter(section => section.links.length))
 async function logout() {

@@ -7,6 +7,7 @@ internal readonly record struct LiveKey(long DeviceId, int Channel, int StreamTy
 
 internal sealed class LiveSessions(IDevice device, ZlmClient zlm, TranscodeBudget budget) : IAsyncDisposable
 {
+    public TranscodeBudget Budget => budget;
     private sealed class Shared(LiveKey key, string codec, string? proxy, Process? process, IDisposable? slot, LiveKey? dependency)
     {
         public LiveKey Key { get; } = key;
@@ -58,58 +59,20 @@ internal sealed class LiveSessions(IDevice device, ZlmClient zlm, TranscodeBudge
         if (device.Simulated)
         {
             var sourceCodec = key.StreamType == 1 ? "H265" : "H264";
-            var transcode = key.Profile == "browser" && sourceCodec == "H265";
-            var simulated = new Shared(key, transcode ? "H264" : sourceCodec, null, null, transcode ? budget.Acquire() : null, null) { References = 1 };
+            var simulated = new Shared(key, sourceCodec, null, null, null, null) { References = 1 };
             _streams.Add(key, simulated); return simulated;
         }
-        if (key.Profile == "browser")
+        var host = device.Options.DeviceIp.Contains(':') ? $"[{device.Options.DeviceIp}]" : device.Options.DeviceIp;
+        var origin = $"rtsp://{Uri.EscapeDataString(device.Options.Username)}:{Uri.EscapeDataString(device.Options.Password)}@{host}:554/Streaming/Channels/{key.Channel}{key.StreamType:D2}";
+        var proxy = await zlm.AddProxyAsync(key.Stream, origin, token);
+        try
         {
-            var nativeKey = key with { Profile = "native" };
-            var native = await AcquireAsync(nativeKey, token);
-            IDisposable? slot = null;
-            Process? process = null;
-            Task? drain = null;
-            try
-            {
-                var origin = MediaTools.InternalRtsp("live", nativeKey.Stream);
-                if (native.Codec == "H264")
-                {
-                    var proxy = await zlm.AddProxyAsync(key.Stream, origin, token);
-                    var shared = new Shared(key, "H264", proxy, null, null, nativeKey) { References = 1 };
-                    _streams.Add(key, shared); return shared;
-                }
-                slot = budget.Acquire();
-                process = MediaTools.Start(MediaTools.Ffmpeg, ["-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-i", origin, "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency", "-pix_fmt", "yuv420p", "-c:a", "aac", "-f", "rtsp", "-rtsp_transport", "tcp", $"{MediaTools.RtspBase.TrimEnd('/')}/live/{key.Stream}"]);
-                drain = Task.WhenAll(MediaTools.DrainAsync(process.StandardError, CancellationToken.None), MediaTools.DrainAsync(process.StandardOutput, CancellationToken.None));
-                await zlm.WaitReadyAsync("live", key.Stream, token);
-                var result = new Shared(key, "H264", null, process, slot, nativeKey) { References = 1, Drain = drain };
-                _streams.Add(key, result); return result;
-            }
-            catch
-            {
-                if (process is not null)
-                {
-                    MediaTools.Kill(process);
-                    if (drain is not null) await drain;
-                    process.Dispose();
-                }
-                slot?.Dispose(); await ReleaseAsync(nativeKey); throw;
-            }
+            await zlm.WaitReadyAsync("live", key.Stream, token);
+            var codecs = await MediaTools.ProbeAsync(MediaTools.InternalRtsp("live", key.Stream), token);
+            var shared = new Shared(key, codecs.DisplayVideo, proxy, null, null, null) { References = 1 };
+            _streams.Add(key, shared); return shared;
         }
-        else
-        {
-            var host = device.Options.DeviceIp.Contains(':') ? $"[{device.Options.DeviceIp}]" : device.Options.DeviceIp;
-            var origin = $"rtsp://{Uri.EscapeDataString(device.Options.Username)}:{Uri.EscapeDataString(device.Options.Password)}@{host}:554/Streaming/Channels/{key.Channel}{key.StreamType:D2}";
-            var proxy = await zlm.AddProxyAsync(key.Stream, origin, token);
-            try
-            {
-                await zlm.WaitReadyAsync("live", key.Stream, token);
-                var codecs = await MediaTools.ProbeAsync(MediaTools.InternalRtsp("live", key.Stream), token);
-                var shared = new Shared(key, codecs.DisplayVideo, proxy, null, null, null) { References = 1 };
-                _streams.Add(key, shared); return shared;
-            }
-            catch { await zlm.DeleteProxyAsync(proxy); throw; }
-        }
+        catch { await zlm.DeleteProxyAsync(proxy); throw; }
     }
     public async Task StopAsync(Guid id)
     {

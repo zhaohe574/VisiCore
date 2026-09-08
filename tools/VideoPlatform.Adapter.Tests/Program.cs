@@ -161,8 +161,8 @@ static async Task MultipleDevices()
     await fixture.Registry.UseAsync(1, async entry => { await entry.Live!.StopAsync(first.SessionId); await entry.Live.StopAsync(first.SessionId); return true; });
     var state = JsonSerializer.SerializeToElement(await fixture.Registry.SessionsAsync()); Check.Equal(2, state.GetProperty("live").GetArrayLength());
     var browser = await fixture.Registry.UseAsync(1, entry => entry.Live!.StartAsync(new(Guid.NewGuid(), 1, 1, "browser"), default));
-    Check.True(browser.Transcoded); Check.Equal("H264", browser.Codec);
-    Check.Equal(1, fixture.Budget.Count);
+    Check.True(!browser.Transcoded); Check.Equal("H265", browser.Codec);
+    Check.Equal(0, fixture.Budget.Count);
     await fixture.Registry.RegisterAsync(1, Registration("127.0.0.1") with { Enabled = false });
     Check.Equal(0, fixture.Budget.Count);
     await Check.ThrowsAsync<AdapterException>(() => fixture.Registry.SyncAsync(1));
@@ -230,6 +230,7 @@ static async Task HttpContract()
     using var unauthorized = new HttpClient { BaseAddress = server.Client.BaseAddress };
     Check.Equal(HttpStatusCode.Unauthorized, (await unauthorized.GetAsync("/health")).StatusCode);
     Check.Equal("2.0.0", (await server.Get("/health")).GetProperty("version").GetString()!);
+    Check.Equal("hikvision", (await server.Get("/manifest")).GetProperty("id").GetString()!);
     Check.Equal(0, (await server.Get("/internal/sessions")).GetProperty("devices").GetArrayLength());
     foreach (var device in new[] { 1, 2 })
     {
@@ -238,7 +239,7 @@ static async Task HttpContract()
     }
     var id = Guid.NewGuid();
     var live = await server.Send(HttpMethod.Post, "/internal/devices/1/live", new { sessionId = id, channel = 1, streamType = 1, profile = "browser" });
-    Check.True(live.GetProperty("transcoded").GetBoolean());
+    Check.True(!live.GetProperty("transcoded").GetBoolean());
     Check.True(!live.GetRawText().Contains("adapter-test-key"));
     var second = await server.Send(HttpMethod.Post, "/internal/devices/2/live", new { sessionId = id, channel = 1, streamType = 1, profile = "native" });
     Check.True(live.GetProperty("stream").GetString() != second.GetProperty("stream").GetString());

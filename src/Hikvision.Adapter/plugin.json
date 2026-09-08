@@ -1,0 +1,21 @@
+{
+  "id": "hikvision",
+  "name": "海康威视网络设备驱动",
+  "vendor": "Hikvision",
+  "version": "2.0.0",
+  "description": "支持海康威视全系列网络摄像机（IPC）、嵌入式录像机（NVR/DVR）及存储服务器，支持 ISAPI 与 HCNetSDK 混合协议，纯透传零转码。",
+  "protocol": "http",
+  "defaultPort": 5092,
+  "capabilities": [
+    "live",
+    "playback",
+    "recordings",
+    "ptz",
+    "alarms",
+    "presets"
+  ],
+  "configSchema": {
+    "type": "object",
+    "properties": {}
+  }
+}

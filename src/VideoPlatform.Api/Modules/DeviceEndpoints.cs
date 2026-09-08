@@ -8,7 +8,7 @@ namespace VideoPlatform.Api.Modules;
 
 public static class DeviceEndpoints
 {
-    public const string DeviceColumns = "d.id,d.name,d.host,d.port,d.username,d.enabled,d.status,d.model,d.serial_number,d.last_seen_at,(select count(*) from channels where device_id=d.id and status<>'disabled') as channel_count,(select count(*) from channels where device_id=d.id and status='online') as online_channels";
+    public const string DeviceColumns = "d.id,d.name,d.host,d.port,d.username,d.enabled,d.status,d.model,d.serial_number,d.last_seen_at,(select count(*) from channels where device_id=d.id and status<>'disabled') as channel_count,(select count(*) from channels where device_id=d.id and status='online') as online_channels,coalesce(d.plugin_id, 'hikvision') as plugin_id,(select name from device_plugins where id=coalesce(d.plugin_id, 'hikvision')) as plugin_name";
 
     public static void MapDeviceEndpoints(this WebApplication app)
     {
@@ -33,11 +33,13 @@ public static class DeviceEndpoints
                 Rules.Require(await db.OneAsync($"select c.id from {AccessService.ChannelFrom} where c.device_id=@id and ({AccessService.ChannelPredicate}) limit 1", new { id, actor.UserId }) is not null, "录像机不在授权范围内", "device.denied", 403);
             return Results.Ok(await db.OneAsync($"select {DeviceColumns} from devices d where d.id=@id", new { id }) ?? throw new PlatformException(404, "device.missing", "录像机不存在"));
         }).Produces<DeviceDto>().WithName("GetDevice");
-        group.MapPost("/devices", async (DeviceRequest request, HttpContext context, Database db, AccessService access, SecretStore secrets, AuditStore audit) =>
+        group.MapPost("/devices", async (DeviceRequest request, HttpContext context, Database db, AccessService access, SecretStore secrets, IDeviceAdapter adapter, AuditStore audit) =>
         {
             await access.DemandAsync(ApiSupport.Actor(context), "device.manage");
             Validate(request, true);
-            var row = await db.OneAsync("insert into devices(name,host,port,username,password_cipher,enabled) values(@name,@host,@port,@username,@password,@enabled) returning id", new { name = request.Name.Trim(), host = request.Host.Trim(), request.Port, username = request.Username.Trim(), password = secrets.Protect(request.Password!), request.Enabled });
+            var pluginId = string.IsNullOrWhiteSpace(request.PluginId) ? "hikvision" : request.PluginId.Trim();
+            var row = await db.OneAsync("insert into devices(name,host,port,username,password_cipher,enabled,plugin_id) values(@name,@host,@port,@username,@password,@enabled,@pluginId) returning id", new { name = request.Name.Trim(), host = request.Host.Trim(), request.Port, username = request.Username.Trim(), password = secrets.Protect(request.Password!), request.Enabled, pluginId });
+            DeviceAdapter.InvalidateRouteCache(row.Id());
             await audit.WriteAsync(ApiSupport.Actor(context).UserId, "device.create", row.Id().ToString(), $"添加录像机：{request.Name}", ApiSupport.Ip(context));
             return Results.Created($"/api/v2/devices/{row.Id()}", row);
         }).WithName("CreateDevice");
@@ -50,7 +52,9 @@ public static class DeviceEndpoints
             foreach (var session in active) await media.StopInternalAsync(Guid.Parse(session.Text("id")));
             var leases = await db.QueryAsync("select p.channel_id from ptz_leases p join channels c on c.id=p.channel_id where c.device_id=@id", new { id });
             foreach (var lease in leases) await media.StopPtzInternalAsync(lease.Id("channelId"));
-            await db.ExecuteAsync("update devices set name=@name,host=@host,port=@port,username=@username,password_cipher=@password,enabled=@enabled,status='unknown' where id=@id", new { id, name = request.Name.Trim(), host = request.Host.Trim(), request.Port, username = request.Username.Trim(), password = string.IsNullOrEmpty(request.Password) ? existing.Text("passwordCipher") : secrets.Protect(request.Password), request.Enabled });
+            var pluginId = string.IsNullOrWhiteSpace(request.PluginId) ? "hikvision" : request.PluginId.Trim();
+            await db.ExecuteAsync("update devices set name=@name,host=@host,port=@port,username=@username,password_cipher=@password,enabled=@enabled,plugin_id=@pluginId,status='unknown' where id=@id", new { id, name = request.Name.Trim(), host = request.Host.Trim(), request.Port, username = request.Username.Trim(), password = string.IsNullOrEmpty(request.Password) ? existing.Text("passwordCipher") : secrets.Protect(request.Password), request.Enabled, pluginId });
+            DeviceAdapter.InvalidateRouteCache(id);
             try { await adapter.SendAsync(HttpMethod.Delete, $"/internal/devices/{id}"); } catch (PlatformException ex) when (ex.Status == 404) { }
             if (!request.Enabled) await db.ExecuteAsync("update channels set status='disabled' where device_id=@id", new { id });
             await audit.NotifyAsync("device.changed", id.ToString(), deviceId: id);
@@ -63,6 +67,7 @@ public static class DeviceEndpoints
             var active = await db.QueryAsync("select id from media_sessions where device_id=@id and closed_at is null", new { id });
             foreach (var session in active) await media.StopInternalAsync(Guid.Parse(session.Text("id")));
             await db.ExecuteAsync("update devices set enabled=false,status='disabled' where id=@id; update channels set status='disabled' where device_id=@id", new { id });
+            DeviceAdapter.InvalidateRouteCache(id);
             try { await adapter.SendAsync(HttpMethod.Delete, $"/internal/devices/{id}"); } catch (PlatformException ex) when (ex.Status == 404) { }
             await audit.WriteAsync(ApiSupport.Actor(context).UserId, "device.disable", id.ToString(), "停用录像机并保留历史记录", ApiSupport.Ip(context));
             await audit.NotifyAsync("device.changed", id.ToString(), deviceId: id);

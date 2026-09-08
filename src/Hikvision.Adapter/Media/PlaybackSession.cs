@@ -94,8 +94,7 @@ internal sealed class PlaybackSession : IAsyncDisposable
             // 只保留有限的探测前缀；识别录像自身的编码后，同一批字节原样送入发布进程。
             var prefix = await PlaybackPrefix.ReadAsync(buffer, token);
             var codecs = await MediaTools.ProbeAsync("pipe:0", token, prefix.Sample());
-            var transcode = Request.Profile == "browser" && codecs.RequiresBrowserTranscode;
-            if (transcode) slot = _budget.Acquire();
+            var transcode = false;
             var args = PlaybackPublisher.Arguments("pipe:0", $"{MediaTools.RtspBase.TrimEnd('/')}/playback/{_stream}", codecs, transcode, Request.Profile, speed);
             process = MediaTools.Start(MediaTools.Ffmpeg, args, true);
             var publishing = process;

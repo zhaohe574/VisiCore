@@ -1,4 +1,4 @@
-import type { AccessScope, Alarm, AlarmDetail, Audit, Channel, Dashboard, Device, DeviceInput, ExportJob, Layout, LiveSession, LoginResult, OnlineSession, Organization, OrganizationKind, OrganizationNode, Page, Permission, PlaybackControl, PlaybackSession, PtzCommand, Recording, Release, Role, Settings, SystemStatus, User } from './types'
+import type { AccessScope, Alarm, AlarmDetail, Audit, Channel, Dashboard, Device, DeviceInput, DevicePlugin, ExportJob, Layout, LiveSession, LoginResult, OnlineSession, Organization, OrganizationKind, OrganizationNode, Page, Permission, PlaybackControl, PlaybackSession, PtzCommand, Recording, Release, Role, Settings, SystemStatus, User } from './types'
 import type { components } from './generated/api-schema'
 import type { PublicRelease } from './types'
 export type * from './types'
@@ -91,6 +91,9 @@ export const managementApi = {
   device: (id: number) => api<Device>(`/devices/${id}`),
   saveDevice: (id: number | null, data: DeviceInput) => id ? put<Device>(`/devices/${id}`, data) : post<Device>('/devices', data),
   deleteDevice: (id: number) => remove(`/devices/${id}`), testDevice: (id: number) => post<unknown>(`/devices/${id}/test`), syncDevice: (id: number) => post<unknown>(`/devices/${id}/sync`),
+  plugins: () => api<DevicePlugin[]>('/plugins'),
+  updatePluginStatus: (id: string, status: 'active' | 'disabled') => put<DevicePlugin>(`/plugins/${id}/status`, { status }),
+  pluginHealth: (id: string) => api<unknown>(`/plugins/${id}/health`),
   channels: (query?: Query, signal?: AbortSignal) => list<Channel>('/channels', query, signal),
   updateChannel: (id: number, data: { alias?: string | null; unitId?: number | null }) => put<Channel>(`/channels/${id}`, data),
   assign: (channelIds: number[], unitId: number | null) => put('/channels/assignment', { channelIds, unitId }),

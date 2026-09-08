@@ -7,11 +7,133 @@ using VideoPlatform.Domain;
 
 namespace VideoPlatform.Infrastructure;
 
-public sealed class DeviceAdapter(HttpClient client, PlatformOptions options) : IDeviceAdapter
+public sealed class DeviceAdapter(HttpClient client, PlatformOptions options, Database? db = null, ILogger<DeviceAdapter>? logger = null) : IDeviceAdapter
 {
+    private sealed record CachedRoute(string PluginId, string EndpointUrl, string Status, string Name, DateTimeOffset ExpiresAt);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, CachedRoute> _cache = new();
+
+    public static void InvalidateRouteCache(long? deviceId = null)
+    {
+        if (deviceId.HasValue) _cache.TryRemove(deviceId.Value, out _);
+        else _cache.Clear();
+    }
+
+    public void InvalidateCache(long? deviceId = null) => InvalidateRouteCache(deviceId);
+
     public async Task<JsonNode?> SendAsync(HttpMethod method, string path, object? body = null, CancellationToken ct = default)
     {
-        using var request = new HttpRequestMessage(method, options.AdapterUrl.TrimEnd('/') + path);
+        var match = System.Text.RegularExpressions.Regex.Match(path, @"^/internal/devices/(\d+)");
+        if (match.Success && long.TryParse(match.Groups[1].Value, out var deviceId) && db is not null)
+        {
+            var route = await ResolveRouteAsync(deviceId, ct);
+            if (route is not null)
+            {
+                if (route.Status == "disabled" && method != HttpMethod.Delete)
+                {
+                    throw new PlatformException(409, "plugin.disabled", $"设备驱动【{route.Name}】已停用，请先在插件管理中启用该驱动");
+                }
+                return await ForwardAsync(route.EndpointUrl, method, path, body, ct);
+            }
+        }
+        else if (path == "/internal/sessions" && db is not null)
+        {
+            return await BroadcastSessionsAsync(ct);
+        }
+
+        return await ForwardAsync(options.AdapterUrl, method, path, body, ct);
+    }
+
+    private async Task<CachedRoute?> ResolveRouteAsync(long deviceId, CancellationToken ct)
+    {
+        if (_cache.TryGetValue(deviceId, out var cached) && cached.ExpiresAt > DateTimeOffset.UtcNow)
+            return cached;
+
+        try
+        {
+            var row = await db!.OneAsync(@"
+                select d.plugin_id, coalesce(p.endpoint_url, @fallbackUrl) as endpoint_url,
+                       coalesce(p.status, 'active') as status, coalesce(p.name, '海康威视网络设备驱动') as name
+                from devices d
+                left join device_plugins p on d.plugin_id = p.id
+                where d.id = @deviceId",
+                new { deviceId, fallbackUrl = options.AdapterUrl }, ct);
+
+            if (row is not null)
+            {
+                var route = new CachedRoute(
+                    row.Text("pluginId", "hikvision"),
+                    row.Text("endpointUrl", options.AdapterUrl),
+                    row.Text("status", "active"),
+                    row.Text("name", "海康威视网络设备驱动"),
+                    DateTimeOffset.UtcNow.AddSeconds(30)
+                );
+                _cache[deviceId] = route;
+                return route;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "解析设备 {DeviceId} 插件路由失败，回退至默认适配端点", deviceId);
+        }
+        return null;
+    }
+
+    private async Task<JsonNode?> BroadcastSessionsAsync(CancellationToken ct)
+    {
+        var endpoints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var plugins = await db!.QueryAsync("select endpoint_url from device_plugins where status = 'active'", ct: ct);
+            foreach (var p in plugins)
+            {
+                var url = p.Text("endpointUrl");
+                if (!string.IsNullOrWhiteSpace(url)) endpoints.Add(url);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "查询活动插件列表失败");
+        }
+        if (endpoints.Count == 0) endpoints.Add(options.AdapterUrl);
+
+        var allLive = new JsonArray();
+        var allPlayback = new JsonArray();
+
+        foreach (var endpoint in endpoints)
+        {
+            try
+            {
+                var res = await ForwardAsync(endpoint, HttpMethod.Get, "/internal/sessions", null, ct);
+                if (res is JsonObject obj)
+                {
+                    if (obj["live"] is JsonArray liveArr)
+                    {
+                        foreach (var item in liveArr)
+                            if (item is not null) allLive.Add(item.DeepClone());
+                    }
+                    if (obj["playback"] is JsonArray pbArr)
+                    {
+                        foreach (var item in pbArr)
+                            if (item is not null) allPlayback.Add(item.DeepClone());
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "向插件端点 {Endpoint} 查询会话失败", endpoint);
+            }
+        }
+
+        return new JsonObject
+        {
+            ["live"] = allLive,
+            ["playback"] = allPlayback
+        };
+    }
+
+    private async Task<JsonNode?> ForwardAsync(string baseUrl, HttpMethod method, string path, object? body, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(method, baseUrl.TrimEnd('/') + path);
         request.Headers.Add("X-Adapter-Key", options.AdapterKey);
         if (body is not null) request.Content = JsonContent.Create(body, options: JsonDefaults.Options);
         try
