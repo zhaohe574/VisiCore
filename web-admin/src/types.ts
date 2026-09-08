@@ -25,6 +25,16 @@ export interface DevicePlugin {
   createdAt: string
   updatedAt: string
 }
+export interface PluginCreateInput {
+  id: string
+  name: string
+  vendor: string
+  version: string
+  description?: string | null
+  endpointUrl: string
+  capabilities?: string[]
+  configSchema?: Record<string, unknown> | null
+}
 export type Channel = SchemaDto<'ChannelDto'> & { alias?: string | null }
 export type OrganizationNode = SchemaDto<'OrganizationNodeDto'>
 export type Organization = SchemaDto<'OrganizationTreeDto'>

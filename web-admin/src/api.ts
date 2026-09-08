@@ -1,4 +1,4 @@
-import type { AccessScope, Alarm, AlarmDetail, Audit, Channel, Dashboard, Device, DeviceInput, DevicePlugin, ExportJob, Layout, LiveSession, LoginResult, OnlineSession, Organization, OrganizationKind, OrganizationNode, Page, Permission, PlaybackControl, PlaybackSession, PtzCommand, Recording, Release, Role, Settings, SystemStatus, User } from './types'
+import type { AccessScope, Alarm, AlarmDetail, Audit, Channel, Dashboard, Device, DeviceInput, DevicePlugin, ExportJob, Layout, LiveSession, LoginResult, OnlineSession, Organization, OrganizationKind, OrganizationNode, Page, Permission, PlaybackControl, PlaybackSession, PluginCreateInput, PtzCommand, Recording, Release, Role, Settings, SystemStatus, User } from './types'
 import type { components } from './generated/api-schema'
 import type { PublicRelease } from './types'
 export type * from './types'
@@ -94,6 +94,11 @@ export const managementApi = {
   plugins: () => api<DevicePlugin[]>('/plugins'),
   updatePluginStatus: (id: string, status: 'active' | 'disabled') => put<DevicePlugin>(`/plugins/${id}/status`, { status }),
   pluginHealth: (id: string) => api<unknown>(`/plugins/${id}/health`),
+  installPlugin: (formData: FormData) => api<DevicePlugin>('/plugins/install', { method: 'POST', body: formData }),
+  createPlugin: (data: PluginCreateInput) => post<DevicePlugin>('/plugins', data),
+  probePlugin: (endpointUrl: string) => post<Partial<DevicePlugin>>('/plugins/probe', { endpointUrl }),
+  deletePlugin: (id: string) => remove(`/plugins/${segment(id)}`),
+  exportPluginUrl: (id: string) => apiUrl(`/plugins/${segment(id)}/export`),
   channels: (query?: Query, signal?: AbortSignal) => list<Channel>('/channels', query, signal),
   updateChannel: (id: number, data: { alias?: string | null; unitId?: number | null }) => put<Channel>(`/channels/${id}`, data),
   assign: (channelIds: number[], unitId: number | null) => put('/channels/assignment', { channelIds, unitId }),

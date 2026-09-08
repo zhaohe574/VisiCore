@@ -34,3 +34,5 @@ public sealed record PlatformSettings(
     int ExportQuotaGb = 100, int AlarmRetentionDays = 180, int AuditRetentionDays = 180);
 public sealed record DevicePluginDto(string Id, string Name, string Vendor, string Version, string? Description, string Status, string EndpointUrl, string[] Capabilities, string? ConfigSchema, long DeviceCount, string? HealthStatus, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 public sealed record PluginStatusRequest(string Status);
+public sealed record PluginCreateRequest(string Id, string Name, string Vendor, string Version, string? Description, string EndpointUrl, string[]? Capabilities = null, string? ConfigSchema = null);
+public sealed record PluginProbeRequest(string EndpointUrl);

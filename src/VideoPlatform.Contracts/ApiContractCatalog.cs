@@ -32,12 +32,16 @@ public static class ApiContractCatalog
             ["GetAlarmImage"] = new(200, null, ContentTypes: ["image/jpeg", "image/png"]),
             ["ListPlugins"] = new(200, typeof(DevicePluginDto[])),
             ["UpdatePluginStatus"] = new(200, typeof(DevicePluginDto)),
-            ["GetPluginHealth"] = new(200, null)
+            ["GetPluginHealth"] = new(200, null),
+            ["InstallPluginPackage"] = new(201, typeof(DevicePluginDto)),
+            ["RegisterPlugin"] = new(201, typeof(DevicePluginDto)),
+            ["ProbePlugin"] = new(200, null),
+            ["ExportPlugin"] = new(200, null, ContentTypes: ["application/zip"])
         };
         foreach (var id in new[] { "StartLive", "GetliveSession", "RenewliveSession" }) values[id] = new(200, typeof(LiveSessionDto));
         foreach (var id in new[] { "StartPlayback", "GetplaybackSession", "RenewplaybackSession" }) values[id] = new(200, typeof(PlaybackSessionDto));
         foreach (var id in new[] { "Logout", "ChangePassword", "UpdateDevice", "DisableDevice", "StopliveSession", "StopplaybackSession", "StartPtz", "StopPtz", "CallPtzPreset",
-            "CancelExport", "PublishRelease", "RevokeRelease", "DeleteOrganizationNode", "AssignChannels", "DeleteRole", "RevokeSession", "DeleteLayout" }) values[id] = new(204, null);
+            "CancelExport", "PublishRelease", "RevokeRelease", "DeleteOrganizationNode", "AssignChannels", "DeleteRole", "RevokeSession", "DeleteLayout", "DeletePlugin" }) values[id] = new(204, null);
         return values;
     }
 

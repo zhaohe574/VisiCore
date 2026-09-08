@@ -18,3 +18,47 @@ describe('分页和媒体参数', () => {
   it('保留false与0筛选值', async () => { const { queryString } = await import('./api'); expect(queryString({ online: false, page: 0, search: '', deviceId: undefined })).toBe('?online=false&page=0') })
   it('创建媒体只发送全局channelId和browser配置', async () => { mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: 'csrf' }) : json({ id: 'stream' })); const { mediaApi } = await import('./api'); await mediaApi.live(812, 2); const data = JSON.parse(calls.at(-1)!.init.body as string); expect(data).toEqual({ channelId: 812, streamType: 2, profile: 'browser' }); await mediaApi.control('playback-1', { action: 'seek', position: '2026-09-07T00:00:00Z' }); expect(JSON.parse(calls.at(-1)!.init.body as string)).toEqual({ action: 'seek', position: '2026-09-07T00:00:00Z' }) })
 })
+describe('驱动插件管理 API 契约', () => {
+  it('支持驱动插件的列表、安装包上传、端点登记、探测、导出与删除', async () => {
+    mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: 'csrf-token' }) : json({ ok: true }))
+    const { managementApi } = await import('./api')
+    
+    // 列表
+    await managementApi.plugins()
+    expect(calls.at(-1)!.path.endsWith('/plugins')).toBe(true)
+
+    // 安装包上传
+    const fd = new FormData()
+    fd.append('file', new Blob(['fake-zip']), 'test.zip')
+    await managementApi.installPlugin(fd)
+    const installCall = calls.at(-1)!
+    expect(installCall.path.endsWith('/plugins/install')).toBe(true)
+    expect(installCall.init.body).toBe(fd)
+    expect(new Headers(installCall.init.headers).get('X-CSRF-Token')).toBe('csrf-token')
+
+    // 端点登记
+    await managementApi.createPlugin({
+      id: 'jovision',
+      name: '中维世纪驱动',
+      vendor: 'Jovision',
+      version: '1.0.0',
+      endpointUrl: 'http://127.0.0.1:5093'
+    })
+    const createCall = calls.at(-1)!
+    expect(createCall.path.endsWith('/plugins')).toBe(true)
+    expect(JSON.parse(createCall.init.body as string).id).toBe('jovision')
+
+    // 探测
+    await managementApi.probePlugin('http://127.0.0.1:5092')
+    expect(calls.at(-1)!.path.endsWith('/plugins/probe')).toBe(true)
+
+    // 导出 URL
+    expect(managementApi.exportPluginUrl('hikvision')).toContain('/api/v2/plugins/hikvision/export')
+
+    // 删除
+    await managementApi.deletePlugin('test-driver')
+    const deleteCall = calls.at(-1)!
+    expect(deleteCall.path.endsWith('/plugins/test-driver')).toBe(true)
+    expect(deleteCall.init.method).toBe('DELETE')
+  })
+})

@@ -16,6 +16,7 @@ public static class Bootstrap
         Directory.CreateDirectory(options.KeysPath);
         Directory.CreateDirectory(options.ReleasesPath);
         Directory.CreateDirectory(options.ExportsPath);
+        Directory.CreateDirectory(options.PluginsPath);
         services.AddSingleton(options);
         services.AddSingleton(NpgsqlDataSource.Create(options.DatabaseUrl));
         services.AddSingleton<Database>();

@@ -17,4 +17,5 @@ public sealed class PlatformOptions(IConfiguration configuration)
     public string ReleasesPath => Path.Combine(DataPath, "releases");
     public string ExportsPath => Path.Combine(DataPath, "exports");
     public string KeysPath => Path.Combine(DataPath, "keys");
+    public string PluginsPath => Path.Combine(DataPath, "plugins");
 }
