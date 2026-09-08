@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <OutputType>Exe</OutputType>
+    <NoWarn>$(NoWarn);ASP0014</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/VideoPlatform.Infrastructure/VideoPlatform.Infrastructure.csproj" />
+    <Compile Include="../../src/VideoPlatform.Api/ApiSupport.cs" Link="ApiSupport.cs" />
+    <Compile Include="../../src/VideoPlatform.Api/Modules/AdministrationEndpoints.cs" Link="AdministrationEndpoints.cs" />
+    <Compile Include="../../src/VideoPlatform.Api/Modules/ReleaseEndpoints.cs" Link="ReleaseEndpoints.cs" />
+  </ItemGroup>
+</Project>

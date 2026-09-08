@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <Product>VisiCore（视枢）</Product>
+    <Company>VisiCore</Company>
+    <RepositoryUrl>https://github.com/zhaohe574/VisiCore</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <Authors>VisiCore 开发者</Authors>
+  </PropertyGroup>
+</Project>

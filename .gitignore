@@ -12,3 +12,24 @@ HCNetSDK*/
 .wix/
 tools/wix/
 tools/wix6/
+
+# 本机配置、密钥、数据库备份和验收产物不进入源码仓库。
+.vs/
+.idea/
+.DS_Store
+Thumbs.db
+*.pfx
+*.p12
+*.key
+*.pem
+*.dump
+*.bak
+*.trx
+*.log
+**/TestResults/
+tools/VideoPlatform.Desktop.Tests/screenshots/
+tools/VideoPlatform.Desktop.Tests/candidate-evidence/
+tools/VideoPlatform.Desktop.Tests/安装包产物一致性.md
+**/.runtime/
+**/v2-production.json
+**/v2-test.json

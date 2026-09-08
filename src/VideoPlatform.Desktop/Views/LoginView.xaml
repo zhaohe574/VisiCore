@@ -1,0 +1,10 @@
+<UserControl x:Class="VideoPlatform.Desktop.Views.LoginView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Foreground="{StaticResource TextBrush}">
+    <Grid Background="{StaticResource PageBrush}"><StackPanel Width="360" VerticalAlignment="Center">
+        <Image Source="/Assets/Brand.png" Width="64" Height="64" HorizontalAlignment="Left" Margin="0,0,0,20"/><TextBlock Text="VisiCore · 视枢" FontSize="26" FontWeight="SemiBold"/><TextBlock Text="账号登录" Foreground="{StaticResource MutedBrush}" Margin="0,10,0,28"/>
+        <TextBlock Text="平台地址" Margin="0,0,0,8"/><TextBox Text="{Binding Server, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="平台地址"/>
+        <TextBlock Text="账号" Margin="0,18,0,8"/><TextBox Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="账号"/>
+        <TextBlock Text="密码" Margin="0,18,0,8"/><PasswordBox x:Name="Password" KeyDown="PasswordKeyDown" AutomationProperties.Name="密码"/>
+        <Button Content="登录" Click="LoginClicked" Margin="0,24,0,0" Background="#BA3C48" Height="42"><Button.Style><Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Style.Triggers><DataTrigger Binding="{Binding IsBusy}" Value="True"><Setter Property="IsEnabled" Value="False"/></DataTrigger></Style.Triggers></Style></Button.Style></Button>
+        <TextBlock Text="{Binding Status}" TextWrapping="Wrap" Margin="0,16,0,0" Foreground="#F1B46C"/>
+    </StackPanel></Grid>
+</UserControl>

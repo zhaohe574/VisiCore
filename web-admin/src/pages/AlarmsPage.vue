@@ -1,0 +1,36 @@
+<script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+import { Refresh, Search } from '@element-plus/icons-vue'
+import { allPages, managementApi, workflowApi, type AlarmDetail, type Device } from '../api'
+import { dateTime, errorMessage } from '../lib/format'
+import { usePaged } from '../composables/usePaged'
+import { useAction } from '../composables/useAction'
+import { useEvents } from '../stores/events'
+import { useAuth } from '../stores/auth'
+import PageHeader from '../components/PageHeader.vue'
+import StatusBadge from '../components/StatusBadge.vue'
+import ChannelPicker from '../components/ChannelPicker.vue'
+const route = useRoute(), auth = useAuth(), { busy, run } = useAction()
+const state = ref(''), deviceId = ref<number>(), channelId = ref<number>(), eventType = ref(''), range = ref<[Date, Date] | null>(null), devices = ref<Device[]>([])
+const { items, total, page, pageSize, search, loading, error, load } = usePaged(workflowApi.alarms, () => ({ state: state.value, deviceId: deviceId.value, channelId: channelId.value, eventType: eventType.value, from: range.value?.[0].toISOString(), to: range.value?.[1].toISOString() }), ['alarm.changed', 'access.changed'])
+const detail = ref<AlarmDetail>(), detailId = ref<number>(), detailLoading = ref(false), detailError = ref(''), note = ref(''), imageFailed = ref(false)
+let sequence = 0
+async function open(id: number) {
+  const current = ++sequence; detailId.value = id; detailLoading.value = true; detailError.value = ''; imageFailed.value = false
+  try { const data = await workflowApi.alarm(id); if (current === sequence) detail.value = data }
+  catch (e) { if (current === sequence) detailError.value = errorMessage(e) } finally { if (current === sequence) detailLoading.value = false }
+}
+function closeDetail() { sequence++; detailId.value = undefined; detail.value = undefined; note.value = '' }
+async function action(value: 'claim' | 'note' | 'close' | 'reopen') {
+  if (!detail.value) return
+  const id = detail.value.id
+  if (await run(async () => { if (value === 'note' && !note.value.trim()) throw new Error('请输入处理备注'); await workflowApi.alarmAction(id, value, note.value.trim() || undefined); await open(id); await load() }, '报警处理已更新')) note.value = ''
+}
+const unsubscribe = useEvents().subscribe(['alarm.changed', 'reconnected'], async () => { if (detailId.value) await open(detailId.value) })
+onMounted(async () => { if (auth.can('device.read')) await run(async () => { devices.value = await allPages(managementApi.devices) }, ''); if (Number(route.query.id)) await open(Number(route.query.id)) })
+onBeforeUnmount(() => { sequence++; unsubscribe() })
+const actions: Record<string, string> = { claim: '认领', note: '添加备注', close: '关闭', reopen: '重新打开', recovered: '设备恢复' }
+</script>
+<template><div><PageHeader title="报警中心" :count="total"><el-button :icon="Refresh" :loading="loading" @click="load()">刷新</el-button></PageHeader><form class="filter-bar" @submit.prevent="load(true)"><el-input v-model="search" :prefix-icon="Search" clearable placeholder="搜索报警" aria-label="搜索报警" /><el-select v-model="state" clearable placeholder="全部处理状态" aria-label="报警处理状态" @change="load(true)"><el-option label="待处理" value="new" /><el-option label="处理中" value="processing" /><el-option label="已关闭" value="closed" /></el-select><el-select v-if="devices.length" v-model="deviceId" clearable placeholder="全部设备" aria-label="报警设备筛选" @change="load(true)"><el-option v-for="device in devices" :key="device.id" :value="device.id" :label="device.name" /></el-select><ChannelPicker v-model="channelId" /><el-input v-model="eventType" clearable placeholder="事件类型" aria-label="事件类型" /><el-date-picker v-model="range" type="datetimerange" start-placeholder="开始时间" end-placeholder="结束时间" format="YYYY-MM-DD HH:mm" /><el-button native-type="submit" :icon="Search">查询</el-button></form><el-alert v-if="error" :title="error" type="error" :closable="false" show-icon /><el-table v-loading="loading" :data="items" row-key="id" empty-text="暂无报警"><el-table-column label="发生时间" min-width="168"><template #default="{ row }">{{ dateTime(row.occurredAt) }}</template></el-table-column><el-table-column prop="deviceName" label="设备" min-width="130" show-overflow-tooltip /><el-table-column prop="channelName" label="通道" min-width="140" show-overflow-tooltip /><el-table-column prop="eventType" label="事件" min-width="130" /><el-table-column label="处理状态" width="110"><template #default="{ row }"><StatusBadge :value="row.state" /></template></el-table-column><el-table-column label="设备恢复" width="100"><template #default="{ row }"><span :class="row.recovered ? 'teal' : 'muted'">{{ row.recovered ? '已恢复' : '未恢复' }}</span></template></el-table-column><el-table-column prop="ownerName" label="处理人" min-width="110" /><el-table-column label="操作" width="90" fixed="right"><template #default="{ row }"><el-button link type="primary" @click="open(row.id)">查看详情</el-button></template></el-table-column></el-table><div class="pagination"><el-pagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20,50,100]" layout="total, sizes, prev, pager, next" @current-change="load()" @size-change="load(true)" /></div>
+<el-drawer :model-value="!!detailId" title="报警详情" size="620px" @close="closeDetail"><div v-loading="detailLoading"><el-alert v-if="detailError" :title="detailError" type="error" :closable="false" /><template v-if="detail && detail.id === detailId"><div class="detail-title"><h2>{{ detail.eventType }}</h2><StatusBadge :value="detail.state" /></div><dl class="data-list"><div><dt>设备与通道</dt><dd>{{ detail.deviceName }} / {{ detail.channelName || '设备事件' }}</dd></div><div><dt>发生时间</dt><dd>{{ dateTime(detail.occurredAt) }}</dd></div><div><dt>设备恢复状态</dt><dd>{{ detail.recovered ? '已恢复' : '未恢复' }}</dd></div><div><dt>处理人</dt><dd>{{ detail.ownerName || '未认领' }}</dd></div></dl><img v-if="detail.imageAvailable && !imageFailed" class="alarm-image" :src="workflowApi.alarmImage(detail.id)" alt="报警抓拍" @error="imageFailed = true" /><el-alert v-if="imageFailed" title="报警图片暂时无法读取" type="warning" :closable="false" /><section v-if="auth.can('alarm.ack')" class="page-section"><h3>处理记录</h3><el-input v-model="note" type="textarea" :rows="3" maxlength="2000" show-word-limit placeholder="处理备注" aria-label="处理备注" /><div class="detail-actions"><el-button v-if="detail.state === 'new'" type="primary" :disabled="busy" @click="action('claim')">认领</el-button><el-button :disabled="busy || !note.trim()" @click="action('note')">添加备注</el-button><el-button v-if="detail.state !== 'closed'" type="success" :disabled="busy" @click="action('close')">关闭报警</el-button><el-button v-else type="primary" :disabled="busy" @click="action('reopen')">重新打开</el-button></div></section><el-timeline class="alarm-history"><el-timeline-item v-for="entry in detail.history" :key="entry.id" :timestamp="dateTime(entry.createdAt)" placement="top"><strong>{{ entry.username }} · {{ actions[entry.action] || entry.action }}</strong><p class="preserve-lines">{{ entry.note }}</p></el-timeline-item></el-timeline><details><summary>原始事件数据</summary><pre class="payload">{{ typeof detail.payload === 'string' ? detail.payload : JSON.stringify(detail.payload, null, 2) }}</pre></details></template></div></el-drawer></div></template>

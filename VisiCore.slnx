@@ -1,0 +1,27 @@
+<Solution>
+  <Folder Name="/服务端/">
+    <Project Path="src/VideoPlatform.Domain/VideoPlatform.Domain.csproj" />
+    <Project Path="src/VideoPlatform.Contracts/VideoPlatform.Contracts.csproj" />
+    <Project Path="src/VideoPlatform.Application/VideoPlatform.Application.csproj" />
+    <Project Path="src/VideoPlatform.Infrastructure/VideoPlatform.Infrastructure.csproj" />
+    <Project Path="src/VideoPlatform.Api/VideoPlatform.Api.csproj" />
+    <Project Path="src/VideoPlatform.Worker/VideoPlatform.Worker.csproj" />
+    <Project Path="src/Hikvision.Adapter/Hikvision.Adapter.csproj" />
+  </Folder>
+  <Folder Name="/桌面端/">
+    <Project Path="src/VideoPlatform.Client/VideoPlatform.Client.csproj" />
+    <Project Path="src/VideoPlatform.Desktop/VideoPlatform.Desktop.csproj" />
+    <Project Path="src/VideoPlatform.Updater/VideoPlatform.Updater.csproj" />
+  </Folder>
+  <Folder Name="/验证工具/">
+    <Project Path="tools/VideoPlatform.LoadTests/VideoPlatform.LoadTests.csproj" />
+    <Project Path="tools/VideoPlatform.ClientGenerator/VideoPlatform.ClientGenerator.csproj" />
+    <Project Path="tools/VideoPlatform.ClientGenerator/Tests/VideoPlatform.ClientGenerator.Tests.csproj" />
+    <Project Path="tools/VideoPlatform.Export.Tests/VideoPlatform.Export.Tests.csproj" />
+    <Project Path="tools/VideoPlatform.Adapter.Tests/VideoPlatform.Adapter.Tests.csproj" />
+    <Project Path="tools/VideoPlatform.Admin.Tests/VideoPlatform.Admin.Tests.csproj" />
+    <Project Path="tools/VideoPlatform.Desktop.Tests/VideoPlatform.Desktop.Tests.csproj" />
+    <Project Path="tools/VideoPlatform.IntegrationTests/VideoPlatform.IntegrationTests.csproj" />
+    <Project Path="tools/VideoPlatform.Worker.Tests/VideoPlatform.Worker.Tests.csproj" />
+  </Folder>
+</Solution>

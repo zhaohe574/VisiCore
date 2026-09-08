@@ -1,0 +1,16 @@
+{
+  "name": "visicore-client-generator",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "generate": "node generate.mjs",
+    "check": "node verify.mjs"
+  },
+  "dependencies": {
+    "nswag": "14.7.1",
+    "openapi-fetch": "0.17.0",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

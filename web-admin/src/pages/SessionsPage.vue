@@ -1,0 +1,14 @@
+<script setup lang="ts">
+import { computed } from 'vue'
+import { Delete, Refresh, Search } from '@element-plus/icons-vue'
+import { managementApi } from '../api'
+import { dateTime } from '../lib/format'
+import { usePaged } from '../composables/usePaged'
+import { useAction } from '../composables/useAction'
+import PageHeader from '../components/PageHeader.vue'
+const { items, total, page, pageSize, search, loading, error, load } = usePaged(managementApi.sessions, undefined, ['access.changed'])
+const { busy, confirm } = useAction()
+const versions = computed(() => [...items.value.reduce((map, session) => { const key = `${session.clientType === 'desktop' ? '桌面端' : 'Web 端'} ${session.clientVersion}`; map.set(key, (map.get(key) || 0) + 1); return map }, new Map<string, number>())])
+async function revoke(id: string, name: string) { await confirm(`撤销“${name}”的此登录会话？该会话将立即失效。`, async () => { await managementApi.revokeSession(id); await load() }, '会话已撤销') }
+</script>
+<template><div><PageHeader title="在线会话" :count="total"><el-button :icon="Refresh" :loading="loading" @click="load()">刷新</el-button></PageHeader><form class="filter-bar" @submit.prevent="load(true)"><el-input v-model="search" clearable :prefix-icon="Search" placeholder="搜索账号" aria-label="搜索在线账号" @clear="load(true)" /><el-button :icon="Search" native-type="submit">查询</el-button></form><div class="version-strip"><span class="muted">本页客户端版本</span><el-tag v-for="[version, count] in versions" :key="version" type="info">{{ version }} · {{ count }}</el-tag></div><el-alert v-if="error" :title="error" type="error" :closable="false" /><el-table v-loading="loading" :data="items" empty-text="暂无在线会话"><el-table-column prop="username" label="账号" min-width="130" /><el-table-column label="客户端" width="110"><template #default="{ row }">{{ row.clientType === 'desktop' ? '桌面端' : 'Web 端' }}</template></el-table-column><el-table-column prop="clientVersion" label="版本" width="100" /><el-table-column label="登录时间" min-width="168"><template #default="{ row }">{{ dateTime(row.createdAt) }}</template></el-table-column><el-table-column label="最近活动" min-width="168"><template #default="{ row }">{{ dateTime(row.lastSeenAt) }}</template></el-table-column><el-table-column label="过期时间" min-width="168"><template #default="{ row }">{{ dateTime(row.expiresAt) }}</template></el-table-column><el-table-column label="操作" width="90" fixed="right"><template #default="{ row }"><el-tooltip content="撤销会话"><el-button text type="danger" :icon="Delete" :disabled="busy" aria-label="撤销会话" @click="revoke(row.id, row.username)" /></el-tooltip></template></el-table-column></el-table><div class="pagination"><el-pagination v-model:current-page="page" v-model:page-size="pageSize" :total="total" :page-sizes="[20,50,100]" layout="total, sizes, prev, pager, next" @current-change="load()" @size-change="load(true)" /></div></div></template>

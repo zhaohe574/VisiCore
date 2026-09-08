@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.AspNetCore.OpenApi.Generated</InterceptorsNamespaces>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/VideoPlatform.Api/VideoPlatform.Api.csproj" />
+    <ProjectReference Include="../../../src/VideoPlatform.Client/VideoPlatform.Client.csproj" />
+  </ItemGroup>
+</Project>

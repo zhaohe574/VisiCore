@@ -1,0 +1,9 @@
+# 文本采用 UTF-8 与 LF；二进制品牌素材保持原始字节。
+* text=auto eol=lf
+*.png binary
+*.ico binary
+*.bmp binary
+*.jpg binary
+*.jpeg binary
+src/VideoPlatform.Client/Generated/* linguist-generated=true
+web-admin/src/generated/* linguist-generated=true

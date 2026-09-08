@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>2.0.0</Version>
+    <GeneratedClientDirectory Condition="'$(GeneratedClientDirectory)' == ''">$(MSBuildThisFileDirectory)Generated</GeneratedClientDirectory>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="Generated/**/*.cs" />
+    <Compile Include="$(GeneratedClientDirectory)/VideoPlatformClient.g.cs" Link="Generated/VideoPlatformClient.g.cs" />
+  </ItemGroup>
+  <Target Name="RequireGeneratedClient" BeforeTargets="CoreCompile">
+    <Error Condition="!Exists('$(GeneratedClientDirectory)/VideoPlatformClient.g.cs')" Text="缺少生成客户端，请检查仓库是否完整；验证重新生成的文件时可指定 GeneratedClientDirectory。" />
+  </Target>
+</Project>

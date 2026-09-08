@@ -7,7 +7,7 @@ namespace VideoPlatform.Updater;
 
 internal static class Program
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(30) };
+    private static readonly HttpClient Http = new(new SocketsHttpHandler { AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(15) }) { Timeout = TimeSpan.FromMinutes(30) };
 
     [STAThread]
     private static async Task<int> Main(string[] args)
@@ -31,7 +31,7 @@ internal static class Program
                 if (options.VerifyOnly) return 1;
                 if (options.Force)
                 {
-                    if (MessageBox.Show($"自动更新失败：{ex.Message}\n是否重试？", "京华安防平台更新", MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning) == DialogResult.Retry) continue;
+                    if (MessageBox.Show($"自动更新失败：{ex.Message}\n是否重试？", "VisiCore（视枢）更新", MessageBoxButtons.RetryCancel, MessageBoxIcon.Warning) == DialogResult.Retry) continue;
                 }
                 else
                 {
@@ -49,21 +49,20 @@ internal static class Program
         var url = options.Url ?? throw new InvalidOperationException("缺少下载地址");
         var restart = options.Restart ?? throw new InvalidOperationException("缺少重启路径");
         var expectedHash = options.Sha256 ?? throw new InvalidOperationException("缺少安装包哈希");
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var downloadUri) || downloadUri.Scheme is not ("http" or "https")) throw new InvalidOperationException("下载地址必须使用 HTTP 或 HTTPS");
-        if (expectedHash.Length != 64 || !expectedHash.All(Uri.IsHexDigit)) throw new InvalidOperationException("SHA-256 必须为 64 位十六进制字符串");
-        if (!Path.IsPathFullyQualified(restart) || !File.Exists(restart)) throw new InvalidOperationException("桌面端重启路径无效");
         var fileName = Path.GetFileName(options.FileName ?? throw new InvalidOperationException("缺少安装包文件名"));
-        if (fileName != options.FileName || fileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || !fileName.EndsWith(".msi", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("自动更新仅支持 MSI 安装包，请手动下载 ZIP 或 EXE");
+        var downloadUri = UpdatePolicy.Validate(url, options.FileName!, expectedHash, restart);
+        if (!string.Equals(Path.GetFullPath(options.Parent!), Path.GetFullPath(restart), StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("更新父进程路径与重启路径不一致。");
         var directory = Path.Combine(Path.GetTempPath(), "VideoPlatform-Update", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         try {
         var package = Path.Combine(directory, fileName);
-        await using (var source = await Http.GetStreamAsync(url))
+        using var download = await Http.GetAsync(downloadUri, HttpCompletionOption.ResponseHeadersRead);
+        download.EnsureSuccessStatusCode();
+        if (options.FileSize is { } expectedSize && download.Content.Headers.ContentLength is { } reportedSize && expectedSize != reportedSize) throw new InvalidDataException("服务器安装包长度与发布记录不一致。");
+        await using (var source = await download.Content.ReadAsStreamAsync())
         await using (var target = File.Create(package))
             await source.CopyToAsync(target);
-        string actual;
-        await using (var hashStream = File.OpenRead(package)) actual = Convert.ToHexString(await SHA256.HashDataAsync(hashStream));
-        if (!actual.Equals(expectedHash, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("安装包 SHA-256 校验失败");
+        var actual = await UpdatePolicy.VerifyAsync(package, expectedHash, options.FileSize);
         Log("安装包 SHA-256 校验通过");
         if (options.VerifyOnly) return;
         // Windows Installer 的修复和升级回滚可能再次读取原始安装包。
@@ -71,10 +70,12 @@ internal static class Program
         Directory.CreateDirectory(cacheDirectory);
         var cachedPackage = Path.Combine(cacheDirectory, $"{actual}.msi");
         File.Copy(package, cachedPackage, true);
+        await UpdatePolicy.VerifyAsync(cachedPackage, expectedHash, options.FileSize);
         await WaitForParentAsync(options);
         Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
         var installerLog = Path.Combine(Path.GetDirectoryName(LogPath)!, $"msi-{DateTime.Now:yyyyMMdd-HHmmss}.log");
-        using var installer = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "msiexec.exe"), $"/i \"{cachedPackage}\" /passive /norestart /L*v \"{installerLog}\"") { UseShellExecute = true });
+        var installerUi = options.Quiet ? "/quiet" : "/passive";
+        using var installer = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "msiexec.exe"), $"/i \"{cachedPackage}\" {installerUi} /norestart MSIRESTARTMANAGERCONTROL=Disable /L*v \"{installerLog}\"") { UseShellExecute = true });
         if (installer is null) throw new InvalidOperationException("无法启动 Windows Installer");
         await installer.WaitForExitAsync();
         if (!InstallSucceeded(installer.ExitCode)) throw new InvalidOperationException($"MSI 安装失败，退出码 {installer.ExitCode}，详细日志：{installerLog}");
@@ -89,7 +90,7 @@ internal static class Program
         }
     }
 
-    internal static bool InstallSucceeded(int exitCode) => exitCode is 0 or 3010 or 1641;
+    internal static bool InstallSucceeded(int exitCode) => UpdatePolicy.InstallSucceeded(exitCode);
 
     private static void Restart(string path)
     {
@@ -105,6 +106,7 @@ internal static class Program
         catch (ArgumentException) { return; }
         using (parent)
         {
+            if (!parent.HasExited && !string.Equals(parent.MainModule?.FileName, options.Parent, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("父进程 ID 对应的程序已改变，更新已取消。");
             using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
             try { await parent.WaitForExitAsync(timeout.Token); }
             catch (OperationCanceledException) { throw new TimeoutException("等待桌面端退出超时"); }
@@ -123,12 +125,12 @@ internal static class Program
         catch { }
     }
 
-    private sealed record Options(string? Url, string? FileName, string? Sha256, string? Parent, int? ParentPid, string? Restart, bool Force, bool VerifyOnly)
+    private sealed record Options(string? Url, string? FileName, string? Sha256, string? Parent, int? ParentPid, string? Restart, bool Force, bool VerifyOnly, long? FileSize, bool Quiet)
     {
         public static Options Parse(string[] args)
         {
             string? Value(string key) { var index = Array.FindIndex(args, item => item.Equals(key, StringComparison.OrdinalIgnoreCase)); return index >= 0 && index + 1 < args.Length ? args[index + 1] : null; }
-            return new Options(Value("--url"), Value("--file-name"), Value("--sha256"), Value("--parent"), int.TryParse(Value("--parent-pid"), out var pid) ? pid : null, Value("--restart"), args.Any(item => item.Equals("--force", StringComparison.OrdinalIgnoreCase)), args.Contains("--verify-only"));
+            return new Options(Value("--url"), Value("--file-name"), Value("--sha256"), Value("--parent"), int.TryParse(Value("--parent-pid"), out var pid) ? pid : null, Value("--restart"), args.Any(item => item.Equals("--force", StringComparison.OrdinalIgnoreCase)), args.Contains("--verify-only"), long.TryParse(Value("--file-size"), out var size) ? size : null, args.Contains("--quiet"));
         }
     }
 }

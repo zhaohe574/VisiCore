@@ -1,172 +1,151 @@
-const apiBase = import.meta.env.VITE_API_BASE ?? ''
-const configuredApiBase = () => localStorage.getItem('video-platform-api-base')?.trim().replace(/\/+$/, '') || apiBase
-let refreshRequest: Promise<string | null> | null = null
+import type { AccessScope, Alarm, AlarmDetail, Audit, Channel, Dashboard, Device, DeviceInput, ExportJob, Layout, LiveSession, LoginResult, OnlineSession, Organization, OrganizationKind, OrganizationNode, Page, Permission, PlaybackControl, PlaybackSession, PtzCommand, Recording, Release, Role, Settings, SystemStatus, User } from './types'
+import type { components } from './generated/api-schema'
+import type { PublicRelease } from './types'
+export type * from './types'
 
-export async function refreshSession(expectedToken = localStorage.getItem('video-platform-token')): Promise<string | null> {
-  if (!expectedToken) return null
-  if (localStorage.getItem('video-platform-token') !== expectedToken) return localStorage.getItem('video-platform-token')
-  if (refreshRequest) return refreshRequest
-  refreshRequest = (async () => {
-    const response = await fetch(`${configuredApiBase()}/api/auth/refresh`, { method: 'POST', headers: { Authorization: `Bearer ${expectedToken}` } })
-    if (!response.ok) {
-      if (response.status === 401 && localStorage.getItem('video-platform-token') === expectedToken) {
-        localStorage.removeItem('video-platform-token')
-        window.dispatchEvent(new Event('platform-auth-expired'))
-      }
-      throw new Error(`登录续期失败（${response.status}）`)
-    }
-    const result = await response.json() as { accessToken: string }
-    if (localStorage.getItem('video-platform-token') !== expectedToken) return localStorage.getItem('video-platform-token')
-    localStorage.setItem('video-platform-token', result.accessToken)
-    window.dispatchEvent(new Event('platform-auth-refreshed'))
-    return result.accessToken
-  })()
-  try { return await refreshRequest } finally { refreshRequest = null }
+export const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
+export const apiUrl = (path: string) => `${apiBase}/api/v2${path}`
+export class ApiError extends Error {
+  constructor(public status: number, public code: string, message: string, public traceId = '') { super(message); this.name = 'ApiError' }
 }
+let csrfToken: string | null = null
+let csrfRequest: Promise<string> | null = null
+let refreshRequest: Promise<LoginResult> | null = null
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  if (refreshRequest && !path.startsWith('/api/auth/')) await refreshRequest
-  let token = localStorage.getItem('video-platform-token')
-  const canRetry = !(init.body instanceof FormData) && (init.body === undefined || typeof init.body === 'string')
-  const send = async (accessToken: string | null) => {
-    const headers = new Headers(init.headers)
-    headers.set('Accept', 'application/json')
-    if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
-    if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
-    return fetch(`${configuredApiBase()}${path}`, { ...init, headers })
-  }
+export function clearCsrf() { csrfToken = null }
+export async function getCsrf(): Promise<string> {
+  if (csrfToken) return csrfToken
+  if (!csrfRequest) csrfRequest = (async () => {
+    let response: Response
+    try { response = await fetch(apiUrl('/auth/csrf'), { credentials: 'include', headers: { Accept: 'application/json' } }) }
+    catch { throw new ApiError(0, 'network_error', '无法连接平台服务，请检查网络连接') }
+    if (!response.ok) throw await readError(response)
+    const result = await response.json() as { token: string }
+    if (!result.token) throw new ApiError(502, 'invalid_csrf', '服务端未返回请求校验令牌')
+    csrfToken = result.token
+    return result.token
+  })().finally(() => { csrfRequest = null })
+  return csrfRequest
+}
+async function readError(response: Response) {
+  const data = await response.json().catch(() => ({})) as { code?: string; message?: string; traceId?: string }
+  return new ApiError(response.status, data.code || 'request_failed', data.message || `请求失败（${response.status}）`, data.traceId)
+}
+export async function api<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
+  const method = (init.method || 'GET').toUpperCase()
+  const writing = !['GET', 'HEAD', 'OPTIONS'].includes(method)
+  const headers = new Headers(init.headers)
+  headers.set('Accept', 'application/json')
+  if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
+  if (writing) headers.set('X-CSRF-Token', await getCsrf())
   let response: Response
-  try {
-    response = await send(token)
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') throw error
-    throw new Error('无法连接平台服务，请检查 API 服务是否启动')
+  try { response = await fetch(apiUrl(path), { ...init, method, headers, credentials: 'include' }) }
+  catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
+    throw new ApiError(0, 'network_error', '无法连接平台服务，请检查网络连接')
   }
-  if (response.status === 401 && token && canRetry && !path.startsWith('/api/auth/')) {
-    try {
-      token = await refreshSession(token)
-      if (token) response = await send(token)
-    } catch { /* 后续按原始认证错误处理 */ }
-  }
-  if (response.status === 401 && token && token === localStorage.getItem('video-platform-token') && !path.startsWith('/api/auth/login')) {
-    localStorage.removeItem('video-platform-token')
-    window.dispatchEvent(new Event('platform-auth-expired'))
+  if (response.status === 401 && retry && !path.startsWith('/auth/') && !path.startsWith('/public/')) {
+    await refreshSession()
+    return api<T>(path, init, false)
   }
   if (!response.ok) {
-    let message = `请求失败（${response.status}）`
-    try {
-      const body = await response.json() as { error?: string; detail?: string }
-      message = body.error ?? body.detail ?? message
-    } catch { /* 保留状态码错误 */ }
-    throw new Error(message)
+    const error = await readError(response)
+    if (response.status === 401 && path !== '/auth/login') window.dispatchEvent(new Event('platform-auth-expired'))
+    // 仅在明确的防伪校验失败时重新获取令牌，业务拒绝不重试。
+    if ([400, 403].includes(response.status) && retry && /csrf|antiforgery/i.test(error.code)) { clearCsrf(); return api<T>(path, init, false) }
+    throw error
   }
-  if (response.status === 204) return undefined as T
+  if (response.status === 204 || response.headers.get('content-length') === '0') return undefined as T
+  const contentType = response.headers.get('content-type') || ''
+  if (!contentType.includes('json')) throw new ApiError(502, 'invalid_response', '服务端返回了非预期的数据格式')
   return response.json() as Promise<T>
 }
-
-export type User = { id: number; username: string; displayName?: string | null; phone?: string | null; permissions?: string[] }
-export type ManagedUser = { id: number; username: string; displayName: string | null; phone: string | null; status: 'active' | 'disabled' | 'locked'; lastLoginAt: string | null; roleIds: number[]; roleNames: string[] }
-export type Role = { id: number; name: string; code: string; status: string; userCount: number; permissionCodes: string[] }
-export type Permission = { code: string; name: string; resourceType: string; operationType: string }
-export type Device = { id?: number; deviceKey?: string; ip?: string; servicePort?: number; model?: string | null; serialNumber: string; analogChannels: number; digitalChannels: number; digitalStartChannel: number; diskCount: number; alarmInputCount: number; alarmOutputCount: number; supportsRtsp: boolean; status?: string; lastSeenAt?: string | null }
-export type Channel = { channelNumber: number; enabled: boolean; streamType: number; name: string; model: string; online: boolean; id?: number; unitId?: number | null; ptzCapable?: boolean }
-export type Alarm = { id: number; eventType: string; occurredAt: string; state: string; payload: string; channelId: number | null; channelNumber?: number | null; imageAvailable: boolean }
-export type LiveSession = { id: string; channel: number; streamType: 1 | 2; stream: string; expiresAt: string; rtspUrl: string; httpFlvUrl: string; hlsUrl: string }
-export type Recording = { fileName: string; start: string; end: string; fileSize: number; fileType: number; streamType: number; fileIndex: number }
-export type PlaybackSession = { id: string; channel: number; start: string; end: string; state: 'playing' | 'paused' | 'gap' | 'completed'; timelineState?: 'playing' | 'gap' | 'paused' | 'completed'; currentTime?: string; progress: number; bytes: number; fileName: string; stream: string; expiresAt: string; rtspUrl: string; httpFlvUrl: string; hlsUrl: string }
-export type Stats = { users: number; roles: number; workshops: number; areas: number; units: number; channels: number; alarmsToday: number; unacknowledgedAlarms: number; activeLiveSessions: number }
-export type SystemStats = {
-  hostName: string; osDescription: string; architecture: string; processorCount: number; serverTime: string; uptimeSeconds: number | null
-  loadAverage: { one: number | null; five: number | null; fifteen: number | null; percent: number | null }
-  memory: { totalBytes: number | null; availableBytes: number | null; usedBytes: number | null; usedPercent: number | null }
-  disk: { path: string; totalBytes: number | null; freeBytes: number | null; usedBytes: number | null; usedPercent: number | null }
-  process: { workingSetBytes: number; cpuSeconds: number }
-  network: { receivedBytes: number | null; transmittedBytes: number | null; receivedBytesPerSecond: number | null; transmittedBytesPerSecond: number | null }
+export function refreshSession(): Promise<LoginResult> {
+  if (!refreshRequest) refreshRequest = api<LoginResult>('/auth/refresh', { method: 'POST' }, false)
+    .then(result => { clearCsrf(); window.dispatchEvent(new CustomEvent('platform-auth-refreshed', { detail: result })); return result })
+    .finally(() => { refreshRequest = null })
+  return refreshRequest
 }
-export type DeviceStats = { deviceId: number; deviceKey: string; ip: string; servicePort: number; model: string | null; serialNumber: string | null; status: string; lastSeenAt: string | null; deviceCount: number; onlineDevices: number; offlineDevices: number; channels: number; onlineChannels: number; offlineChannels: number; alarmsToday: number; unacknowledgedAlarms: number; onlineTrend: { timestamp: string; online: number; total: number }[] }
-export type BusinessNode = { name: string; code: string; status?: 'active' | 'disabled'; workshopId?: number | null; areaId?: number | null }
-export type DesktopRelease = { id: number; version: string; fileName: string; sha256: string; fileSize: number; releaseNotes: string; minimumVersion: string | null; forceUpdate: boolean; status: 'draft' | 'published' | 'revoked'; downloadCount: number; publishedAt: string | null; createdAt: string }
-export type PublicDesktopRelease = { id: number; version: string; fileName: string; sha256: string; fileSize: number; releaseNotes: string; minimumVersion: string | null; forceUpdate: boolean; updateAvailable?: boolean; publishedAt: string | null; downloadUrl: string }
-export type AccessScope = { scopeType: 'workshop' | 'area' | 'unit' | 'channel'; scopeId: number }
-
-export const login = (username: string, password: string) => api<{ accessToken: string; expiresAt: string; user: User }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
-export const logout = () => api<void>('/api/auth/logout', { method: 'POST' })
-export const me = () => api<User>('/api/auth/me')
-export const updateProfile = (displayName: string, phone: string) => api<User>('/api/auth/profile', { method: 'PUT', body: JSON.stringify({ displayName: displayName || null, phone: phone || null }) })
-export const changePassword = (currentPassword: string, newPassword: string) => api<void>('/api/auth/password', { method: 'PUT', body: JSON.stringify({ currentPassword, newPassword }) })
-export const getDevice = () => api<Device>('/api/devices')
-export const getChannels = () => api<Channel[]>('/api/channels')
-export const getStats = () => api<Stats>('/api/stats')
-export const getSystemStats = () => api<SystemStats>('/api/system-stats')
-export const getDeviceStats = () => api<DeviceStats>('/api/device-stats')
-export type AlarmQuery = { limit?: number; state?: string; channel?: number; eventType?: string; from?: string; to?: string }
-export const getAlarms = (query: AlarmQuery | number = 100) => {
-  const options = typeof query === 'number' ? { limit: query } : query
+export type Query = Record<string, string | number | boolean | null | undefined>
+export function queryString(query: Query = {}) {
   const params = new URLSearchParams()
-  for (const [key, value] of Object.entries(options)) if (value !== undefined && value !== '') params.set(key, String(value))
-  return api<Alarm[]>(`/api/alarms?${params}`)
+  for (const [key, value] of Object.entries(query)) if (value !== '' && value !== undefined && value !== null) params.set(key, String(value))
+  return params.size ? `?${params}` : ''
 }
-export const getAlarm = (id: number) => api<Alarm & { imageLength: number }>(`/api/alarms/${id}`)
-export async function getAlarmImage(id: number) {
-  const token = localStorage.getItem('video-platform-token')
-  let response: Response
-  try {
-    response = await fetch(`${configuredApiBase()}/api/alarms/${id}/image`, { headers: token ? { Authorization: `Bearer ${token}` } : undefined })
-  } catch {
-    throw new Error('无法连接平台服务，请检查 API 服务是否启动')
+export const list = <T>(path: string, query: Query = {}, signal?: AbortSignal) => api<Page<T>>(`${path}${queryString(query)}`, { signal })
+const post = <T = void>(path: string, body?: unknown) => api<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) })
+const put = <T = void>(path: string, body: unknown) => api<T>(path, { method: 'PUT', body: JSON.stringify(body) })
+const remove = (path: string, keepalive = false) => api<void>(path, { method: 'DELETE', keepalive }, !keepalive)
+const segment = (id: string | number) => encodeURIComponent(id)
+
+export const authApi = {
+  login: async (username: string, password: string) => { const result = await post<LoginResult>('/auth/login', { username, password, clientType: 'web', clientVersion: '2.0.0' } satisfies components['schemas']['LoginRequest']); clearCsrf(); return result },
+  me: () => api<User>('/auth/me'),
+  logout: async () => { await post('/auth/logout'); clearCsrf() },
+  profile: (displayName: string, phone: string) => put('/auth/profile', { displayName, phone }),
+  password: (currentPassword: string, newPassword: string) => put('/auth/password', { currentPassword, newPassword }),
+}
+export const managementApi = {
+  dashboard: () => api<Dashboard>('/dashboard'), system: () => api<SystemStatus>('/system'),
+  devices: (query?: Query, signal?: AbortSignal) => list<Device>('/devices', query, signal),
+  device: (id: number) => api<Device>(`/devices/${id}`),
+  saveDevice: (id: number | null, data: DeviceInput) => id ? put<Device>(`/devices/${id}`, data) : post<Device>('/devices', data),
+  deleteDevice: (id: number) => remove(`/devices/${id}`), testDevice: (id: number) => post<unknown>(`/devices/${id}/test`), syncDevice: (id: number) => post<unknown>(`/devices/${id}/sync`),
+  channels: (query?: Query, signal?: AbortSignal) => list<Channel>('/channels', query, signal),
+  assign: (channelIds: number[], unitId: number | null) => put('/channels/assignment', { channelIds, unitId }),
+  organization: () => api<Organization>('/organization'),
+  saveNode: (kind: OrganizationKind, id: number | null, data: Omit<OrganizationNode, 'id'>) => id ? put(`/organization/${kind}/${id}`, data) : post(`/organization/${kind}`, data),
+  deleteNode: (kind: OrganizationKind, id: number) => remove(`/organization/${kind}/${id}`),
+  users: (query?: Query, signal?: AbortSignal) => list<User>('/users', query, signal),
+  saveUser: (id: number | null, data: Omit<User, 'id' | 'permissions'> & { password?: string }) => id ? put(`/users/${id}`, data) : post('/users', data),
+  roles: () => api<Role[]>('/roles'),
+  saveRole: (id: number | null, data: Omit<Role, 'id' | 'userCount'>) => id ? put(`/roles/${id}`, data) : post('/roles', data),
+  deleteRole: (id: number) => remove(`/roles/${id}`), permissions: () => api<Permission[]>('/permissions'),
+  rolePermissions: (id: number, codes: string[]) => put(`/roles/${id}/permissions`, { codes }),
+  scope: (kind: 'user' | 'role', id: number) => api<AccessScope>(`/scopes/${kind}/${id}`),
+  saveScope: (kind: 'user' | 'role', id: number, data: AccessScope) => put(`/scopes/${kind}/${id}`, data),
+  sessions: (query?: Query, signal?: AbortSignal) => list<OnlineSession>('/sessions', query, signal),
+  revokeSession: (id: string) => remove(`/sessions/${segment(id)}`),
+  audit: (query?: Query, signal?: AbortSignal) => list<Audit>('/audit', query, signal),
+  settings: () => api<Settings>('/settings'), saveSettings: (data: Settings) => put('/settings', data),
+}
+export const mediaApi = {
+  live: (channelId: number, streamType: 1 | 2) => post<LiveSession>('/live-sessions', { channelId, streamType, profile: 'browser' } satisfies components['schemas']['LiveRequest']),
+  renewLive: (id: string) => post<LiveSession>(`/live-sessions/${segment(id)}/renew`), stopLive: (id: string, keepalive = false) => remove(`/live-sessions/${segment(id)}`, keepalive),
+  recordings: (channelId: number, start: string, end: string) => post<Recording[]>('/recordings/search', { channelId, start, end }),
+  playback: (channelId: number, start: string, end: string) => post<PlaybackSession>('/playback-sessions', { channelId, start, end, profile: 'browser' } satisfies components['schemas']['PlaybackRequest']),
+  getPlayback: (id: string) => api<PlaybackSession>(`/playback-sessions/${segment(id)}`),
+  renewPlayback: (id: string) => post<PlaybackSession>(`/playback-sessions/${segment(id)}/renew`),
+  stopPlayback: (id: string, keepalive = false) => remove(`/playback-sessions/${segment(id)}`, keepalive),
+  control: (id: string, data: PlaybackControl) => post<PlaybackSession>(`/playback-sessions/${segment(id)}/control`, data),
+  ptz: (id: number, command: PtzCommand, speed: number) => post(`/channels/${id}/ptz`, { command, speed }),
+  stopPtz: (id: number, keepalive = false) => api<void>(`/channels/${id}/ptz/stop`, { method: 'POST', keepalive }, !keepalive),
+  preset: (id: number, preset: number) => post(`/channels/${id}/ptz/presets/${preset}`),
+  favorites: () => api<Channel[]>('/favorites'), saveFavorites: (channelIds: number[]) => put('/favorites', { channelIds }),
+  layouts: () => api<Layout[]>('/layouts'), saveLayout: (id: number | null, data: Omit<Layout, 'id'>) => id ? put(`/layouts/${id}`, data) : post('/layouts', data), deleteLayout: (id: number) => remove(`/layouts/${id}`),
+}
+export const workflowApi = {
+  alarms: (query?: Query, signal?: AbortSignal) => list<Alarm>('/alarms', query, signal),
+  alarm: (id: number) => api<AlarmDetail>(`/alarms/${id}`), alarmImage: (id: number) => apiUrl(`/alarms/${id}/image`),
+  alarmAction: (id: number, action: 'claim' | 'note' | 'close' | 'reopen', note?: string) => post(`/alarms/${id}/actions`, { action, note }),
+  exports: (query?: Query, signal?: AbortSignal) => list<ExportJob>('/exports', query, signal),
+  createExport: (channelId: number, start: string, end: string) => post<ExportJob>('/exports', { channelId, start, end }),
+  cancelExport: (id: string) => post(`/exports/${segment(id)}/cancel`), retryExport: (id: string) => post(`/exports/${segment(id)}/retry`),
+  exportUrl: (id: string) => apiUrl(`/exports/${segment(id)}/download`),
+  releases: (query?: Query, signal?: AbortSignal) => list<Release>('/releases', query, signal),
+  latest: (packageType?: 'zip' | 'msi') => api<PublicRelease | undefined>(`/public/releases/latest${queryString({ packageType })}`),
+  uploadRelease: (data: FormData) => api<Release>('/releases', { method: 'POST', body: data }),
+  publish: (id: number, minimumVersion: string, forceUpdate: boolean) => post(`/releases/${id}/publish`, { minimumVersion, forceUpdate }),
+  revokeRelease: (id: number) => post(`/releases/${id}/revoke`), releaseUrl: (id: number) => apiUrl(`/releases/${id}/download`),
+}
+
+export async function allPages<T>(loader: (query: Query) => Promise<Page<T>>, query: Query = {}): Promise<T[]> {
+  const result: T[] = []
+  let page = 1
+  while (true) {
+    const batch = await loader({ ...query, page, pageSize: 100 })
+    result.push(...batch.items)
+    if (result.length >= batch.total || !batch.items.length) return result
+    page++
   }
-  if (!response.ok) throw new Error(`图片读取失败（${response.status}）`)
-  return URL.createObjectURL(await response.blob())
 }
-export const ackAlarm = (id: number, note?: string) => api(`/api/alarms/${id}/ack`, { method: 'POST', body: JSON.stringify({ note: note ?? '' }) })
-export const startLive = (channel: number, streamType: 1 | 2 = 2) => api<LiveSession>('/api/live-sessions', { method: 'POST', body: JSON.stringify({ channel, streamType }) })
-export const renewLive = (id: string) => api<LiveSession>(`/api/live-sessions/${id}/renew`, { method: 'POST' })
-export const stopLive = (id: string) => api(`/api/live-sessions/${id}`, { method: 'DELETE' })
-export const searchRecordings = (channel: number, start: string, end: string) => api<Recording[]>('/api/recordings/search', { method: 'POST', body: JSON.stringify({ channel, start, end }) })
-export const startPlayback = (channel: number, start: string, end: string) => api<PlaybackSession>('/api/playback-sessions', { method: 'POST', body: JSON.stringify({ channel, start, end }) })
-export const getPlayback = (id: string) => api<PlaybackSession>(`/api/playback-sessions/${id}`)
-export const renewPlayback = (id: string) => api<PlaybackSession>(`/api/playback-sessions/${id}/renew`, { method: 'POST' })
-export const controlPlayback = (id: string, action: 'pause' | 'resume' | 'fast' | 'slow' | 'normal' | 'seek', position?: number) => api<PlaybackSession>(`/api/playback-sessions/${id}/control`, { method: 'POST', body: JSON.stringify({ action, position }) })
-export const stopPlayback = (id: string) => api(`/api/playback-sessions/${id}`, { method: 'DELETE' })
-export const ptzStart = (channel: number, command: 'up' | 'down' | 'left' | 'right' | 'auto' | 'zoomIn' | 'zoomOut', speed = 4) => api(`/api/channels/${channel}/ptz/start`, { method: 'POST', body: JSON.stringify({ command, speed }) })
-export const ptzStop = (channel: number) => api(`/api/channels/${channel}/ptz/stop`, { method: 'POST' })
-export const ptzPreset = (channel: number, preset: number) => api(`/api/channels/${channel}/ptz/preset/${preset}`, { method: 'POST' })
-export const getWorkshops = () => api<unknown[][]>('/api/workshops')
-export const getAreas = () => api<unknown[][]>('/api/areas')
-export const getUnits = () => api<unknown[][]>('/api/units')
-export const getUnassignedChannels = () => api<unknown[][]>('/api/channels/unassigned')
-export const createWorkshop = (node: BusinessNode) => api('/api/workshops', { method: 'POST', body: JSON.stringify(node) })
-export const updateWorkshop = (id: number, node: BusinessNode) => api(`/api/workshops/${id}`, { method: 'PUT', body: JSON.stringify(node) })
-export const deleteWorkshop = (id: number) => api<void>(`/api/workshops/${id}`, { method: 'DELETE' })
-export const createArea = (node: BusinessNode) => api('/api/areas', { method: 'POST', body: JSON.stringify(node) })
-export const updateArea = (id: number, node: BusinessNode) => api(`/api/areas/${id}`, { method: 'PUT', body: JSON.stringify(node) })
-export const deleteArea = (id: number) => api<void>(`/api/areas/${id}`, { method: 'DELETE' })
-export const createUnit = (node: BusinessNode) => api('/api/units', { method: 'POST', body: JSON.stringify(node) })
-export const updateUnit = (id: number, node: BusinessNode) => api(`/api/units/${id}`, { method: 'PUT', body: JSON.stringify(node) })
-export const deleteUnit = (id: number) => api<void>(`/api/units/${id}`, { method: 'DELETE' })
-export const assignChannel = (id: number, unitId: number | null) => api(`/api/channels/${id}/unit`, { method: 'PUT', body: JSON.stringify({ unitId }) })
-export const getUsers = () => api<ManagedUser[]>('/api/users')
-export const getRoles = () => api<Role[]>('/api/roles')
-export const getPermissions = () => api<Permission[]>('/api/permissions')
-export const updateRolePermissions = (id: number, codes: string[]) => api(`/api/roles/${id}/permissions`, { method: 'PUT', body: JSON.stringify({ codes }) })
-export const createUser = (username: string, password: string, displayName = '', phone = '') => api<ManagedUser>('/api/users', { method: 'POST', body: JSON.stringify({ username, password, displayName: displayName || null, phone: phone || null }) })
-export const updateUser = (id: number, payload: { username: string; displayName?: string; phone?: string; status: ManagedUser['status']; password?: string | null }) => api<ManagedUser>(`/api/users/${id}`, { method: 'PUT', body: JSON.stringify({ ...payload, displayName: payload.displayName || null, phone: payload.phone || null, password: payload.password || null }) })
-export const assignUserRole = (id: number, roleId: number | null) => api(`/api/users/${id}/role`, { method: 'PUT', body: JSON.stringify({ roleId }) })
-export const createRole = (name: string, code: string, status = 'active') => api<Role>('/api/roles', { method: 'POST', body: JSON.stringify({ name, code, status }) })
-export const updateRole = (id: number, name: string, code: string, status: string) => api<Role>(`/api/roles/${id}`, { method: 'PUT', body: JSON.stringify({ name, code, status }) })
-export const deleteRole = (id: number) => api<void>(`/api/roles/${id}`, { method: 'DELETE' })
-export const getDesktopReleases = () => api<DesktopRelease[]>('/api/desktop-releases')
-export const getPublicDesktopRelease = () => api<PublicDesktopRelease>('/api/desktop-releases/latest')
-export const uploadDesktopRelease = (file: File, version: string, releaseNotes: string, minimumVersion: string, forceUpdate: boolean) => {
-  const form = new FormData()
-  form.append('file', file)
-  form.append('version', version)
-  form.append('releaseNotes', releaseNotes)
-  form.append('minimumVersion', minimumVersion)
-  form.append('forceUpdate', String(forceUpdate))
-  return api<{ id: number; version: string; sha256: string; fileSize: number; status: string }>('/api/desktop-releases', { method: 'POST', body: form })
-}
-export const publishDesktopRelease = (id: number, minimumVersion: string, forceUpdate: boolean) => api(`/api/desktop-releases/${id}/publish`, { method: 'POST', body: JSON.stringify({ minimumVersion: minimumVersion || null, forceUpdate }) })
-export const revokeDesktopRelease = (id: number) => api(`/api/desktop-releases/${id}/revoke`, { method: 'POST' })
-export const getAccessScopes = (target: 'user' | 'role', id: number) => api<AccessScope[]>(`/api/access-scopes/${target}/${id}`)
-export const updateAccessScopes = (target: 'user' | 'role', id: number, scopes: AccessScope[]) => api(`/api/access-scopes/${target}/${id}`, { method: 'PUT', body: JSON.stringify({ scopes }) })

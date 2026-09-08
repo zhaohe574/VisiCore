@@ -1,24 +1,27 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.1.0</Version>
-    <AssemblyVersion>1.1.0.0</AssemblyVersion>
-    <FileVersion>1.1.0.0</FileVersion>
+    <Version>2.0.1</Version>
+    <AssemblyVersion>2.0.1.0</AssemblyVersion>
+    <FileVersion>2.0.1.0</FileVersion>
     <ApplicationIcon>Assets/AppIcon.ico</ApplicationIcon>
-    <Product>京华安防平台</Product>
-    <Description>京华安防平台桌面客户端</Description>
+    <Product>VisiCore（视枢）</Product>
+    <AssemblyTitle>VisiCore 视枢值守端</AssemblyTitle>
+    <Description>VisiCore（视枢）视频值守桌面客户端</Description>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../VideoPlatform.Client/VideoPlatform.Client.csproj" />
     <Resource Include="Assets/Brand.png" />
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
     <PackageReference Include="LibVLCSharp.WPF" Version="3.8.5" />
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" />
-    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.7" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.0" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
   </ItemGroup>
 </Project>

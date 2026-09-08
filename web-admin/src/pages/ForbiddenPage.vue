@@ -1,0 +1,1 @@
+<template><el-result icon="warning" title="暂无访问权限" sub-title="当前账号没有此页面的访问权限。"><template #extra><router-link to="/app/profile"><el-button type="primary">个人账号</el-button></router-link></template></el-result></template>
