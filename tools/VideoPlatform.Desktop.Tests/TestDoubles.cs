@@ -76,7 +76,7 @@ internal sealed class FakeApi : IPlatformApi
 internal static class Fixtures
 {
     public static User User(params string[] permissions) => new(1, "tester", "测试值守员", "", "active", permissions, [1]);
-    public static Channel Channel(long id = 101, long device = 1) => new(id, device, $"录像机 {device}", 1, $"门区 {id}", "测试设备", "online", null, true, "H265");
+    public static Channel Channel(long id = 101, long device = 1) => new(id, device, $"录像机 {device}", 1, $"门区 {id}", null, "测试设备", "online", null, true, "H265");
     public static MediaSession Media(long id = 101) => new(Guid.NewGuid().ToString(), id, 2, "playing", DateTimeOffset.UtcNow.AddMinutes(2), $"rtsp://local/device-{id}", $"https://platform.test/media/device-{id}.flv");
     public static LoginResponse Login(string token = "stable-token") => new(User("live.view", "channel.read"), token, DateTimeOffset.UtcNow.AddHours(8));
 }

@@ -20,7 +20,7 @@ public sealed partial class ResourceNode(string name, Channel? channel = null) :
         var childMatch = false;
         foreach (var child in Children) childMatch |= child.Filter(search, favorites);
         IsVisible = Channel is { } channel
-            ? (favorites is null || favorites.Contains(channel.Id)) && $"{Name} {channel.Detail}".Contains(search, StringComparison.OrdinalIgnoreCase)
+            ? (favorites is null || favorites.Contains(channel.Id)) && $"{Name} {channel.Name} {channel.Alias} {channel.Detail}".Contains(search, StringComparison.OrdinalIgnoreCase)
             : childMatch;
         return IsVisible;
     }

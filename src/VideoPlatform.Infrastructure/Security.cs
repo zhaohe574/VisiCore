@@ -52,7 +52,7 @@ public sealed class AccessService(Database db) : IAccessService
         ))
         """;
     public const string ChannelFrom = "channels c join devices d on d.id=c.device_id left join units un on un.id=c.unit_id left join areas ar on ar.id=un.parent_id";
-    public const string ChannelColumns = "c.id,c.device_id,d.name as device_name,c.device_channel,c.name,c.model,c.status,c.unit_id,c.ptz_capable,c.codec";
+    public const string ChannelColumns = "c.id,c.device_id,d.name as device_name,c.device_channel,c.name,c.alias,c.model,c.status,c.unit_id,c.ptz_capable,c.codec";
 
     public async Task<bool> HasPermissionAsync(long userId, string permission, CancellationToken ct = default)
         => (await db.OneAsync("select exists(select 1 from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id join role_permissions p on p.role_id=r.id where u.id=@userId and u.status='active' and r.status='active' and p.permission_code=@permission) as allowed", new { userId, permission }, ct)).Flag("allowed");

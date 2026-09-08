@@ -80,12 +80,17 @@ public static class DeviceEndpoints
             var actor = ApiSupport.Actor(context);
             await access.DemandAsync(actor, "channel.read");
             var (_, size, offset) = ApiSupport.Pagination(context);
-            var where = $"c.status<>'disabled' and d.enabled and ({AccessService.ChannelPredicate}) and (@deviceId::bigint is null or c.device_id=@deviceId) and (@unitId::bigint is null or c.unit_id=@unitId) and (@online::boolean is null or (c.status='online')=@online) and (c.name ilike @search or d.name ilike @search or c.device_channel::text ilike @search)";
+            var where = $"c.status<>'disabled' and d.enabled and ({AccessService.ChannelPredicate}) and (@deviceId::bigint is null or c.device_id=@deviceId) and (@unitId::bigint is null or c.unit_id=@unitId) and (@online::boolean is null or (c.status='online')=@online) and (c.name ilike @search or coalesce(c.alias, '') ilike @search or d.name ilike @search or c.device_channel::text ilike @search)";
             var args = new { actor.UserId, deviceId, unitId, online, search = $"%{ApiSupport.Search(context)}%", size, offset };
             var rows = await db.QueryAsync($"select {AccessService.ChannelColumns} from {AccessService.ChannelFrom} where {where} order by d.id,c.device_channel limit @size offset @offset", args);
             var count = await db.OneAsync($"select count(*) as count from {AccessService.ChannelFrom} where {where}", args);
             return Results.Ok(ApiSupport.Page(context, rows, count.Id("count")));
         }).WithName("ListChannels");
+        group.MapPut("/channels/{id:long}", async (long id, ChannelUpdateRequest request, HttpContext context, AdministrationService service) =>
+        {
+            var updated = await service.UpdateChannelAsync(ApiSupport.Actor(context), id, request, ApiSupport.Ip(context), context.RequestAborted);
+            return Results.Ok(updated);
+        }).Produces<ChannelDto>().WithName("UpdateChannel");
     }
 
     private static void Validate(DeviceRequest request, bool create)

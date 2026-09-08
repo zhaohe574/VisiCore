@@ -19,6 +19,7 @@ internal sealed class AlarmJournal : IAsyncDisposable
     private string? _fault;
     private string? _pendingFault;
     private int _disposed;
+    public Func<int, int>? ChannelMapper { get; set; }
 
     public AlarmJournal(long deviceId, string root, int capacity = 256, long maxBytes = 64 * 1024 * 1024, long segmentBytes = 8 * 1024 * 1024)
     {
@@ -85,7 +86,9 @@ internal sealed class AlarmJournal : IAsyncDisposable
                         if (pending is not null)
                         {
                             var details = pending.Details;
-                            var channels = details?.Channels.Count > 0 ? details.Channels.Select(c => (int?)c) : new int?[] { null };
+                            var channels = details?.Channels.Count > 0
+                                ? details.Channels.Select(c => (int?)(ChannelMapper is not null ? ChannelMapper(c) : c))
+                                : new int?[] { null };
                             foreach (var channel in channels)
                                 Append(new($"{_deviceId}:{pending.EventId}:{channel ?? 0}", _deviceId, channel, details?.EventType ?? $"alarm.sdk_{pending.Command}", details?.AlarmTime ?? pending.ReceivedAt,
                                     details?.IsRecovery == true,

@@ -14,4 +14,4 @@ async function search(value = '') {
 }
 onMounted(() => void search())
 </script>
-<template><div class="channel-picker"><el-select :model-value="modelValue ?? undefined" filterable remote clearable :remote-method="search" :loading="loading" :disabled="disabled" placeholder="选择通道" aria-label="选择通道" @update:model-value="$emit('update:modelValue', $event)"><el-option v-for="channel in items" :key="channel.id" :value="channel.id" :label="`${channel.deviceName} / ${channel.name}（${channel.deviceChannel}）`" /></el-select><small v-if="error" class="field-error">{{ error }}</small></div></template>
+<template><div class="channel-picker"><el-select :model-value="modelValue ?? undefined" filterable remote clearable :remote-method="search" :loading="loading" :disabled="disabled" placeholder="选择通道" aria-label="选择通道" @update:model-value="$emit('update:modelValue', $event)"><el-option v-for="channel in items" :key="channel.id" :value="channel.id" :label="`${channel.deviceName} / ${channel.alias || channel.name}（${channel.deviceChannel}）`" /></el-select><small v-if="error" class="field-error">{{ error }}</small></div></template>

@@ -34,7 +34,7 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
     [ObservableProperty] private DateTimeOffset? _currentTime;
     [ObservableProperty] private RecordingSegment[] _segments = [];
     [ObservableProperty] private double _speed = 1;
-    public string Title => Channel is null ? $"窗口 {Number}" : $"{Channel.Name} · {(IsPlayback ? "回放" : "预览")}";
+    public string Title => Channel is null ? $"窗口 {Number}" : $"{Channel.DisplayName} · {(IsPlayback ? "回放" : "预览")}";
     partial void OnIsMutedChanged(bool value) { if (_player is not null) _player.Muted = value; }
     public void Invalidate() => Interlocked.Increment(ref _generation);
 

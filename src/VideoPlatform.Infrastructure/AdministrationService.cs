@@ -164,6 +164,31 @@ public sealed class AdministrationService(Database db, AccessService access, Med
         await RevokeUsersAsync(affected);
     }
 
+    public async Task<ChannelDto> UpdateChannelAsync(Actor actor, long id, ChannelUpdateRequest request, string? ip, CancellationToken ct = default)
+    {
+        Rules.Require(request.Alias is null || request.Alias.Length <= 256, "别名长度超出限制");
+        Rules.Require(request.UnitId is null or > 0, "目标单元无效");
+        return await WriteAsync(actor, "channel.assign", async tx =>
+        {
+            await DemandChannelsAsync(tx, actor.UserId, [id], false, ct);
+            if (request.UnitId is { } unitId)
+            {
+                var unit = await RequiredAsync(tx, "units", unitId, ct);
+                Rules.Require(unit.Text("status") == "active", "目标单元已停用", "organization.disabled", 409);
+                await DemandNodeScopeAsync(tx, actor.UserId, "units", unitId, ct);
+            }
+            var before = await RequiredAsync(tx, "channels", id, ct);
+            var alias = string.IsNullOrWhiteSpace(request.Alias) ? null : request.Alias.Trim();
+            if (request.UnitId.HasValue)
+                await tx.ExecuteAsync("update channels set alias=@alias,unit_id=@unitId,updated_at=now() where id=@id", new { id, alias, unitId = request.UnitId.Value }, ct);
+            else
+                await tx.ExecuteAsync("update channels set alias=@alias,updated_at=now() where id=@id", new { id, alias }, ct);
+            await AuditAsync(tx, actor, "channel.update", $"channels/{id}", $"别名：{before["alias"]?.ToString() ?? "无"} → {alias ?? "无"}", ip, ct);
+            var row = await tx.OneAsync($"select {AccessService.ChannelColumns} from {AccessService.ChannelFrom} where c.id=@id", new { id }, ct);
+            return ToChannel(row!);
+        }, ct: ct);
+    }
+
     public async Task<AdministrationPage<UserDto>> UsersAsync(Actor actor, int page, int pageSize, string? search, CancellationToken ct = default)
     {
         await access.DemandAsync(actor, "user.read", ct);
@@ -753,7 +778,7 @@ public sealed class AdministrationService(Database db, AccessService access, Med
     private static OrganizationNodeDto ToNode(JsonObject row) => new(row.Id(), row.Text("name"), row.Text("code"), row.Text("status"), NullableId(row, "parentId"));
     private static UserDto ToUser(JsonObject row) => new(row.Id(), row.Text("username"), row["displayName"]?.ToString(), row["phone"]?.ToString(), row.Text("status"), Array<string>(row, "permissions"), Array<long>(row, "roleIds"));
     private static AdministrationRoleDto ToRole(JsonObject row) => new(row.Id(), row.Text("name"), row.Text("code"), row.Text("status"), Array<string>(row, "permissionCodes"), row.Id("userCount"));
-    private static ChannelDto ToChannel(JsonObject row) => new(row.Id(), row.Id("deviceId"), row.Text("deviceName"), (int)row.Id("deviceChannel"), row.Text("name"), row["model"]?.ToString(), row.Text("status"), NullableId(row, "unitId"), row.Flag("ptzCapable"), row["codec"]?.ToString());
+    private static ChannelDto ToChannel(JsonObject row) => new(row.Id(), row.Id("deviceId"), row.Text("deviceName"), (int)row.Id("deviceChannel"), row.Text("name"), row["alias"]?.ToString(), row["model"]?.ToString(), row.Text("status"), NullableId(row, "unitId"), row.Flag("ptzCapable"), row["codec"]?.ToString());
     private static AdministrationLayoutDto ToLayout(JsonObject row) => new(row.Id(), row.Text("name"), row.Text("kind"), row.Flag("shared"), (int)row.Id("layout"), (int)row.Id("intervalSeconds"), Array<long?>(row, "channelIds"));
 }
 

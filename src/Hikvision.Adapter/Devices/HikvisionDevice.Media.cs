@@ -11,7 +11,7 @@ internal sealed partial class HikvisionDevice
             var vod = new Native.VodPara
             {
                 Size = (uint)Marshal.SizeOf<Native.VodPara>(),
-                StreamInfo = new() { Size = (uint)Marshal.SizeOf<Native.StreamInfo>(), Id = new byte[32], Channel = (uint)channel, Reserved = new byte[32] },
+                StreamInfo = new() { Size = (uint)Marshal.SizeOf<Native.StreamInfo>(), Id = new byte[32], Channel = (uint)ToSdkChannel(channel), Reserved = new byte[32] },
                 BeginTime = Native.Time.From(start), EndTime = Native.Time.From(end), FileIndex = fileIndex,
                 Async = 1, Reserved = new byte[19]
             };
@@ -30,7 +30,7 @@ internal sealed partial class HikvisionDevice
             EnsureConnected();
             var condition = new Native.DownloadCondition
             {
-                Channel = (uint)channel, Start = Native.Time.From(start), End = Native.Time.From(end),
+                Channel = (uint)ToSdkChannel(channel), Start = Native.Time.From(start), End = Native.Time.From(end),
                 Download = 1, StreamId = new byte[32], Reserved = new byte[26]
             };
             handle = Native.NET_DVR_GetFileByTime_V40(_controlUserId, path, ref condition);

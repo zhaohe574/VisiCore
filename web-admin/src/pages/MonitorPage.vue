@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { Check, Close, Download, FullScreen, Refresh, Search, Star, StarFilled, VideoPause, VideoPlay } from '@element-plus/icons-vue'
-import { allPages, managementApi, mediaApi, workflowApi, type Channel, type Layout, type LiveSession, type PlaybackControl, type PlaybackSession, type Recording } from '../api'
+import { allPages, managementApi, mediaApi, workflowApi, type Channel, type Layout, type LiveSession, type Organization, type PlaybackControl, type PlaybackSession, type Recording } from '../api'
 import { useAuth } from '../stores/auth'
 import { useEvents } from '../stores/events'
 import { useAction } from '../composables/useAction'
@@ -15,13 +15,67 @@ import VideoTile from '../components/VideoTile.vue'
 import PtzPanel from '../components/PtzPanel.vue'
 const route = useRoute(), auth = useAuth(), { busy, run } = useAction()
 const mode = computed<'live' | 'playback'>(() => route.path.endsWith('playback') ? 'playback' : 'live')
-const channels = ref<Channel[]>([]), favorites = ref<number[]>([]), layouts = ref<Layout[]>([]), search = ref(''), onlyFavorites = ref(false), loading = ref(false), error = ref('')
+const channels = ref<Channel[]>([]), favorites = ref<number[]>([]), layouts = ref<Layout[]>([]), organization = ref<Organization>({ workshops: [], areas: [], units: [] }), search = ref(''), onlyFavorites = ref(false), loading = ref(false), error = ref('')
 const count = ref<1 | 4 | 9 | 16>(4), selected = ref(0), slots = ref<(Channel | undefined)[]>(Array(16).fill(undefined)), streams = ref<(1 | 2)[]>(Array(16).fill(2)), slotRanges = ref<({ start: string; end: string } | undefined)[]>(Array(16).fill(undefined)), sessions = ref<(LiveSession | PlaybackSession | null)[]>(Array(16).fill(null)), revision = ref(0)
 type TileInstance = InstanceType<typeof VideoTile>
 const tiles = new Map<number, TileInstance>(), wall = ref<HTMLElement>(), range = ref<[Date, Date] | null>([new Date(Date.now() - 3600000), new Date()]), recordings = ref<Recording[]>([]), unified = ref(false), speed = ref(1), layoutId = ref<number>(), patrol = ref<Layout>(), patrolOffset = ref(0), layoutDialog = ref(false), layoutName = ref('')
 let patrolTimer: ReturnType<typeof setInterval> | undefined, disposed = false, searchGeneration = 0, pendingReload = false, pendingRestart = false
-const filtered = computed(() => channels.value.filter(channel => (!onlyFavorites.value || favorites.value.includes(channel.id)) && `${channel.name} ${channel.deviceName} ${channel.deviceChannel}`.toLowerCase().includes(search.value.toLowerCase())))
-const grouped = computed(() => { const groups = new Map<number, { id: number; name: string; channels: Channel[] }>(); for (const channel of filtered.value) { if (!groups.has(channel.deviceId)) groups.set(channel.deviceId, { id: channel.deviceId, name: channel.deviceName, channels: [] }); groups.get(channel.deviceId)!.channels.push(channel) }; return [...groups.values()] })
+const filtered = computed(() => channels.value.filter(channel => (!onlyFavorites.value || favorites.value.includes(channel.id)) && `${channel.alias || ''} ${channel.name} ${channel.deviceName} ${channel.deviceChannel}`.toLowerCase().includes(search.value.toLowerCase())))
+interface TreeUnit { id: number; name: string; channels: Channel[] }
+interface TreeArea { id: number; name: string; units: TreeUnit[]; channelCount: number }
+interface TreeWorkshop { id: number; name: string; areas: TreeArea[]; channelCount: number }
+const orgTree = computed(() => {
+  const channelList = filtered.value, unitMap = new Map<number, Channel[]>(), unassigned: Channel[] = []
+  const validUnitIds = new Set(organization.value.units.map(u => Number(u.id)))
+  for (const c of channelList) {
+    const uid = c.unitId !== null && c.unitId !== undefined ? Number(c.unitId) : null
+    if (uid !== null && validUnitIds.has(uid)) {
+      if (!unitMap.has(uid)) unitMap.set(uid, [])
+      unitMap.get(uid)!.push(c)
+    } else {
+      unassigned.push(c)
+    }
+  }
+  const areasByWorkshop = new Map<number, typeof organization.value.areas>()
+  for (const a of organization.value.areas) {
+    const wsId = Number(a.parentId)
+    if (!areasByWorkshop.has(wsId)) areasByWorkshop.set(wsId, [])
+    areasByWorkshop.get(wsId)!.push(a)
+  }
+  const unitsByArea = new Map<number, typeof organization.value.units>()
+  for (const u of organization.value.units) {
+    const areaId = Number(u.parentId)
+    if (!unitsByArea.has(areaId)) unitsByArea.set(areaId, [])
+    unitsByArea.get(areaId)!.push(u)
+  }
+  const workshops: TreeWorkshop[] = []
+  for (const ws of organization.value.workshops) {
+    const wsId = Number(ws.id)
+    const areas = areasByWorkshop.get(wsId) || []
+    const treeAreas: TreeArea[] = []
+    let wsChannelCount = 0
+    for (const a of areas) {
+      const aId = Number(a.id)
+      const units = unitsByArea.get(aId) || []
+      const treeUnits: TreeUnit[] = []
+      let areaChannelCount = 0
+      for (const u of units) {
+        const uId = Number(u.id)
+        const uChannels = unitMap.get(uId) || []
+        if (uChannels.length > 0) {
+          treeUnits.push({ id: uId, name: u.name, channels: uChannels })
+          areaChannelCount += uChannels.length
+        }
+      }
+      if (treeUnits.length > 0) {
+        treeAreas.push({ id: aId, name: a.name, units: treeUnits, channelCount: areaChannelCount })
+        wsChannelCount += areaChannelCount
+      }
+    }
+    if (treeAreas.length > 0) workshops.push({ id: wsId, name: ws.name, areas: treeAreas, channelCount: wsChannelCount })
+  }
+  return { workshops, unassigned }
+})
 const selectedChannel = computed(() => slots.value[selected.value])
 const selectedSession = computed(() => sessions.value[selected.value] as PlaybackSession | null)
 const canExport = computed(() => auth.can('export.create'))
@@ -30,9 +84,9 @@ async function loadChannels(reconcile = false, restart = false) {
   if (loading.value) { pendingReload = true; pendingRestart ||= restart; return }
   loading.value = true; error.value = ''
   try {
-    const data = await Promise.all([allPages(managementApi.channels), mediaApi.favorites(), mediaApi.layouts()])
+    const data = await Promise.all([allPages(managementApi.channels), mediaApi.favorites(), mediaApi.layouts(), managementApi.organization()])
     if (disposed) return
-    channels.value = data[0]; favorites.value = data[1].map(channel => channel.id); layouts.value = data[2]
+    channels.value = data[0]; favorites.value = data[1].map(channel => channel.id); layouts.value = data[2]; organization.value = data[3]
     if (reconcile) {
       const allowed = new Map(channels.value.map(channel => [channel.id, channel]))
       slots.value = slots.value.map(channel => channel ? allowed.get(channel.id) : undefined)
@@ -90,7 +144,7 @@ onMounted(async () => { await loadChannels(); if (disposed) return; if (Number(r
 onBeforeUnmount(() => { disposed = true; searchGeneration++; stopPatrol(); unsubscribers.forEach(unsubscribe => unsubscribe()) })
 </script>
 <template><div class="monitor-page"><PageHeader :title="mode === 'live' ? '实时预览' : '录像回放'"><el-segmented :model-value="count" :options="[1, 4, 9, 16]" aria-label="视频分屏数量" @change="setCount($event as 1 | 4 | 9 | 16)" /><el-tooltip content="清空视频墙"><el-button :icon="Close" aria-label="清空视频墙" @click="clearWall" /></el-tooltip><el-tooltip content="视频墙全屏"><el-button :icon="FullScreen" aria-label="视频墙全屏" @click="fullScreen" /></el-tooltip></PageHeader><el-alert v-if="error" class="page-alert" :title="error" type="error" :closable="false" show-icon />
-<div class="monitor-workspace"><aside class="channel-browser"><div class="channel-browser-head"><h2>视频通道 <span>{{ channels.length }}</span></h2><el-tooltip content="刷新通道"><el-button text :icon="Refresh" :loading="loading" aria-label="刷新通道" @click="loadChannels(true)" /></el-tooltip></div><el-input v-model="search" clearable :prefix-icon="Search" placeholder="通道或设备名称" aria-label="搜索视频通道" /><el-checkbox v-model="onlyFavorites" class="favorites-filter">仅显示收藏</el-checkbox><div v-loading="loading" class="channel-tree"><el-empty v-if="!filtered.length && !loading" description="暂无可用通道" :image-size="50" /><details v-for="group in grouped" :key="group.id" open><summary>{{ group.name }}<span>{{ group.channels.length }}</span></summary><div v-for="channel in group.channels" :key="channel.id" :class="['channel-entry', { active: selectedChannel?.id === channel.id }]" draggable="true" @dragstart="drag($event, channel)"><button class="channel-open" :title="`${channel.name} · 通道 ${channel.deviceChannel}`" @click="assign(channel.id)"><span :class="['channel-dot', channel.status]" /><span>{{ channel.name }}</span><small>{{ channel.deviceChannel }}</small></button><el-tooltip :content="favorites.includes(channel.id) ? '取消收藏' : '收藏通道'"><button class="channel-favorite" :aria-label="favorites.includes(channel.id) ? '取消收藏' : '收藏通道'" :disabled="busy" @click="favorite(channel)"><el-icon><StarFilled v-if="favorites.includes(channel.id)" /><Star v-else /></el-icon></button></el-tooltip></div></details></div><PtzPanel v-if="mode === 'live'" :channel="selectedChannel" :allowed="auth.can('ptz.control')" /></aside>
+<div class="monitor-workspace"><aside class="channel-browser"><div class="channel-browser-head"><h2>视频通道 <span>{{ channels.length }}</span></h2><el-tooltip content="刷新通道"><el-button text :icon="Refresh" :loading="loading" aria-label="刷新通道" @click="loadChannels(true)" /></el-tooltip></div><el-input v-model="search" clearable :prefix-icon="Search" placeholder="搜索通道、别名或设备" aria-label="搜索视频通道" /><el-checkbox v-model="onlyFavorites" class="favorites-filter">仅显示收藏</el-checkbox><div v-loading="loading" class="channel-tree"><el-empty v-if="!filtered.length && !loading" description="暂无可用通道" :image-size="50" /><details v-for="ws in orgTree.workshops" :key="`ws-${ws.id}`" open class="tree-node tree-workshop"><summary>{{ ws.name }}<span>{{ ws.channelCount }}</span></summary><div class="tree-branch"><details v-for="area in ws.areas" :key="`area-${area.id}`" open class="tree-node tree-area"><summary>{{ area.name }}<span>{{ area.channelCount }}</span></summary><div class="tree-branch"><details v-for="unit in area.units" :key="`unit-${unit.id}`" open class="tree-node tree-unit"><summary>{{ unit.name }}<span>{{ unit.channels.length }}</span></summary><div class="tree-leaf"><div v-for="channel in unit.channels" :key="channel.id" :class="['channel-entry', { active: selectedChannel?.id === channel.id }]" draggable="true" @dragstart="drag($event, channel)"><button class="channel-open" :title="`${channel.alias ? channel.alias + ' (' + channel.name + ')' : channel.name} · ${channel.deviceName} · 通道 ${channel.deviceChannel}`" @click="assign(channel.id)"><span :class="['channel-dot', channel.status]" /><span>{{ channel.alias || channel.name }}</span><small>{{ channel.deviceChannel }}</small></button><el-tooltip :content="favorites.includes(channel.id) ? '取消收藏' : '收藏通道'"><button class="channel-favorite" :aria-label="favorites.includes(channel.id) ? '取消收藏' : '收藏通道'" :disabled="busy" @click="favorite(channel)"><el-icon><StarFilled v-if="favorites.includes(channel.id)" /><Star v-else /></el-icon></button></el-tooltip></div></div></details></div></details></div></details><details v-if="orgTree.unassigned.length" open class="tree-node tree-unassigned"><summary>未分配组织<span>{{ orgTree.unassigned.length }}</span></summary><div class="tree-leaf"><div v-for="channel in orgTree.unassigned" :key="channel.id" :class="['channel-entry', { active: selectedChannel?.id === channel.id }]" draggable="true" @dragstart="drag($event, channel)"><button class="channel-open" :title="`${channel.alias ? channel.alias + ' (' + channel.name + ')' : channel.name} · ${channel.deviceName} · 通道 ${channel.deviceChannel}`" @click="assign(channel.id)"><span :class="['channel-dot', channel.status]" /><span>{{ channel.alias || channel.name }}</span><small>{{ channel.deviceChannel }}</small></button><el-tooltip :content="favorites.includes(channel.id) ? '取消收藏' : '收藏通道'"><button class="channel-favorite" :aria-label="favorites.includes(channel.id) ? '取消收藏' : '收藏通道'" :disabled="busy" @click="favorite(channel)"><el-icon><StarFilled v-if="favorites.includes(channel.id)" /><Star v-else /></el-icon></button></el-tooltip></div></div></details></div><PtzPanel v-if="mode === 'live'" :channel="selectedChannel" :allowed="auth.can('ptz.control')" /></aside>
 <section class="video-workspace"><div class="media-toolbar"><template v-if="mode === 'live'"><el-select v-model="layoutId" clearable placeholder="选择布局或轮巡方案" aria-label="布局与轮巡方案" @change="applyLayout"><el-option v-for="layout in layouts" :key="layout.id" :value="layout.id" :label="`${layout.name}${layout.kind === 'patrol' ? ' · 轮巡' : ''}`" /></el-select><el-tooltip content="保存当前布局"><el-button :icon="Check" aria-label="保存当前布局" @click="layoutName = ''; layoutDialog = true" /></el-tooltip><el-button v-if="patrol" :icon="VideoPause" @click="stopPatrol">停止轮巡</el-button><span v-if="patrol" class="patrol-label">{{ patrol.name }} · {{ patrol.intervalSeconds }} 秒</span><el-radio-group v-model="stream" size="small" class="stream-switch"><el-radio-button :value="2">子码流</el-radio-button><el-radio-button :value="1">主码流</el-radio-button></el-radio-group></template><template v-else><el-date-picker v-model="range" type="datetimerange" start-placeholder="开始时间" end-placeholder="结束时间" format="YYYY-MM-DD HH:mm:ss" /><el-button :icon="Search" :loading="busy" @click="searchRecordings">查询录像</el-button><el-button type="primary" :icon="VideoPlay" :disabled="!selectedChannel || busy" @click="startPlayback()">回放</el-button><el-tooltip v-if="canExport" content="导出所选时段"><el-button :icon="Download" :disabled="!selectedChannel || busy" aria-label="导出所选时段" @click="exportSelected" /></el-tooltip></template></div>
 <div ref="wall" class="video-wall" :style="{ '--columns': Math.sqrt(count) }"><VideoTile v-for="index in count" :key="`${revision}:${index}`" :ref="instance => setTile(index - 1, instance)" :index="index - 1" :channel="slots[index - 1]" :mode="mode" :stream-type="streams[index - 1]" :range="slotRanges[index - 1]" :selected="selected === index - 1" @select="selected = index - 1; recordings = []" @close="slots[index - 1] = undefined; slotRanges[index - 1] = undefined; stopPatrol()" @drop-channel="assign($event, index - 1)" @changed="sessions[index - 1] = $event" /></div>
-<template v-if="mode === 'playback'"><div class="playback-controls"><el-switch v-model="unified" active-text="统一控制" inactive-text="当前窗口" /><el-tooltip content="暂停回放"><el-button :icon="VideoPause" :disabled="busy" aria-label="暂停回放" @click="control({ action: 'pause' })" /></el-tooltip><el-tooltip content="继续回放"><el-button :icon="VideoPlay" :disabled="busy" aria-label="继续回放" @click="control({ action: 'resume' })" /></el-tooltip><el-select v-model="speed" class="speed-select" aria-label="回放倍速" @change="control({ action: 'speed', speed })"><el-option v-for="value in [0.25, 0.5, 1, 2, 4, 8]" :key="value" :value="value" :label="`${value} 倍速`" /></el-select><StatusBadge v-if="selectedSession" :value="selectedSession.state" /><span class="muted">{{ selectedChannel?.name || '未选择通道' }}</span></div><div v-if="unified" class="unified-timeline"><el-slider :model-value="selectedSession?.progress || 0" :show-tooltip="false" aria-label="统一定位录像" @change="seekAll" /><div><span>{{ range ? dateTime(range[0].toISOString()) : '—' }}</span><span>{{ range ? dateTime(range[1].toISOString()) : '—' }}</span></div></div><section class="recordings-section"><div class="section-heading"><h2>录像检索</h2><span class="muted">{{ recordings.length }} 段</span></div><el-table :data="recordings" max-height="260" empty-text="暂无检索结果"><el-table-column label="开始时间" min-width="170"><template #default="{ row }">{{ dateTime(row.start) }}</template></el-table-column><el-table-column label="结束时间" min-width="170"><template #default="{ row }">{{ dateTime(row.end) }}</template></el-table-column><el-table-column label="大小" width="110"><template #default="{ row }">{{ bytes(row.fileSize) }}</template></el-table-column><el-table-column label="码流" width="90"><template #default="{ row }">{{ row.streamType === 1 ? '主码流' : '子码流' }}</template></el-table-column><el-table-column label="操作" width="85" fixed="right"><template #default="{ row }"><el-button link type="primary" :icon="VideoPlay" @click="startPlayback(row as Recording)">回放</el-button></template></el-table-column></el-table></section></template></section></div><el-dialog v-model="layoutDialog" title="保存当前布局" width="420px"><el-form label-position="top"><el-form-item label="布局名称" required><el-input v-model="layoutName" maxlength="100" /></el-form-item></el-form><template #footer><el-button @click="layoutDialog = false">取消</el-button><el-button type="primary" :loading="busy" @click="saveLayout">保存</el-button></template></el-dialog></div></template>
+<template v-if="mode === 'playback'"><div class="playback-controls"><el-switch v-model="unified" active-text="统一控制" inactive-text="当前窗口" /><el-tooltip content="暂停回放"><el-button :icon="VideoPause" :disabled="busy" aria-label="暂停回放" @click="control({ action: 'pause' })" /></el-tooltip><el-tooltip content="继续回放"><el-button :icon="VideoPlay" :disabled="busy" aria-label="继续回放" @click="control({ action: 'resume' })" /></el-tooltip><el-select v-model="speed" class="speed-select" aria-label="回放倍速" @change="control({ action: 'speed', speed })"><el-option v-for="value in [0.25, 0.5, 1, 2, 4, 8]" :key="value" :value="value" :label="`${value} 倍速`" /></el-select><StatusBadge v-if="selectedSession" :value="selectedSession.state" /><span class="muted">{{ selectedChannel ? (selectedChannel.alias || selectedChannel.name) : '未选择通道' }}</span></div><div v-if="unified" class="unified-timeline"><el-slider :model-value="selectedSession?.progress || 0" :show-tooltip="false" aria-label="统一定位录像" @change="seekAll" /><div><span>{{ range ? dateTime(range[0].toISOString()) : '—' }}</span><span>{{ range ? dateTime(range[1].toISOString()) : '—' }}</span></div></div><section class="recordings-section"><div class="section-heading"><h2>录像检索</h2><span class="muted">{{ recordings.length }} 段</span></div><el-table :data="recordings" max-height="260" empty-text="暂无检索结果"><el-table-column label="开始时间" min-width="170"><template #default="{ row }">{{ dateTime(row.start) }}</template></el-table-column><el-table-column label="结束时间" min-width="170"><template #default="{ row }">{{ dateTime(row.end) }}</template></el-table-column><el-table-column label="大小" width="110"><template #default="{ row }">{{ bytes(row.fileSize) }}</template></el-table-column><el-table-column label="码流" width="90"><template #default="{ row }">{{ row.streamType === 1 ? '主码流' : '子码流' }}</template></el-table-column><el-table-column label="操作" width="85" fixed="right"><template #default="{ row }"><el-button link type="primary" :icon="VideoPlay" @click="startPlayback(row as Recording)">回放</el-button></template></el-table-column></el-table></section></template></section></div><el-dialog v-model="layoutDialog" title="保存当前布局" width="420px"><el-form label-position="top"><el-form-item label="布局名称" required><el-input v-model="layoutName" maxlength="100" /></el-form-item></el-form><template #footer><el-button @click="layoutDialog = false">取消</el-button><el-button type="primary" :loading="busy" @click="saveLayout">保存</el-button></template></el-dialog></div></template>

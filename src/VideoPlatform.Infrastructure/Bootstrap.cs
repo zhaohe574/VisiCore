@@ -30,6 +30,7 @@ public static class Bootstrap
         services.AddSingleton<AuditStore>();
         services.AddSingleton<DeviceService>();
         services.AddSingleton<MediaService>();
+        services.AddSingleton<AdministrationService>();
         return services;
     }
 

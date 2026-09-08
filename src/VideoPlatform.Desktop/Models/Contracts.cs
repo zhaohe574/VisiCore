@@ -14,11 +14,12 @@ public sealed record LoginRequest(string Username, string Password, string Clien
 public sealed record LoginResponse(User User, string? AccessToken, DateTimeOffset ExpiresAt);
 public sealed record SavedSession(string Server, string AccessToken, DateTimeOffset ExpiresAt);
 public sealed record ClientSettings(string Server = "https://10.37.200.74", string? RequiredVersion = null, bool PreferRtsp = false);
-public sealed record Channel(long Id, long DeviceId, string DeviceName, int DeviceChannel, string Name, string? Model,
+public sealed record Channel(long Id, long DeviceId, string DeviceName, int DeviceChannel, string Name, string? Alias, string? Model,
     string Status, long? UnitId, bool PtzCapable, string? Codec)
 {
     public bool Online => Status == "online";
-    public string Label => $"{Name} · {(Online ? "在线" : "离线")}";
+    public string DisplayName => string.IsNullOrWhiteSpace(Alias) ? Name : Alias;
+    public string Label => $"{DisplayName} · {(Online ? "在线" : "离线")}";
     public string Detail => $"{DeviceName} / 通道 {DeviceChannel:00} / {Codec ?? "编码未知"}";
 }
 public sealed record OrganizationNode(long Id, string Name, string? Code, string Status, long? ParentId);

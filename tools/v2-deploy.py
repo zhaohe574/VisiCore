@@ -20,7 +20,18 @@ def main():
     if any(c not in "0123456789.-" for c in release): raise RuntimeError("版本目录名无效")
     client=paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect("10.37.200.74",username="liteware",password=os.environ["VIDEO_PLATFORM_SSH_PASSWORD"],timeout=15,look_for_keys=False,allow_agent=False)
+    sock = None
+    bind_ip = os.environ.get("VIDEO_PLATFORM_BIND_IP", "10.37.6.210" if os.name == "nt" else None)
+    if bind_ip:
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind((bind_ip, 0))
+            s.connect(("10.37.200.74", 22))
+            sock = s
+        except Exception:
+            sock = None
+    client.connect("10.37.200.74",username="liteware",password=os.environ["VIDEO_PLATFORM_SSH_PASSWORD"],sock=sock,timeout=15,look_for_keys=False,allow_agent=False)
     remote = "/opt/video-platform-v2/releases/" + release
     def sudo(command):
         stdin,out,err=client.exec_command("sudo -S -p '' " + command,timeout=180)

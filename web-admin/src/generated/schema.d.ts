@@ -1052,6 +1052,7 @@ export type components = {
             user: components["schemas"]["UserDto"];
         };
         ChannelDto: {
+            alias?: null | string;
             codec: null | string;
             /** Format: int32 */
             deviceChannel: number | string;

@@ -14,10 +14,21 @@ internal sealed partial class HikvisionDevice : IDevice
     private readonly Dictionary<int, (uint Command, uint Speed, DateTimeOffset Deadline)> _ptz = new();
     private int _controlUserId = -1, _alarmHandle = -1;
     private byte[] _deviceInfo = [];
+    private int _digitalStartChannel = 1;
     private bool _disposed;
     public long Id { get; }
     public DeviceOptions Options => _options;
     public bool Simulated => false;
+
+    internal int ToSdkChannel(int channel) =>
+        _digitalStartChannel > 1 && channel < _digitalStartChannel
+            ? _digitalStartChannel + channel - 1
+            : channel;
+
+    internal int FromSdkChannel(int channel) =>
+        _digitalStartChannel > 1 && channel >= _digitalStartChannel
+            ? channel - _digitalStartChannel + 1
+            : channel;
 
     public HikvisionDevice(long id, DeviceOptions options, SdkRuntime runtime, AlarmJournal journal)
     {
@@ -31,6 +42,8 @@ internal sealed partial class HikvisionDevice : IDevice
         _runtime.EnsureInitialized();
         if (_controlUserId >= 0) return;
         _controlUserId = Login(out _deviceInfo);
+        _digitalStartChannel = _deviceInfo.Length > 66 && _deviceInfo[66] > 0 ? _deviceInfo[66] : 1;
+        _journal.ChannelMapper = FromSdkChannel;
         _runtime.Register(_controlUserId, _journal);
     }
 
@@ -67,16 +80,17 @@ internal sealed partial class HikvisionDevice : IDevice
         lock (_ptzGate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            var sdkChannel = ToSdkChannel(request.Channel);
             var command = request.Stop ? 21u : Command(request.Command);
             var speed = request.Speed;
             if (_ptz.TryGetValue(request.Channel, out var previous))
             {
                 if (request.Stop) { command = previous.Command; speed = previous.Speed; }
                 else if (previous.Command != command)
-                    SdkRuntime.Check(Native.NET_DVR_PTZControlWithSpeed_Other(_controlUserId, request.Channel, previous.Command, 1, previous.Speed), "停止原云台命令失败");
+                    SdkRuntime.Check(Native.NET_DVR_PTZControlWithSpeed_Other(_controlUserId, sdkChannel, previous.Command, 1, previous.Speed), "停止原云台命令失败");
             }
             else if (request.Stop) return;
-            SdkRuntime.Check(Native.NET_DVR_PTZControlWithSpeed_Other(_controlUserId, request.Channel, command, request.Stop ? 1u : 0u, speed), "云台控制失败");
+            SdkRuntime.Check(Native.NET_DVR_PTZControlWithSpeed_Other(_controlUserId, sdkChannel, command, request.Stop ? 1u : 0u, speed), "云台控制失败");
             if (request.Stop) _ptz.Remove(request.Channel);
             else _ptz[request.Channel] = (command, speed, DateTimeOffset.UtcNow.AddSeconds(10));
         }
@@ -85,7 +99,7 @@ internal sealed partial class HikvisionDevice : IDevice
     {
         Validate.Channel(request.Channel);
         if (request.Preset is < 1 or > 300) throw new ArgumentException("预置位编号无效。");
-        lock (_sdkGate) { EnsureConnected(); SdkRuntime.Check(Native.NET_DVR_PTZPreset_Other(_controlUserId, request.Channel, 39, request.Preset), "调用预置位失败"); }
+        lock (_sdkGate) { EnsureConnected(); SdkRuntime.Check(Native.NET_DVR_PTZPreset_Other(_controlUserId, ToSdkChannel(request.Channel), 39, request.Preset), "调用预置位失败"); }
     }
     private void Watchdog()
     {
@@ -96,7 +110,7 @@ internal sealed partial class HikvisionDevice : IDevice
             if (_disposed) return;
             foreach (var item in _ptz.Where(p => p.Value.Deadline <= DateTimeOffset.UtcNow).ToArray())
             {
-                if (Native.NET_DVR_PTZControlWithSpeed_Other(_controlUserId, item.Key, item.Value.Command, 1, item.Value.Speed) != 0) _ptz.Remove(item.Key);
+                if (Native.NET_DVR_PTZControlWithSpeed_Other(_controlUserId, ToSdkChannel(item.Key), item.Value.Command, 1, item.Value.Speed) != 0) _ptz.Remove(item.Key);
                 else _journal.SignalFault("云台保护停止失败，将持续重试。");
             }
         }
@@ -112,7 +126,7 @@ internal sealed partial class HikvisionDevice : IDevice
             _disposed = true;
             lock (_ptzGate)
             {
-                foreach (var item in _ptz) Native.NET_DVR_PTZControlWithSpeed_Other(_controlUserId, item.Key, item.Value.Command, 1, item.Value.Speed);
+                foreach (var item in _ptz) Native.NET_DVR_PTZControlWithSpeed_Other(_controlUserId, ToSdkChannel(item.Key), item.Value.Command, 1, item.Value.Speed);
                 _ptz.Clear();
             }
             if (_alarmHandle >= 0) Native.NET_DVR_CloseAlarmChan_V30(_alarmHandle);

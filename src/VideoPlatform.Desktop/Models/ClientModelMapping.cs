@@ -12,7 +12,7 @@ internal static class ClientModelMapping
     public static LoginResponse From(Generated.AuthResponse value) => new(From(value.User), value.AccessToken, value.ExpiresAt);
 
     public static Channel From(Generated.ChannelDto value) => new(value.Id, value.DeviceId, value.DeviceName, value.DeviceChannel,
-        value.Name, value.Model, value.Status, value.UnitId, value.PtzCapable, value.Codec);
+        value.Name, value.Alias, value.Model, value.Status, value.UnitId, value.PtzCapable, value.Codec);
 
     public static Page<Channel> From(Generated.PagedChannelResponse value) => new(value.Items.Select(From).ToArray(), value.Total, value.Page, value.PageSize);
 

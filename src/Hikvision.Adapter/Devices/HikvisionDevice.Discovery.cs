@@ -108,6 +108,36 @@ internal sealed partial class HikvisionDevice
                 return null;
 
             var xml = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+
+            var statusMap = new Dictionary<int, bool>();
+            try
+            {
+                using var statusResponse = client.GetAsync($"http://{_options.DeviceIp}/ISAPI/ContentMgmt/InputProxy/channels/status")
+                    .GetAwaiter().GetResult();
+                if (statusResponse.IsSuccessStatusCode)
+                {
+                    var statusXml = statusResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    var statusDoc = XDocument.Parse(statusXml);
+                    foreach (var element in statusDoc.Descendants().Where(e => e.Name.LocalName == "InputProxyChannelStatus"))
+                    {
+                        var idStr = element.Elements().FirstOrDefault(i => i.Name.LocalName == "id")?.Value;
+                        if (int.TryParse(idStr, out var id) && id > 0)
+                        {
+                            var onlineStr = element.Elements().FirstOrDefault(i => i.Name.LocalName == "online")?.Value;
+                            var detectResult = element.Elements().FirstOrDefault(i => i.Name.LocalName == "chanDetectResult")?.Value;
+                            var isOnline = (bool.TryParse(onlineStr, out var b) && b)
+                                || string.Equals(detectResult, "connect", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(detectResult, "online", StringComparison.OrdinalIgnoreCase);
+                            statusMap[id] = isOnline;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"ISAPI 通道状态读取异常（将回退使用配置中的 online 属性）：{ex.Message}");
+            }
+
             var channels = XDocument.Parse(xml)
                 .Descendants()
                 .Where(element => element.Name.LocalName == "InputProxyChannel")
@@ -117,15 +147,23 @@ internal sealed partial class HikvisionDevice
                         parent.Elements().FirstOrDefault(item => item.Name.LocalName == name)?.Value;
 
                     var source = element.Elements().FirstOrDefault(item => item.Name.LocalName == "sourceInputPortDescriptor");
-                    var online = bool.TryParse(Value(element, "online"), out var onlineValue) && onlineValue;
+                    var rawOnline = Value(element, "online");
+                    var onlineFromConfig = bool.TryParse(rawOnline, out var onlineValue) ? onlineValue : (bool?)null;
+
                     var name = Value(element, "name");
                     var model = source is null ? null : Value(source, "model");
                     var capabilityValue = element.Descendants().FirstOrDefault(item => item.Name.LocalName is "ptz" or "ptzCapable")?.Value;
                     var ptzCapable = bool.TryParse(capabilityValue, out var capability)
                         ? capability
                         : LooksLikePtz(model) || LooksLikePtz(name);
+
+                    var id = int.TryParse(Value(element, "id"), out var parsedId) ? parsedId : 0;
+                    var online = statusMap.TryGetValue(id, out var statusOnline)
+                        ? statusOnline
+                        : onlineFromConfig ?? false;
+
                     return new ChannelSummary(
-                        int.TryParse(Value(element, "id"), out var id) ? id : 0,
+                        id,
                         online,
                         0,
                         name,

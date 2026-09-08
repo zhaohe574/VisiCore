@@ -137,17 +137,63 @@ public sealed partial class WorkspaceViewModel : ViewModelBase
     {
         Resources.Clear();
         var units = organization?.Units.ToDictionary(u => u.Id) ?? [];
-        foreach (var device in channels.GroupBy(c => (c.DeviceId, c.DeviceName)))
+        var areas = organization?.Areas.ToDictionary(a => a.Id) ?? [];
+        var workshops = organization?.Workshops.ToDictionary(w => w.Id) ?? [];
+
+        var channelList = channels.ToList();
+        var assigned = channelList.Where(c => c.UnitId is not null && units.ContainsKey(c.UnitId.Value)).ToList();
+        var unassigned = channelList.Where(c => c.UnitId is null || !units.ContainsKey(c.UnitId.Value)).ToList();
+
+        var workshopNodes = new Dictionary<long, ResourceNode>();
+        var areaNodes = new Dictionary<long, ResourceNode>();
+        var unitNodes = new Dictionary<long, ResourceNode>();
+
+        foreach (var channel in assigned.OrderBy(c => c.DeviceChannel))
         {
-            var deviceNode = new ResourceNode(device.Key.DeviceName);
-            foreach (var unit in device.GroupBy(c => c.UnitId))
+            var unit = units[channel.UnitId!.Value];
+            if (!unitNodes.TryGetValue(unit.Id, out var unitNode))
             {
-                var name = unit.Key is { } id && units.TryGetValue(id, out var node) ? node.Name : "未分配单元";
-                var unitNode = new ResourceNode(name);
-                foreach (var channel in unit.OrderBy(c => c.DeviceChannel)) unitNode.Children.Add(new(channel.Label, channel) { IsChecked = checkedIds.Contains(channel.Id) });
-                deviceNode.Children.Add(unitNode);
+                unitNode = new ResourceNode(unit.Name);
+                unitNodes[unit.Id] = unitNode;
+
+                if (unit.ParentId is { } areaId && areas.TryGetValue(areaId, out var area))
+                {
+                    if (!areaNodes.TryGetValue(area.Id, out var areaNode))
+                    {
+                        areaNode = new ResourceNode(area.Name);
+                        areaNodes[area.Id] = areaNode;
+
+                        if (area.ParentId is { } wsId && workshops.TryGetValue(wsId, out var ws))
+                        {
+                            if (!workshopNodes.TryGetValue(ws.Id, out var wsNode))
+                            {
+                                wsNode = new ResourceNode(ws.Name);
+                                workshopNodes[ws.Id] = wsNode;
+                                Resources.Add(wsNode);
+                            }
+                            wsNode.Children.Add(areaNode);
+                        }
+                        else
+                        {
+                            Resources.Add(areaNode);
+                        }
+                    }
+                    areaNode.Children.Add(unitNode);
+                }
+                else
+                {
+                    Resources.Add(unitNode);
+                }
             }
-            Resources.Add(deviceNode);
+            unitNode.Children.Add(new(channel.Label, channel) { IsChecked = checkedIds.Contains(channel.Id) });
+        }
+
+        if (unassigned.Count > 0)
+        {
+            var unassignedNode = new ResourceNode("未分配组织");
+            foreach (var channel in unassigned.OrderBy(c => c.DeviceChannel))
+                unassignedNode.Children.Add(new(channel.Label, channel) { IsChecked = checkedIds.Contains(channel.Id) });
+            Resources.Add(unassignedNode);
         }
     }
     private IEnumerable<Channel> CheckedChannels() => Resources.SelectMany(n => n.Flatten()).Where(n => n.IsChecked && n.Channel is not null).Select(n => n.Channel!);

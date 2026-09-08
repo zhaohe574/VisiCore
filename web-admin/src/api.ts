@@ -92,6 +92,7 @@ export const managementApi = {
   saveDevice: (id: number | null, data: DeviceInput) => id ? put<Device>(`/devices/${id}`, data) : post<Device>('/devices', data),
   deleteDevice: (id: number) => remove(`/devices/${id}`), testDevice: (id: number) => post<unknown>(`/devices/${id}/test`), syncDevice: (id: number) => post<unknown>(`/devices/${id}/sync`),
   channels: (query?: Query, signal?: AbortSignal) => list<Channel>('/channels', query, signal),
+  updateChannel: (id: number, data: { alias?: string | null; unitId?: number | null }) => put<Channel>(`/channels/${id}`, data),
   assign: (channelIds: number[], unitId: number | null) => put('/channels/assignment', { channelIds, unitId }),
   organization: () => api<Organization>('/organization'),
   saveNode: (kind: OrganizationKind, id: number | null, data: Omit<OrganizationNode, 'id'>) => id ? put(`/organization/${kind}/${id}`, data) : post(`/organization/${kind}`, data),

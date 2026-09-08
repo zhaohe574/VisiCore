@@ -15,7 +15,7 @@ internal sealed partial class HikvisionDevice
             {
                 Zero(condition, 424);
                 WriteUInt32(condition, 0, 72);
-                WriteUInt32(condition, 36, channel);
+                WriteUInt32(condition, 36, ToSdkChannel(channel));
                 WriteSearchTime(condition, 72, start);
                 WriteSearchTime(condition, 84, end);
                 Marshal.WriteByte(condition, 96, 0); // 按通道查询
@@ -83,7 +83,7 @@ internal sealed partial class HikvisionDevice
         try
         {
             Zero(condition, 160);
-            WriteUInt32(condition, 0, channel);
+            WriteUInt32(condition, 0, ToSdkChannel(channel));
             WriteUInt32(condition, 4, 0xff);
             WriteUInt32(condition, 8, 0xff);
             WriteLegacyTime(condition, 48, start);
@@ -149,7 +149,7 @@ internal sealed partial class HikvisionDevice
         try
         {
             Zero(condition, 96);
-            WriteUInt32(condition, 0, channel);
+            WriteUInt32(condition, 0, ToSdkChannel(channel));
             WriteUInt32(condition, 4, 0xff);
             WriteUInt32(condition, 8, 0xff);
             WriteLegacyTime(condition, 48, start);
