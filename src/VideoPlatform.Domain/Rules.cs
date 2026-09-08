@@ -44,7 +44,8 @@ public static class Rules
     public static readonly IReadOnlyDictionary<string, string> Permissions = new Dictionary<string, string>
     {
         ["user.read"] = "查看账号", ["user.manage"] = "管理账号", ["role.read"] = "查看角色", ["role.manage"] = "管理角色",
-        ["device.read"] = "查看设备", ["device.manage"] = "管理设备", ["channel.read"] = "查看通道", ["channel.assign"] = "分配通道",
+        ["device.read"] = "查看设备", ["device.manage"] = "管理设备", ["plugin.read"] = "查看驱动插件", ["plugin.manage"] = "管理驱动插件",
+        ["channel.read"] = "查看通道", ["channel.assign"] = "分配通道",
         ["area.read"] = "查看业务结构", ["area.manage"] = "管理业务结构", ["live.view"] = "实时预览", ["playback.view"] = "录像回放",
         ["ptz.control"] = "云台控制", ["alarm.read"] = "查看报警", ["alarm.ack"] = "处理报警", ["statistics.read"] = "查看统计",
         ["audit.read"] = "查看审计", ["session.manage"] = "管理在线会话", ["settings.manage"] = "管理系统配置",

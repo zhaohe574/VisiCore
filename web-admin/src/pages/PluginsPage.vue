@@ -196,7 +196,7 @@ onMounted(() => {
   <div class="plugins-page">
     <PageHeader title="插件管理" :count="plugins.length">
       <el-button
-        v-if="auth.can('device.manage')"
+        v-if="auth.can('plugin.manage')"
         type="primary"
         :icon="Plus"
         @click="openInstallDialog"
@@ -283,14 +283,14 @@ onMounted(() => {
         <template #default="{ row }">
           <el-switch
             :model-value="row.status === 'active'"
-            :disabled="!auth.can('device.manage') || busy"
+            :disabled="!auth.can('plugin.manage') || busy"
             @change="toggleStatus(row as DevicePlugin)"
           />
         </template>
       </el-table-column>
 
       <el-table-column
-        v-if="auth.can('device.manage')"
+        v-if="auth.can('plugin.manage')"
         label="操作"
         width="210"
         fixed="right"

@@ -20,7 +20,7 @@ public static class PluginEndpoints
         group.MapGet("/plugins", async (HttpContext context, Database db, AccessService access, IHttpClientFactory httpClients, PlatformOptions options) =>
         {
             var actor = ApiSupport.Actor(context);
-            await access.DemandAsync(actor, "device.read");
+            await access.DemandAsync(actor, "plugin.read");
             var rows = await db.QueryAsync(@"
                 select p.id, p.name, p.vendor, p.version, p.description, p.status, 
                        p.endpoint_url, p.capabilities, p.config_schema, p.created_at, p.updated_at,
@@ -80,7 +80,7 @@ public static class PluginEndpoints
         group.MapPut("/plugins/{id}/status", async (string id, PluginStatusRequest request, HttpContext context, Database db, AccessService access, AuditStore audit) =>
         {
             var actor = ApiSupport.Actor(context);
-            await access.DemandAsync(actor, "device.manage");
+            await access.DemandAsync(actor, "plugin.manage");
             var status = request.Status?.Trim().ToLowerInvariant();
             if (status is not ("active" or "disabled"))
                 throw new PlatformException(400, "plugin.status_invalid", "插件状态仅支持 active 或 disabled");
@@ -100,7 +100,7 @@ public static class PluginEndpoints
         group.MapGet("/plugins/{id}/health", async (string id, HttpContext context, Database db, AccessService access, IHttpClientFactory httpClients, PlatformOptions options) =>
         {
             var actor = ApiSupport.Actor(context);
-            await access.DemandAsync(actor, "device.read");
+            await access.DemandAsync(actor, "plugin.read");
 
             var row = await db.OneAsync("select id, name, endpoint_url, status from device_plugins where id = @id", new { id })
                 ?? throw new PlatformException(404, "plugin.not_found", "指定的插件不存在");
@@ -125,7 +125,7 @@ public static class PluginEndpoints
         group.MapPost("/plugins/install", async (HttpContext context, Database db, AccessService access, PlatformOptions options, AuditStore audit) =>
         {
             var actor = ApiSupport.Actor(context);
-            await access.DemandAsync(actor, "device.manage");
+            await access.DemandAsync(actor, "plugin.manage");
             Rules.Require(context.Request.HasFormContentType, "请上传插件安装包文件");
 
             var form = await context.Request.ReadFormAsync(context.RequestAborted);
@@ -245,7 +245,7 @@ public static class PluginEndpoints
         group.MapPost("/plugins", async (PluginCreateRequest request, HttpContext context, Database db, AccessService access, PlatformOptions options, AuditStore audit) =>
         {
             var actor = ApiSupport.Actor(context);
-            await access.DemandAsync(actor, "device.manage");
+            await access.DemandAsync(actor, "plugin.manage");
 
             var pluginId = request.Id?.Trim();
             Rules.Require(!string.IsNullOrWhiteSpace(pluginId), "插件 ID 不能为空");
@@ -320,7 +320,7 @@ public static class PluginEndpoints
         group.MapPost("/plugins/probe", async (PluginProbeRequest request, HttpContext context, AccessService access, IHttpClientFactory httpClients, PlatformOptions options) =>
         {
             var actor = ApiSupport.Actor(context);
-            await access.DemandAsync(actor, "device.manage");
+            await access.DemandAsync(actor, "plugin.manage");
 
             var endpoint = request.EndpointUrl?.Trim().TrimEnd('/');
             Rules.Require(!string.IsNullOrWhiteSpace(endpoint), "请输入待探测的服务端点地址");
@@ -363,7 +363,7 @@ public static class PluginEndpoints
         group.MapGet("/plugins/{id}/export", async (string id, HttpContext context, Database db, AccessService access, PlatformOptions options, AuditStore audit) =>
         {
             var actor = ApiSupport.Actor(context);
-            await access.DemandAsync(actor, "device.read");
+            await access.DemandAsync(actor, "plugin.manage");
 
             var row = await db.OneAsync("select * from device_plugins where id = @id", new { id })
                 ?? throw new PlatformException(404, "plugin.not_found", "指定的插件不存在");
@@ -414,7 +414,7 @@ public static class PluginEndpoints
         group.MapDelete("/plugins/{id}", async (string id, HttpContext context, Database db, AccessService access, PlatformOptions options, AuditStore audit) =>
         {
             var actor = ApiSupport.Actor(context);
-            await access.DemandAsync(actor, "device.manage");
+            await access.DemandAsync(actor, "plugin.manage");
 
             var row = await db.OneAsync("select id, name from device_plugins where id = @id", new { id })
                 ?? throw new PlatformException(404, "plugin.not_found", "指定的插件不存在");

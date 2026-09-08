@@ -52,6 +52,7 @@ public static class Bootstrap
                 foreach (var permission in code == "admin" ? Rules.Permissions.Keys : role.Codes)
                     await tx.ExecuteAsync("insert into role_permissions(role_id,permission_code) values(@id,@permission) on conflict do nothing", new { id = inserted.Id(), permission }, ct);
             }
+            await tx.ExecuteAsync("insert into role_permissions(role_id,permission_code) select r.id, p.code from roles r cross join permissions p where r.code = 'admin' on conflict do nothing", ct: ct);
             var count = await tx.OneAsync("select count(*) as count from users", ct: ct);
             if (count.Id("count") == 0)
             {
