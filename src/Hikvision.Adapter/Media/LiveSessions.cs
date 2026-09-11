@@ -67,7 +67,7 @@ internal sealed class LiveSessions(IDevice device, ZlmClient zlm, TranscodeBudge
         var proxy = await zlm.AddProxyAsync(key.Stream, origin, token);
         try
         {
-            await zlm.WaitReadyAsync("live", key.Stream, token);
+            await zlm.WaitReadyAsync("live", key.Stream, token, "rtsp");
             var codecs = await MediaTools.ProbeAsync(MediaTools.InternalRtsp("live", key.Stream), token);
             var shared = new Shared(key, codecs.DisplayVideo, proxy, null, null, null) { References = 1 };
             _streams.Add(key, shared); return shared;

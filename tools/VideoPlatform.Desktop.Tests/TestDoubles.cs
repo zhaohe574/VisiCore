@@ -30,8 +30,14 @@ internal sealed class FakeDialogs : IUserInteraction
 }
 internal sealed class FakePlayerFactory : IPlayerFactory
 {
+    private readonly object _sync = new();
     public List<FakePlayer> Players { get; } = [];
-    public IVideoPlayer Create() { var player = new FakePlayer(); Players.Add(player); return player; }
+    public IVideoPlayer Create()
+    {
+        var player = new FakePlayer();
+        lock (_sync) Players.Add(player);
+        return player;
+    }
 }
 internal sealed class FakePlayer : IVideoPlayer
 {
@@ -40,6 +46,7 @@ internal sealed class FakePlayer : IVideoPlayer
     public bool Paused;
     public MediaPlayer? NativePlayer => null;
     public bool Muted { get; set; } = true;
+    public string? AspectRatio { get; set; }
     public event Action<string>? Failed;
     public event Action? Connected;
     public void Fail() => Failed?.Invoke("模拟连接中断");

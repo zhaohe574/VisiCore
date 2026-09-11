@@ -28,6 +28,13 @@ public sealed partial class AlarmsViewModel(IPlatformApi api) : ViewModelBase
     [ObservableProperty] private BitmapSource? _image;
     [ObservableProperty] private bool _canRead;
     [ObservableProperty] private bool _canHandle;
+    /// <summary>报警视频联动请求（iVMS-4200 事件中心使用逻辑）：参数为报警与联动方式 live／playback，由 Shell 切模块并打开通道。</summary>
+    public event Action<Alarm, string>? VideoRequested;
+    [RelayCommand] private void Video(string? mode)
+    {
+        if (Selected is not { } alarm || mode is not ("live" or "playback")) return;
+        VideoRequested?.Invoke(alarm, mode);
+    }
     public void SetAccess(User? user)
     {
         CanRead = user?.Can("alarm.read") == true;

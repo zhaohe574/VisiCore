@@ -143,8 +143,13 @@ export const workflowApi = {
   exportUrl: (id: string) => apiUrl(`/exports/${segment(id)}/download`),
   releases: (query?: Query, signal?: AbortSignal) => list<Release>('/releases', query, signal),
   latest: (packageType?: 'zip' | 'msi') => api<PublicRelease | undefined>(`/public/releases/latest${queryString({ packageType })}`),
+  publicReleases: () => api<PublicRelease[]>('/public/releases'),
   uploadRelease: (data: FormData) => api<Release>('/releases', { method: 'POST', body: data }),
+  updateRelease: (id: number, data: { version?: string; minimumVersion?: string; forceUpdate?: boolean; releaseNotes?: string }) => put<Release>(`/releases/${id}`, data),
+  deleteRelease: (id: number) => remove(`/releases/${id}`),
   publish: (id: number, minimumVersion: string, forceUpdate: boolean) => post(`/releases/${id}/publish`, { minimumVersion, forceUpdate }),
+  publishVersion: (version: string, minimumVersion: string, forceUpdate: boolean) => post(`/releases/version/${segment(version)}/publish`, { minimumVersion, forceUpdate }),
+  deleteReleaseVersion: (version: string) => remove(`/releases/version/${segment(version)}`),
   revokeRelease: (id: number) => post(`/releases/${id}/revoke`), releaseUrl: (id: number) => apiUrl(`/releases/${id}/download`),
 }
 

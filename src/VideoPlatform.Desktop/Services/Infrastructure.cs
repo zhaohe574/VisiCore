@@ -83,6 +83,55 @@ public static class ClientFiles
         // 日志属于尽力记录，不能因为目录权限或文件被占用而影响值守操作。
         catch (Exception) { }
     }
+    public static void RecordActiveSession(string path, string id)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(Directory);
+            var file = Path.Combine(Directory, "active_sessions.json");
+            lock (LogLock)
+            {
+                var map = File.Exists(file) ? JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(file)) ?? [] : [];
+                map[id] = path;
+                File.WriteAllText(file + ".tmp", JsonSerializer.Serialize(map));
+                File.Move(file + ".tmp", file, true);
+            }
+        }
+        catch { }
+    }
+    public static void RemoveActiveSession(string id)
+    {
+        try
+        {
+            var file = Path.Combine(Directory, "active_sessions.json");
+            lock (LogLock)
+            {
+                if (!File.Exists(file)) return;
+                var map = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(file)) ?? [];
+                if (map.Remove(id))
+                {
+                    File.WriteAllText(file + ".tmp", JsonSerializer.Serialize(map));
+                    File.Move(file + ".tmp", file, true);
+                }
+            }
+        }
+        catch { }
+    }
+    public static Dictionary<string, string> GetAndClearActiveSessions()
+    {
+        try
+        {
+            var file = Path.Combine(Directory, "active_sessions.json");
+            lock (LogLock)
+            {
+                if (!File.Exists(file)) return [];
+                var map = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(file)) ?? [];
+                File.Delete(file);
+                return map;
+            }
+        }
+        catch { return []; }
+    }
     private static readonly object LogLock = new();
 }
 

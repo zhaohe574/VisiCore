@@ -217,6 +217,64 @@ public sealed class VideoTileFallbackTests
         Assert.Equal(media.HttpTsUrl, factory.Players[2].Url);
     }
 
+    [Fact]
+    public async Task SwitchStreamRetriesOnTransientDeviceError()
+    {
+        var factory = new PlayerFactory();
+        var mediaSub = Media() with { Id = "sub-session" };
+        var mediaMain = Media() with { Id = "main-session" };
+        var attempts = 0;
+        var api = new FakeApi
+        {
+            Post = (path, body) =>
+            {
+                if (body is LiveRequest req && req.StreamType == 1)
+                {
+                    attempts++;
+                    if (attempts == 1)
+                        return Task.FromException<object>(new PlatformException("设备操作未成功，请检查设备状态和适配服务日志", System.Net.HttpStatusCode.BadGateway, "adapter.failed"));
+                    return Task.FromResult<object>(mediaMain);
+                }
+                return Task.FromResult<object>(mediaSub);
+            }
+        };
+        await using var tile = Tile(api, factory);
+        await tile.StartAsync(Fixtures.Channel(3), false, 2, default, default);
+        Assert.Equal(2, tile.StreamType);
+        Assert.Equal("sub-session", tile.SessionId);
+
+        await tile.SwitchStreamAsync(1);
+        Assert.Equal(1, tile.StreamType);
+        Assert.Equal("main-session", tile.SessionId);
+        Assert.Equal(2, attempts);
+    }
+
+    [Fact]
+    public async Task SwitchStreamFallsBackToPreviousStreamOnTotalFailure()
+    {
+        var factory = new PlayerFactory();
+        var mediaSub = Media() with { Id = "sub-session" };
+        var api = new FakeApi
+        {
+            Post = (path, body) =>
+            {
+                if (body is LiveRequest req && req.StreamType == 1)
+                {
+                    return Task.FromException<object>(new PlatformException("设备不可达", System.Net.HttpStatusCode.BadGateway, "adapter.failed"));
+                }
+                return Task.FromResult<object>(mediaSub);
+            }
+        };
+        await using var tile = Tile(api, factory);
+        await tile.StartAsync(Fixtures.Channel(3), false, 2, default, default);
+        Assert.Equal(2, tile.StreamType);
+        Assert.Equal("sub-session", tile.SessionId);
+
+        await Assert.ThrowsAsync<PlatformException>(() => tile.SwitchStreamAsync(1));
+        Assert.Equal(2, tile.StreamType);
+        Assert.Equal("sub-session", tile.SessionId);
+    }
+
     private static MediaSession Media() => Fixtures.Media() with { HttpTsUrl = "https://platform.test/media/native.live.ts" };
     private static FakeApi Api(MediaSession media)
     {

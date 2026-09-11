@@ -96,8 +96,11 @@ public sealed class DeviceAdapter(HttpClient client, PlatformOptions options, Da
         }
         if (endpoints.Count == 0) endpoints.Add(options.AdapterUrl);
 
+        string? bootId = null;
+        var allDevices = new JsonArray();
         var allLive = new JsonArray();
         var allPlayback = new JsonArray();
+        var allExports = new JsonArray();
 
         foreach (var endpoint in endpoints)
         {
@@ -106,6 +109,13 @@ public sealed class DeviceAdapter(HttpClient client, PlatformOptions options, Da
                 var res = await ForwardAsync(endpoint, HttpMethod.Get, "/internal/sessions", null, ct);
                 if (res is JsonObject obj)
                 {
+                    if (bootId is null && !string.IsNullOrWhiteSpace(obj.Text("bootId")))
+                        bootId = obj.Text("bootId");
+                    if (obj["devices"] is JsonArray devArr)
+                    {
+                        foreach (var item in devArr)
+                            if (item is not null) allDevices.Add(item.DeepClone());
+                    }
                     if (obj["live"] is JsonArray liveArr)
                     {
                         foreach (var item in liveArr)
@@ -115,6 +125,11 @@ public sealed class DeviceAdapter(HttpClient client, PlatformOptions options, Da
                     {
                         foreach (var item in pbArr)
                             if (item is not null) allPlayback.Add(item.DeepClone());
+                    }
+                    if (obj["exports"] is JsonArray expArr)
+                    {
+                        foreach (var item in expArr)
+                            if (item is not null) allExports.Add(item.DeepClone());
                     }
                 }
             }
@@ -126,8 +141,11 @@ public sealed class DeviceAdapter(HttpClient client, PlatformOptions options, Da
 
         return new JsonObject
         {
+            ["bootId"] = bootId ?? Guid.NewGuid().ToString(),
+            ["devices"] = allDevices,
             ["live"] = allLive,
-            ["playback"] = allPlayback
+            ["playback"] = allPlayback,
+            ["exports"] = allExports
         };
     }
 

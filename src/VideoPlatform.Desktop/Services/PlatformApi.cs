@@ -92,6 +92,10 @@ public sealed class PlatformApi(SessionService session) : IPlatformApi
                 case ("POST", ["playback-sessions", var id, "control"], PlaybackControl request):
                     await client.ControlPlaybackAsync(Guid.Parse(id), new Generated.PlaybackControlRequest
                         { Action = request.Action, Position = request.Position, Speed = request.Speed }, cancellationToken: ct); break;
+                case ("DELETE", ["live-sessions"], _):
+                    await session.ClearMediaSessionsAsync("live", route.Text("all") == "true", ct); break;
+                case ("DELETE", ["playback-sessions"], _):
+                    await session.ClearMediaSessionsAsync("playback", route.Text("all") == "true", ct); break;
                 case ("DELETE", ["live-sessions", var id], _):
                     await client.StopliveSessionAsync(Guid.Parse(id), cancellationToken: ct); break;
                 case ("DELETE", ["playback-sessions", var id], _):

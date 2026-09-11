@@ -10,7 +10,7 @@ internal sealed class BoundedMediaBuffer
     private int _count;
     private long _bytes;
     private int _failed;
-    public BoundedMediaBuffer(long maxBytes = 16 * 1024 * 1024, int capacity = 4096)
+    public BoundedMediaBuffer(long maxBytes = 256 * 1024 * 1024, int capacity = 32768)
     {
         _limit = maxBytes;
         _capacity = capacity;

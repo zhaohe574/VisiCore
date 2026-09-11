@@ -135,7 +135,16 @@ async function control(command: PlaybackControl) {
     if (failures.length) throw new Error(`${failures.length} 路回放控制失败：${failures.map(result => errorMessage(result.reason)).join('；')}`)
   }, '')
 }
-async function seekAll(value: number | number[]) { if (typeof value !== 'number' || !range.value) return; const time = timeRange(range.value); await control({ action: 'seek', position: new Date(Date.parse(time.start) + (Date.parse(time.end) - Date.parse(time.start)) * value / 100).toISOString() }) }
+async function seekAll(value: number | number[]) {
+  if (typeof value !== 'number') return
+  // 使用当前 session 的实际录像范围计算绝对时间，而非 DatePicker 选择的全天范围；
+  // 否则定位时间可能落在录像段范围之外，后端会拒绝 (ArgumentException: 定位时间不在回放范围内)。
+  const session = selectedSession.value
+  if (!session?.start || !session?.end) return
+  const startMs = Date.parse(session.start), endMs = Date.parse(session.end)
+  await control({ action: 'seek', position: new Date(startMs + (endMs - startMs) * value / 100).toISOString() })
+}
+
 async function exportSelected() { await run(async () => { if (!selectedChannel.value) throw new Error('请选择导出通道'); const time = timeRange(range.value, 24); await workflowApi.createExport(selectedChannel.value.id, time.start, time.end) }, '导出任务已提交，可在录像导出中查看') }
 async function clearWall() { stopPatrol(); for (const tile of tiles.values()) await tile.stop(); slots.value = Array(16).fill(undefined); sessions.value = Array(16).fill(null); slotRanges.value = Array(16).fill(undefined) }
 async function fullScreen() { await run(async () => { if (document.fullscreenElement) await document.exitFullscreen(); else await wall.value?.requestFullscreen() }, '') }

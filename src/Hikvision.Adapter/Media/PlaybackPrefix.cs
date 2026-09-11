@@ -3,18 +3,18 @@ using System.Threading.Channels;
 // 探测样本有独立上限，保留原始块用于重放，不能复制整个最大回调块多次。
 internal sealed class PlaybackPrefix
 {
-    public const int TargetBytes = 512 * 1024;
-    public const int SampleLimit = 2 * 1024 * 1024;
+    public const int TargetBytes = 1024 * 1024;
+    public const int SampleLimit = 4 * 1024 * 1024;
     private readonly List<byte[]> _blocks = new();
     private int _length;
     public int RetainedBytes => _length;
 
-    public static async Task<PlaybackPrefix> ReadAsync(BoundedMediaBuffer buffer, CancellationToken token)
+    public static async Task<PlaybackPrefix> ReadAsync(BoundedMediaBuffer buffer, CancellationToken token, int targetBytes = TargetBytes)
     {
         var prefix = new PlaybackPrefix();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(TimeSpan.FromSeconds(8));
-        while (prefix._length < TargetBytes)
+        while (prefix._length < targetBytes)
         {
             try
             {

@@ -26,7 +26,11 @@ public sealed partial class ShellViewModel : ViewModelBase
     public AlarmsViewModel Alarms { get; }
     public ExportsViewModel Exports { get; }
     public string VersionLabel => $"{UpdateService.CurrentVersion.ToString(3)} · Windows x64";
-    [ObservableProperty] private bool _isAuthenticated;
+    private string _previousModule = "live";
+    public string BackButtonText => IsAuthenticated ? "← 返回工作台" : "← 返回登录";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BackButtonText))]
+    private bool _isAuthenticated;
     [ObservableProperty] private string _username = "";
     [ObservableProperty] private string _server = "https://10.37.200.74";
     [ObservableProperty] private string _userLabel = "未登录";
@@ -39,6 +43,7 @@ public sealed partial class ShellViewModel : ViewModelBase
     [ObservableProperty] private bool _updateAvailable;
     [ObservableProperty] private bool _canUseWorkspace;
     [ObservableProperty] private bool _preferRtsp;
+    [ObservableProperty] private string _clock = "";
 
     public ShellViewModel(SessionService session, IPlatformApi api, EventService events, UpdateService updates,
         WorkspaceViewModel workspace, AlarmsViewModel alarms, ExportsViewModel exports, IUiDispatcher dispatcher, IUserInteraction dialogs)
@@ -51,6 +56,8 @@ public sealed partial class ShellViewModel : ViewModelBase
         _events.StateChanged += value => _ = _dispatcher.InvokeAsync(() => { ConnectionState = value; return Task.CompletedTask; });
         _session.Invalidated += () => _ = _dispatcher.InvokeAsync(async () => { Status = "登录已失效，请重新登录。"; await LogoutCoreAsync(); });
         Workspace.ExportCreated += async () => { Module = "exports"; await Exports.RefreshAsync(); };
+        Alarms.VideoRequested += (alarm, mode) => _ = _dispatcher.InvokeAsync(async () => await OpenAlarmVideoAsync(alarm, mode));
+        Clock = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
     }
     partial void OnPreferRtspChanged(bool value)
     {
@@ -79,8 +86,11 @@ public sealed partial class ShellViewModel : ViewModelBase
     private async Task AfterLoginAsync()
     {
         IsAuthenticated = true; CanUseWorkspace = !UpdateRequired;
+        if (Module == "settings") Module = "live";
         await ApplyAccessAsync();
         await RefreshDataAsync();
+        try { await Workspace.PurgeOrphanSessionsAsync(); }
+        catch { }
         try { await _events.StartAsync(_lifetime.Token); }
         catch (Exception ex) { ConnectionState = "事件连接不可用"; Status = $"事件连接失败，将定期同步数据：{ex.Message}"; }
     }
@@ -130,6 +140,7 @@ public sealed partial class ShellViewModel : ViewModelBase
         {
             while (await timer.WaitForNextTickAsync(token))
             {
+                await _dispatcher.InvokeAsync(() => { Clock = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"); return Task.CompletedTask; });
                 await _dispatcher.InvokeAsync(async () =>
                 {
                     if (!IsAuthenticated || !CanUseWorkspace || _closing) return;
@@ -141,7 +152,7 @@ public sealed partial class ShellViewModel : ViewModelBase
                         {
                             var previous = _session.CurrentUser;
                             var user = await _session.ReloadUserAsync(token);
-                            if (previous is null || !previous.Permissions.Order().SequenceEqual(user.Permissions.Order())) await RefreshAccessAsync();
+                            if (previous is not null && !previous.Permissions.Order().SequenceEqual(user.Permissions.Order())) await RefreshAccessAsync();
                             else await RefreshDataAsync();
                         }
                     }
@@ -155,12 +166,62 @@ public sealed partial class ShellViewModel : ViewModelBase
     [RelayCommand] private Task SwitchModuleAsync(string? module) => RunAsync(async () =>
     {
         if (module is not ("live" or "playback" or "alarms" or "exports" or "settings")) return;
+        if (module == "settings" && Module == "settings")
+        {
+            Module = _previousModule;
+            return;
+        }
+        if (module == "settings")
+        {
+            _previousModule = Module == "settings" ? "live" : Module;
+        }
         await Workspace.StopPtzAsync();
         if (module is "live" or "playback") await Workspace.SetModeAsync(module == "playback");
         Module = module;
         if (module == "alarms") await Alarms.RefreshAsync();
         if (module == "exports") await Exports.RefreshAsync();
     });
+    [RelayCommand] private Task CloseSettingsAsync() => RunAsync(() =>
+    {
+        Module = _previousModule;
+        return Task.CompletedTask;
+    });
+    /// <summary>报警中心视频联动：切到主预览/远程回放并打开报警通道（iVMS-4200 事件中心使用逻辑）。</summary>
+    private async Task OpenAlarmVideoAsync(Alarm alarm, string mode)
+    {
+        try
+        {
+            if (!IsAuthenticated || !CanUseWorkspace) return;
+            var channelId = alarm.ChannelId;
+            if (channelId is not { } id) { Status = "该报警没有关联通道，无法联动视频。"; return; }
+            if (!Workspace.Channels.TryGetValue(id, out var channel)) { Status = "该报警通道不在当前权限范围或尚未同步，请刷新资源。"; return; }
+            if (!channel.Online) { Status = $"报警通道已离线，无法联动：{channel.Name}"; return; }
+            await Workspace.StopPtzAsync();
+            if (mode == "playback")
+            {
+                var occurred = alarm.OccurredAt.ToLocalTime();
+                var start = occurred.AddMinutes(-1);
+                var end = occurred.AddMinutes(1) > DateTimeOffset.Now ? DateTimeOffset.Now : occurred.AddMinutes(1);
+                if (end <= start) end = start.AddSeconds(30);
+                Workspace.RecordingDate = start.Date;
+                Workspace.StartTime = start.ToString("HH:mm:ss");
+                Workspace.EndTime = end.ToString("HH:mm:ss");
+                await Workspace.SetModeAsync(true);
+                Module = "playback";
+            }
+            else
+            {
+                await Workspace.SetModeAsync(false);
+                Module = "live";
+            }
+            await Workspace.OpenChannelAsync(channel);
+            Status = mode == "playback"
+                ? $"已联动回放报警通道：{channel.Name}（{alarm.OccurredAt.LocalDateTime:MM-dd HH:mm:ss} 前后）"
+                : $"已联动实况：{channel.Name}";
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Status = $"报警视频联动失败：{ex.Message}"; }
+    }
     [RelayCommand] private Task LogoutAsync() => RunAsync(LogoutCoreAsync, "已退出登录。");
     private async Task LogoutCoreAsync()
     {
@@ -168,6 +229,7 @@ public sealed partial class ShellViewModel : ViewModelBase
         try
         {
             CanUseWorkspace = false; IsAuthenticated = false;
+            _previousModule = "live"; Module = "live";
             Alarms.SetAccess(null); Exports.SetAccess(null);
             await Workspace.ClearAsync();
             await _events.StopAsync();
@@ -218,8 +280,18 @@ public sealed partial class ShellViewModel : ViewModelBase
     {
         if (_closing) return;
         _closing = true; _lifetime.Cancel();
-        await Workspace.ClearAsync(); await _events.StopAsync();
-        if (_monitor is not null) await _monitor;
+        try
+        {
+            var clearTask = Workspace.ClearAsync();
+            var eventsTask = _events.StopAsync();
+            await Task.WhenAll(clearTask, eventsTask).WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch { }
+        if (_monitor is not null)
+        {
+            try { await _monitor.WaitAsync(TimeSpan.FromMilliseconds(500)); }
+            catch { }
+        }
         // 关闭窗口保留 DPAPI 会话，主动退出命令才撤销服务器登录。
     }
 }

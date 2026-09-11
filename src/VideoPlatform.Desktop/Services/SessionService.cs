@@ -151,6 +151,22 @@ public sealed class SessionService(HttpClient http, ICredentialStore credentials
         catch (Exception ex) { ClientFiles.Log($"服务器退出会话失败：{ex.Message}"); }
     }
 
+    public async Task ClearMediaSessionsAsync(string kind = "live", bool all = true, CancellationToken cancellationToken = default)
+    {
+        var token = await GetTokenAsync();
+        if (token is null) return;
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Delete, $"{Server}/api/v2/{kind}-sessions" + (all ? "?all=true" : ""));
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            using var response = await http.SendAsync(request, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            ClientFiles.Log($"清理{kind}会话失败：{ex.Message}");
+        }
+    }
+
     internal async Task<T> SendAuthorizedAsync<T>(Func<Generated.IVideoPlatformClient, CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
     {
         var generation = Generation;

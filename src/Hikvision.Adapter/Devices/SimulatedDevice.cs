@@ -66,7 +66,7 @@ internal sealed class SimulatedPlaybackSource(DateTimeOffset start, DateTimeOffs
     public void Pause(bool pause) { lock (_gate) { Advance(); _playing = !pause; } }
     public void SetSpeed(double speed)
     {
-        if (speed is not (0.25 or 0.5 or 1 or 2 or 4)) throw new ArgumentException("模拟倍速无效。");
+        if (speed is not (0.25 or 0.5 or 1 or 2 or 4 or 8)) throw new ArgumentException("模拟倍速无效。");
         lock (_gate) { Advance(); _speed = speed; }
     }
     private void Advance()

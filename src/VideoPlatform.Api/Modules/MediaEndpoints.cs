@@ -26,6 +26,13 @@ public static class MediaEndpoints
                 await media.StopAsync(ApiSupport.Actor(context), id, context.RequestAborted);
                 return Results.NoContent();
             }).WithName($"Stop{kind}Session");
+            group.MapDelete($"/{kind}-sessions", async (HttpContext context, MediaService media) =>
+            {
+                var actor = ApiSupport.Actor(context);
+                var all = context.Request.Query["all"] == "true";
+                await media.ClearMediaSessionsAsync(actor.UserId, all ? null : actor.SessionId, kind, context.RequestAborted);
+                return Results.NoContent();
+            }).WithName($"StopActive{kind}Sessions");
         }
         group.MapPost("/recordings/search", async (RecordingRequest request, HttpContext context, AccessService access, IDeviceAdapter adapter) =>
         {

@@ -76,7 +76,7 @@ internal sealed class SdkPlaybackSource : IPlaybackSource
     public void Pause(bool pause) { lock (_gate) Control(pause ? 3u : 4u); }
     public void SetSpeed(double speed)
     {
-        if (speed is not (0.25 or 0.5 or 1 or 2 or 4)) throw new ArgumentException("回放倍速支持 0.25、0.5、1、2、4。");
+        if (speed is not (0.25 or 0.5 or 1 or 2 or 4 or 8)) throw new ArgumentException("回放倍速支持 0.25、0.5、1、2、4、8。");
         lock (_gate)
         {
             Control(7);

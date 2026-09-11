@@ -8,6 +8,7 @@ internal static class MediaTools
     public static string Ffmpeg => Environment.GetEnvironmentVariable("HIK_FFMPEG_PATH") ?? (OperatingSystem.IsWindows() ? "ffmpeg.exe" : "/usr/bin/ffmpeg");
     public static string Ffprobe => Environment.GetEnvironmentVariable("HIK_FFPROBE_PATH") ?? (OperatingSystem.IsWindows() ? "ffprobe.exe" : "/usr/bin/ffprobe");
     public static string RtspBase => Environment.GetEnvironmentVariable("HIK_ZLM_RTSP_URL") ?? "rtsp://127.0.0.1:554";
+    public static string RtmpBase => Environment.GetEnvironmentVariable("HIK_ZLM_RTMP_URL") ?? "rtmp://127.0.0.1:11936";
     public static string InternalRtsp(string app, string stream)
     {
         var key = Environment.GetEnvironmentVariable("HIK_ADAPTER_INTERNAL_KEY");
@@ -30,8 +31,16 @@ internal static class MediaTools
         {
             if (input is not null)
             {
-                await process.StandardInput.BaseStream.WriteAsync(input, token);
-                process.StandardInput.Close();
+                try
+                {
+                    await process.StandardInput.BaseStream.WriteAsync(input, token);
+                    await process.StandardInput.BaseStream.FlushAsync(token);
+                }
+                catch (IOException)
+                {
+                    // 进程提前结束读取并关闭了输入管道（如 ffprobe 探测完毕或遇到错误退出），忽略此处的 Broken pipe
+                }
+                try { process.StandardInput.Close(); } catch (IOException) { }
             }
             await process.WaitForExitAsync(token);
             await error;
@@ -126,20 +135,64 @@ internal static class MediaTools
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
-        var args = new List<string> { "-v", "error", "-analyzeduration", "2000000", "-probesize", "2097152" };
+        var args = new List<string> { "-v", "error", "-analyzeduration", "5000000", "-probesize", "5242880" };
         if (input.StartsWith("rtsp://", StringComparison.OrdinalIgnoreCase)) args.AddRange(["-rtsp_transport", "tcp"]);
         args.AddRange(["-i", input, "-show_entries", "stream=codec_type,codec_name", "-of", "json"]);
-        var json = await RunAsync(Ffprobe, args, timeout.Token, prefix);
-        using var document = JsonDocument.Parse(json);
-        string? video = null, audio = null;
-        foreach (var stream in document.RootElement.GetProperty("streams").EnumerateArray())
+        string? json = null;
+        try
         {
-            var codec = stream.GetProperty("codec_name").GetString();
-            if (stream.GetProperty("codec_type").GetString() == "video") video = codec;
-            else if (stream.GetProperty("codec_type").GetString() == "audio") audio = codec;
+            json = await RunAsync(Ffprobe, args, timeout.Token, prefix);
         }
-        if (video is null) throw new AdapterException(502, "VIDEO_CODEC_UNKNOWN", "未能从真实码流识别视频编码。");
+        catch (Exception ex)
+        {
+            ReportFailure("ffprobe_probe", ex.Message);
+        }
+
+        string? video = null, audio = null;
+        if (!string.IsNullOrWhiteSpace(json))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(json);
+                if (document.RootElement.TryGetProperty("streams", out var streamsElement) && streamsElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var stream in streamsElement.EnumerateArray())
+                    {
+                        var type = stream.TryGetProperty("codec_type", out var ct) ? ct.GetString() : null;
+                        var codec = stream.TryGetProperty("codec_name", out var cn) ? cn.GetString() : null;
+                        if (type == "video" && video is null && !string.IsNullOrWhiteSpace(codec)) video = codec;
+                        else if (type == "audio" && audio is null && !string.IsNullOrWhiteSpace(codec)) audio = codec;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ReportFailure("ffprobe_parse", ex.Message);
+            }
+        }
+        if (video is null)
+        {
+            var isHevc = prefix is not null && ContainsHevcNal(prefix);
+            video = isHevc ? "hevc" : "h264";
+        }
         return new(video, audio);
+    }
+    private static bool ContainsHevcNal(ReadOnlySpan<byte> bytes)
+    {
+        for (var i = 0; i + 5 < bytes.Length; i++)
+        {
+            if (bytes[i] == 0 && bytes[i + 1] == 0 && bytes[i + 2] == 1)
+            {
+                var b0 = bytes[i + 3];
+                var b1 = bytes[i + 4];
+                if ((b0 & 0x81) == 0 && (b1 & 0xF8) == 0 && (b1 & 0x07) >= 1)
+                {
+                    var nalType = (b0 >> 1) & 0x3F;
+                    if (nalType is 32 or 33) return true;
+                }
+            }
+        }
+        return false;
     }
 }
 

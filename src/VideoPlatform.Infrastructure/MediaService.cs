@@ -31,7 +31,23 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
         {
             // 以数据库事务串行预留配额，多个 API 进程也不会同时越过上限。
             await tx.ExecuteAsync("select pg_advisory_xact_lock(72002002)", ct: ct);
-            var counts = await tx.OneAsync("select count(*) filter(where user_id=@userId and kind=@kind) as own,count(*) filter(where device_id=@deviceId and kind='playback') as device,count(*) filter(where kind='playback') as playback from media_sessions where closed_at is null and expires_at>now()", new { actor.UserId, deviceId, kind }, ct);
+            if (kind == "live")
+            {
+                var duplicates = await tx.QueryAsync("select id from media_sessions where user_id=@userId and channel_id=@channelId and kind='live' and stream_type=@streamType and closed_at is null and expires_at>now()", new { actor.UserId, channelId, streamType }, ct);
+                foreach (var dup in duplicates)
+                {
+                    await tx.ExecuteAsync("update media_sessions set closed_at=now(),state='stopped' where id=@id", new { id = Guid.Parse(dup.Text("id")) }, ct);
+                }
+            }
+            var counts = await tx.OneAsync("""
+                select count(*) filter(where m.user_id=@userId and m.kind=@kind) as own,
+                       count(*) filter(where m.device_id=@deviceId and m.kind='playback') as device,
+                       count(*) filter(where m.kind='playback') as playback
+                from media_sessions m
+                join sessions s on s.id=m.auth_session_id
+                where m.closed_at is null and m.expires_at>now()
+                  and s.revoked_at is null and s.expires_at>now()
+                """, new { actor.UserId, deviceId, kind }, ct);
             Rules.Require(counts.Id("own") < (kind == "live" ? settings.LivePerUser : settings.PlaybackPerUser), "已达到个人播放窗口上限", "media.userQuota", 429);
             if (kind == "playback") Rules.Require(counts.Id("device") < settings.PlaybackPerDevice && counts.Id("playback") < settings.PlaybackGlobal, "已达到回放并发上限", "media.playbackQuota", 429);
             await tx.ExecuteAsync("insert into media_sessions(id,user_id,auth_session_id,device_id,channel_id,kind,stream_type,profile,token_hash,token_cipher,start_at,end_at,expires_at) values(@id,@userId,@authSession,@deviceId,@channelId,@kind,@streamType,@profile,@hash,@cipher,@start,@end,now()+interval '3 minutes')", new { id, actor.UserId, authSession = actor.SessionId, deviceId, channelId, kind, streamType, profile, hash = Passwords.TokenHash(token), cipher = secrets.Protect(token), start, end }, ct);
@@ -88,8 +104,12 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
         var row = await OwnedAsync(actor, id, ct);
         Rules.Require(row.Text("kind") == "playback", "此会话不是回放会话");
         await access.ChannelAsync(actor, row.Id("channelId"), "playback.view", ct);
-        Rules.Require(request.Action is "pause" or "resume" or "seek" or "speed", "回放命令无效");
-        if (request.Action == "seek") Rules.Require(request.Position is { } position && position >= row.Time("startAt") && position <= row.Time("endAt"), "定位时间超出录像范围");
+        if (request.Action == "seek")
+        {
+            var startAt = row.Time("startAt");
+            var endAt = row.Time("endAt");
+            Rules.Require(request.Position is { } pos && pos >= startAt.AddSeconds(-2) && pos <= endAt.AddSeconds(2), "定位时间超出录像范围");
+        }
         if (request.Action == "speed") Rules.Require(request.Speed is 0.25 or 0.5 or 1 or 2 or 4 or 8, "倍速只支持 0.25、0.5、1、2、4、8");
         var state = await adapter.SendAsync(HttpMethod.Post, $"/internal/devices/{row.Id("deviceId")}/playback/{id}/control", request, ct) as JsonObject;
         return Grant(row, state);
@@ -208,6 +228,12 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
             catch (PlatformException ex) { logger.LogWarning("撤销导出 {JobId} 时适配器不可用：{Reason}", job.Text("id"), ex.Message); }
         }
         await audit.NotifyAsync("access.changed", userId.ToString(), userId, ct: ct);
+    }
+
+    public async Task ClearMediaSessionsAsync(long userId, Guid? sessionId = null, string? kind = null, CancellationToken ct = default)
+    {
+        var sessions = await db.QueryAsync("select id from media_sessions where user_id=@userId and closed_at is null and (@sessionId::uuid is null or auth_session_id=@sessionId) and (@kind::varchar is null or kind=@kind)", new { userId, sessionId, kind }, ct);
+        foreach (var session in sessions) await StopInternalAsync(Guid.Parse(session.Text("id")), ct);
     }
 
     public async Task PtzAsync(Actor actor, long channelId, PtzRequest request, CancellationToken ct = default)

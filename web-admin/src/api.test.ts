@@ -62,3 +62,40 @@ describe('驱动插件管理 API 契约', () => {
     expect(deleteCall.init.method).toBe('DELETE')
   })
 })
+describe('版本发布管理与更新日志 API 契约', () => {
+  it('支持获取公开更新日志、修改未发布版本、删除未发布版本及按版本发布', async () => {
+    mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: 'csrf-token' }) : json({ ok: true }))
+    const { workflowApi } = await import('./api')
+
+    // 公开更新日志列表
+    await workflowApi.publicReleases()
+    expect(calls.at(-1)!.path.endsWith('/public/releases')).toBe(true)
+
+    // 修改未发布版本
+    await workflowApi.updateRelease(10, { version: '2.0.4', releaseNotes: '测试更新说明' })
+    const updateCall = calls.at(-1)!
+    expect(updateCall.path.endsWith('/releases/10')).toBe(true)
+    expect(updateCall.init.method).toBe('PUT')
+    expect(JSON.parse(updateCall.init.body as string)).toEqual({ version: '2.0.4', releaseNotes: '测试更新说明' })
+
+    // 删除未发布版本（按 ID）
+    await workflowApi.deleteRelease(10)
+    const deleteCall = calls.at(-1)!
+    expect(deleteCall.path.endsWith('/releases/10')).toBe(true)
+    expect(deleteCall.init.method).toBe('DELETE')
+
+    // 删除未发布版本（按 Version）
+    await workflowApi.deleteReleaseVersion('2.0.4')
+    const deleteVersionCall = calls.at(-1)!
+    expect(deleteVersionCall.path.endsWith('/releases/version/2.0.4')).toBe(true)
+    expect(deleteVersionCall.init.method).toBe('DELETE')
+
+    // 按版本全包发布
+    await workflowApi.publishVersion('2.0.4', '2.0.0', false)
+    const publishVersionCall = calls.at(-1)!
+    expect(publishVersionCall.path.endsWith('/releases/version/2.0.4/publish')).toBe(true)
+    expect(publishVersionCall.init.method).toBe('POST')
+    expect(JSON.parse(publishVersionCall.init.body as string)).toEqual({ minimumVersion: '2.0.0', forceUpdate: false })
+  })
+})
+

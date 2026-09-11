@@ -69,4 +69,198 @@ public sealed class WorkspaceBehaviorTests
         vm.Note = "现场已核实"; await vm.HandleCommand.ExecuteAsync("close");
         Assert.Contains(api.Calls, c => c.Body is AlarmAction { Action: "close", Note: "现场已核实" });
     }
+
+    [Fact]
+    public void PtzDrawerCanToggleCollapseState()
+    {
+        var api = new FakeApi(); var vm = Create(api);
+        Assert.False(vm.IsPtzCollapsed);
+        vm.TogglePtzCollapsedCommand.Execute(null);
+        Assert.True(vm.IsPtzCollapsed);
+        vm.TogglePtzCollapsedCommand.Execute(null);
+        Assert.False(vm.IsPtzCollapsed);
+    }
+
+    [Fact]
+    public void ToastNotificationLifecycleAndCommandsWork()
+    {
+        var api = new FakeApi(); var vm = Create(api);
+        Assert.False(vm.IsToastVisible);
+        vm.ShowToast("测试抓图成功", "C:\\fake\\path.png");
+        Assert.True(vm.IsToastVisible);
+        Assert.Equal("测试抓图成功", vm.ToastMessage);
+        Assert.Equal("C:\\fake\\path.png", vm.ToastFilePath);
+        vm.DismissToastCommand.Execute(null);
+        Assert.False(vm.IsToastVisible);
+    }
+
+    [Fact]
+    public async Task TileLevelStreamSwitchAndAspectRatioWork()
+    {
+        var api = new FakeApi();
+        var factory = new FakePlayerFactory();
+        var dispatcher = new InlineDispatcher();
+        var tile = new VideoTileViewModel(0, api, factory, dispatcher);
+        Assert.Equal(2, tile.StreamType);
+        Assert.Equal("SD", tile.StreamBadge);
+        Assert.Null(tile.AspectRatio);
+
+        tile.SetAspectRatio("16:9");
+        Assert.Equal("16:9", tile.AspectRatio);
+
+        await tile.StartAsync(Fixtures.Channel(1), false, 2, default, default);
+        Assert.Equal(2, tile.StreamType);
+        Assert.Equal("SD", tile.StreamBadge);
+        Assert.Equal("16:9", factory.Players.Last().AspectRatio);
+
+        tile.SetAspectRatio("fill");
+        Assert.Equal("fill", tile.AspectRatio);
+        tile.ApplyDisplayRatio("1920:1080");
+        Assert.Equal("1920:1080", factory.Players.Last().AspectRatio);
+
+        tile.SetAspectRatio("original");
+        Assert.Equal("original", tile.AspectRatio);
+        Assert.Null(factory.Players.Last().AspectRatio);
+
+        await tile.SwitchStreamAsync(1);
+        Assert.Equal(1, tile.StreamType);
+        Assert.Equal("HD", tile.StreamBadge);
+
+        await tile.StopAsync();
+    }
+
+    [Fact]
+    public async Task ResourceTreeExpansionAndOnlineStatsWork()
+    {
+        var api = new FakeApi();
+        api.GetResults["channels?page=1&pageSize=200"] = new Page<Channel>([
+            Fixtures.Channel(1) with { Status = "online" },
+            Fixtures.Channel(2) with { Status = "offline" }
+        ], 2);
+        var vm = Create(api);
+        await vm.SetAccessAsync(Fixtures.User("channel.read", "live.view"));
+        await vm.RefreshAsync();
+
+        Assert.Equal("在线 1/2", vm.OnlineStatsLabel);
+
+        vm.CollapseAllResourcesCommand.Execute(null);
+        Assert.All(vm.Resources.SelectMany(n => n.Flatten()), n => Assert.False(n.IsExpanded));
+
+        vm.ExpandAllResourcesCommand.Execute(null);
+        Assert.All(vm.Resources.SelectMany(n => n.Flatten()), n => Assert.True(n.IsExpanded));
+    }
+
+    [Fact]
+    public void FullscreenCommandTogglesIsFullscreenAndFiresEvent()
+    {
+        var api = new FakeApi();
+        var vm = Create(api);
+        Assert.False(vm.IsFullscreen);
+
+        var eventFired = 0;
+        vm.FullscreenRequested += () => eventFired++;
+
+        vm.FullscreenCommand.Execute(null);
+        Assert.True(vm.IsFullscreen);
+        Assert.Equal(1, eventFired);
+
+        vm.FullscreenCommand.Execute(null);
+        Assert.False(vm.IsFullscreen);
+        Assert.Equal(2, eventFired);
+    }
+
+    [Fact]
+    public void ToggleBottomBarPinCommandTogglesPinnedState()
+    {
+        var api = new FakeApi();
+        var vm = Create(api);
+        Assert.False(vm.IsBottomBarPinned);
+
+        vm.ToggleBottomBarPinCommand.Execute(null);
+        Assert.True(vm.IsBottomBarPinned);
+
+        vm.ToggleBottomBarPinCommand.Execute(null);
+        Assert.False(vm.IsBottomBarPinned);
+    }
+
+    [Fact]
+    public async Task ShellSettingsSupportsToggleAndReturnToLoginOrPreviousModule()
+    {
+        using var http = new HttpClient(new StubHandler(_ => Task.FromResult(StubHandler.Ok(Fixtures.Login()))));
+        var session = new SessionService(http, new MemoryCredentials());
+        var api = new FakeApi();
+        var workspace = Create(api);
+        var alarms = new AlarmsViewModel(api);
+        var exports = new ExportsViewModel(api, new FakeDialogs());
+        var shell = new ShellViewModel(session, api, new EventService(session), new UpdateService(api),
+            workspace, alarms, exports, new InlineDispatcher(), new FakeDialogs());
+
+        // 1. 未登录状态下进入设置并返回登录
+        Assert.False(shell.IsAuthenticated);
+        Assert.Equal("live", shell.Module);
+        Assert.Equal("← 返回登录", shell.BackButtonText);
+
+        await shell.SwitchModuleCommand.ExecuteAsync("settings");
+        Assert.Equal("settings", shell.Module);
+
+        // 点击返回按钮恢复 live (即登录界面)
+        await shell.CloseSettingsCommand.ExecuteAsync(null);
+        Assert.Equal("live", shell.Module);
+
+        // 再次点击设置齿轮按钮应支持切换/恢复
+        await shell.SwitchModuleCommand.ExecuteAsync("settings");
+        Assert.Equal("settings", shell.Module);
+        await shell.SwitchModuleCommand.ExecuteAsync("settings");
+        Assert.Equal("live", shell.Module);
+
+        // 2. 已登录状态下从特定模块进入设置并返回原模块
+        shell.IsAuthenticated = true;
+        Assert.Equal("← 返回工作台", shell.BackButtonText);
+        await shell.SwitchModuleCommand.ExecuteAsync("playback");
+        Assert.Equal("playback", shell.Module);
+
+        await shell.SwitchModuleCommand.ExecuteAsync("settings");
+        Assert.Equal("settings", shell.Module);
+
+        await shell.CloseSettingsCommand.ExecuteAsync(null);
+        Assert.Equal("playback", shell.Module);
+    }
+
+    [Fact]
+    public void BottomBarHoveredPropertyWorks()
+    {
+        var api = new FakeApi();
+        var vm = Create(api);
+        Assert.False(vm.IsBottomBarHovered);
+
+        vm.IsBottomBarHovered = true;
+        Assert.True(vm.IsBottomBarHovered);
+    }
+
+    [Fact]
+    public async Task ApplyLayoutLoadsUpToSixteenChannelsConcurrently()
+    {
+        var api = new FakeApi();
+        var channels = Enumerable.Range(1, 16).Select(i => Fixtures.Channel(i)).ToArray();
+        api.GetResults["channels?page=1&pageSize=200"] = new Page<Channel>(channels, 16);
+        var vm = Create(api);
+        await vm.SetAccessAsync(Fixtures.User("channel.read", "live.view"));
+        await vm.RefreshAsync();
+
+        var channelIds = channels.Select(c => (long?)c.Id).ToArray();
+        vm.SelectedLayout = new(1, "16路全开", "layout", false, 16, 30, channelIds);
+        await vm.ApplyLayoutCommand.ExecuteAsync(null);
+
+        Assert.Equal(16, vm.LayoutCount);
+        Assert.Equal(16, vm.VisibleTiles.Count);
+        for (var i = 0; i < 16; i++)
+        {
+            Assert.NotNull(vm.Tiles[i].SessionId);
+            Assert.Equal(i + 1, vm.Tiles[i].Channel?.Id);
+        }
+        Assert.Equal(16, api.Calls.Count(c => c.Body is LiveRequest));
+        await vm.ClearAsync();
+    }
 }
+
+

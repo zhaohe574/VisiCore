@@ -30,7 +30,14 @@ public partial class App : Application
             args.Handled = true;
         };
         var services = new ServiceCollection();
-        services.AddSingleton(new HttpClient(new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(5), ConnectTimeout = TimeSpan.FromSeconds(10), AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(30) });
+        services.AddSingleton(new HttpClient(new SocketsHttpHandler
+        {
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            AllowAutoRedirect = false,
+            EnableMultipleHttp2Connections = true,
+            MaxConnectionsPerServer = 100
+        }) { Timeout = TimeSpan.FromSeconds(30) });
         services.AddSingleton<ICredentialStore, DpapiCredentialStore>();
         services.AddSingleton<IUiDispatcher, UiDispatcher>();
         services.AddSingleton<IUserInteraction, UserInteraction>();

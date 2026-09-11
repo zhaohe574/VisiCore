@@ -14,3 +14,19 @@
 @media(max-width:767px){.has-product .public-hero-copy{padding:30px 24px 22px}.has-product h1{font-size:30px}.has-product .public-summary{font-size:14px;margin-bottom:20px}.public-product.product-ready{min-height:0;max-height:none;aspect-ratio:16/9;object-fit:contain}.has-product+.public-release{padding-top:25px}}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
 @media(max-width:767px){.channel-browser{grid-template-columns:minmax(0,1fr) auto}.channel-browser>.el-input{min-width:0}.favorites-filter{margin-right:10px}}
+.public-changelog{max-width:1160px;padding:20px 40px 60px;margin:auto}
+.changelog-header{margin-bottom:28px}
+.changelog-header h2{font-size:20px;margin-bottom:8px}
+.changelog-timeline{display:flex;flex-direction:column;gap:20px}
+.changelog-card{border:1px solid var(--border);border-radius:8px;padding:24px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.changelog-card-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px;border-bottom:1px solid #f0f3f6;padding-bottom:12px}
+.changelog-tag{display:flex;align-items:center;gap:10px}
+.version-name{font-size:18px;font-weight:600;color:#202b35}
+.changelog-date{font-size:12px;color:var(--muted)}
+.notes-content{color:#414b57;font-size:13px;line-height:1.8;margin:0}
+.changelog-downloads{display:flex;align-items:center;gap:10px;margin-top:16px;padding-top:12px;border-top:1px dashed var(--border);font-size:12px}
+.downloads-label{color:var(--muted);flex-shrink:0}
+.downloads-chips{display:flex;flex-wrap:wrap;gap:8px}
+.package-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;background:#f3f6f9;border-radius:4px;color:#2c5282;font-size:12px}
+.package-chip:hover{background:#e8eff6;text-decoration:none}
+@media(max-width:767px){.public-changelog{padding:20px 24px 40px}.changelog-card{padding:18px}.version-name{font-size:16px}}

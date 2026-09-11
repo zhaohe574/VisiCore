@@ -1,38 +1,720 @@
-<UserControl x:Class="VideoPlatform.Desktop.Views.WorkspaceView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:views="clr-namespace:VideoPlatform.Desktop.Views" xmlns:vm="clr-namespace:VideoPlatform.Desktop.ViewModels" Foreground="{StaticResource TextBrush}">
-    <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="252" MinWidth="210"/><ColumnDefinition Width="4"/><ColumnDefinition/></Grid.ColumnDefinitions>
-        <Border Background="{StaticResource PanelBrush}"><Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-            <StackPanel Margin="12,10"><DockPanel><TextBlock Text="视频资源" FontWeight="SemiBold"/><Button Content="&#xE72C;" Style="{StaticResource IconButton}" ToolTip="刷新资源" Command="{Binding RefreshResourcesCommand}" HorizontalAlignment="Right"/></DockPanel><TextBox Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="搜索视频资源" Margin="0,8"/><DockPanel><CheckBox Content="仅收藏" IsChecked="{Binding FavoritesOnly}"/><Button Content="&#xE734;" Style="{StaticResource IconButton}" ToolTip="收藏或取消收藏选中通道" Command="{Binding ToggleFavoriteCommand}" HorizontalAlignment="Right"/></DockPanel></StackPanel>
-            <TreeView x:Name="ResourceTree" Grid.Row="1" ItemsSource="{Binding Resources}" SelectedItemChanged="ResourceSelected" MouseDoubleClick="ResourceDoubleClicked" PreviewMouseLeftButtonDown="DragStarted" PreviewMouseMove="DragMoved"><TreeView.ItemTemplate><HierarchicalDataTemplate DataType="{x:Type vm:ResourceNode}" ItemsSource="{Binding Children}"><CheckBox IsChecked="{Binding IsChecked}" Content="{Binding Name}" ToolTip="{Binding Channel.Detail}"/></HierarchicalDataTemplate></TreeView.ItemTemplate></TreeView>
-            <Expander Grid.Row="2" Header="布局与轮巡" Foreground="{StaticResource TextBrush}" Margin="10" IsExpanded="False"><StackPanel Margin="0,8,0,0">
-                <ComboBox ItemsSource="{Binding Layouts}" SelectedItem="{Binding SelectedLayout}" DisplayMemberPath="Label"/><StackPanel Orientation="Horizontal" Margin="0,6"><Button Content="应用" Command="{Binding ApplyLayoutCommand}"/><Button Content="&#xE74D;" Style="{StaticResource IconButton}" ToolTip="删除方案" Command="{Binding DeleteLayoutCommand}"/><Button Content="&#xE71A;" Style="{StaticResource IconButton}" ToolTip="停止轮巡" Command="{Binding StopPatrolCommand}" IsEnabled="{Binding IsPatrolling}"/></StackPanel>
-                <TextBox Text="{Binding LayoutName}" AutomationProperties.Name="布局名称"/><CheckBox Content="保存为轮巡" IsChecked="{Binding SaveAsPatrol}" Margin="0,8"/><DockPanel><TextBlock Text="停留秒数"/><TextBox Text="{Binding IntervalSeconds}" Width="70" HorizontalAlignment="Right"/></DockPanel><CheckBox Content="共享方案" IsChecked="{Binding ShareLayout}" IsEnabled="{Binding CanShareLayouts}" Margin="0,8"/><StackPanel Orientation="Horizontal"><Button Content="另存方案" Command="{Binding SaveLayoutCommand}"/><Button Content="更新方案" Command="{Binding UpdateLayoutCommand}"/></StackPanel>
-            </StackPanel></Expander>
-        </Grid></Border>
-        <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Stretch" Background="#17191C"/>
-        <Grid Grid.Column="2"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/><RowDefinition Height="26"/></Grid.RowDefinitions>
-            <Border Background="#303338" Padding="8,5"><WrapPanel VerticalAlignment="Center">
-                <Button Content="&#xE768;" Style="{StaticResource IconButton}" ToolTip="播放所选通道" Command="{Binding StartSelectedCommand}"/><Button Content="&#xE71A;" Style="{StaticResource IconButton}" ToolTip="停止选中窗口" Command="{Binding StopSelectedCommand}"/><Button Content="&#xE74D;" Style="{StaticResource IconButton}" ToolTip="停止全部窗口" Command="{Binding StopAllCommand}"/>
-                <Separator Width="12"/><Button Content="1" ToolTip="单窗口" Command="{Binding SetLayoutCommand}" CommandParameter="1" Width="34"/><Button Content="4" ToolTip="四分屏" Command="{Binding SetLayoutCommand}" CommandParameter="4" Width="34"/><Button Content="9" ToolTip="九分屏" Command="{Binding SetLayoutCommand}" CommandParameter="9" Width="34"/><Button Content="16" ToolTip="十六分屏" Command="{Binding SetLayoutCommand}" CommandParameter="16" Width="38"/>
-                <Separator Width="12"/><Button Content="&#xE722;" Style="{StaticResource IconButton}" ToolTip="截图" Command="{Binding CaptureCommand}"/><Button Style="{StaticResource IconButton}" ToolTip="切换声音" Command="{Binding ToggleMuteCommand}"><TextBlock FontFamily="Segoe MDL2 Assets"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Text" Value="&#xE767;"/><Style.Triggers><DataTrigger Binding="{Binding SelectedTile.IsMuted}" Value="False"><Setter Property="Text" Value="&#xE995;"/></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></Button><Button Content="&#xE740;" Style="{StaticResource IconButton}" ToolTip="放大或还原选中窗口" Command="{Binding ToggleMaximizeCommand}"/><Button Content="&#xE92D;" Style="{StaticResource IconButton}" ToolTip="全屏" Command="{Binding FullscreenCommand}"/>
-                <StackPanel Orientation="Horizontal" Visibility="{Binding IsPlayback, Converter={StaticResource InverseVisibility}}"><ComboBox ItemsSource="{Binding StreamOptions}" SelectedValue="{Binding StreamType}" DisplayMemberPath="Label" SelectedValuePath="Value" Width="90" Margin="12,0,2,0"/><Button Content="&#xE72C;" Style="{StaticResource IconButton}" ToolTip="切换所选窗口码流" Command="{Binding ApplyStreamCommand}"/></StackPanel>
-            </WrapPanel></Border>
-            <Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                <ItemsControl ItemsSource="{Binding Tiles}" Margin="4"><ItemsControl.ItemContainerStyle><Style TargetType="ContentPresenter"><Setter Property="Visibility" Value="{Binding IsVisible, Converter={StaticResource BoolVisibility}}"/></Style></ItemsControl.ItemContainerStyle><ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="{Binding GridColumns}"/></ItemsPanelTemplate></ItemsControl.ItemsPanel><ItemsControl.ItemTemplate><DataTemplate><views:VideoTileView/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl>
-                <Border Grid.Column="1" Width="184" Background="{StaticResource PanelBrush}" Visibility="{Binding IsPlayback, Converter={StaticResource InverseVisibility}}"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="12" IsEnabled="{Binding CanPtz}">
-                    <TextBlock Text="云台控制" FontWeight="SemiBold" Margin="0,0,0,12"/><UniformGrid Rows="3" Columns="3"><Border/><Button Content="&#xE70E;" Style="{StaticResource IconButton}" ToolTip="上" Tag="up" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/><Border/><Button Content="&#xE76B;" Style="{StaticResource IconButton}" ToolTip="左" Tag="left" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/><Button Content="&#xE71A;" Style="{StaticResource IconButton}" ToolTip="停止" Command="{Binding StopPtzCommandCommand}"/><Button Content="&#xE76C;" Style="{StaticResource IconButton}" ToolTip="右" Tag="right" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/><Border/><Button Content="&#xE70D;" Style="{StaticResource IconButton}" ToolTip="下" Tag="down" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/><Border/></UniformGrid>
-                    <Button Content="自动扫描" Tag="auto" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased" Margin="0,8"/><TextBlock Text="速度"/><Slider Minimum="1" Maximum="7" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding PtzSpeed}" Margin="0,8"/>
-                    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="34"/><ColumnDefinition Width="34"/></Grid.ColumnDefinitions><Grid.RowDefinitions><RowDefinition Height="36"/><RowDefinition Height="36"/><RowDefinition Height="36"/></Grid.RowDefinitions><TextBlock Text="变倍"/><Button Grid.Column="1" Content="&#xE8A3;" Style="{StaticResource IconButton}" ToolTip="拉近" Tag="zoomIn" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/><Button Grid.Column="2" Content="&#xE71F;" Style="{StaticResource IconButton}" ToolTip="拉远" Tag="zoomOut" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/>
-                    <TextBlock Grid.Row="1" Text="聚焦"/><Button Grid.Row="1" Grid.Column="1" Content="&#xE710;" Style="{StaticResource IconButton}" ToolTip="近焦" Tag="focusNear" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/><Button Grid.Row="1" Grid.Column="2" Content="&#xE738;" Style="{StaticResource IconButton}" ToolTip="远焦" Tag="focusFar" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/>
-                    <TextBlock Grid.Row="2" Text="光圈"/><Button Grid.Row="2" Grid.Column="1" Content="&#xE710;" Style="{StaticResource IconButton}" ToolTip="开光圈" Tag="irisOpen" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/><Button Grid.Row="2" Grid.Column="2" Content="&#xE738;" Style="{StaticResource IconButton}" ToolTip="关光圈" Tag="irisClose" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/></Grid>
-                    <TextBlock Text="预置位" Margin="0,14,0,8"/><DockPanel><Button DockPanel.Dock="Right" Content="调用" Command="{Binding CallPresetCommand}"/><TextBox Text="{Binding Preset}"/></DockPanel>
-                </StackPanel></ScrollViewer></Border>
+<UserControl x:Class="VideoPlatform.Desktop.Views.WorkspaceView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:views="clr-namespace:VideoPlatform.Desktop.Views"
+             xmlns:vm="clr-namespace:VideoPlatform.Desktop.ViewModels"
+             Foreground="{StaticResource TextBrush}">
+    <UserControl.Resources>
+        <!-- 通用控制栏内容模板（供普通模式停靠栏与全屏模式悬浮栏共用） -->
+        <ControlTemplate x:Key="BottomToolbarContentTemplate">
+            <DockPanel VerticalAlignment="Center">
+                <!-- 左侧：播放与抓图控制组 -->
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                    <Button Content="&#xE71A;" Style="{StaticResource IconButton}" ToolTip="停止选中窗口" Command="{Binding StopSelectedCommand}" Margin="0,0,2,0"/>
+                    <Button Content="&#xE74D;" Style="{StaticResource IconButton}" ToolTip="停止全部窗口" Command="{Binding StopAllCommand}" Margin="0,0,6,0"/>
+                    <Separator Width="1" Height="16" Background="#363A42" Margin="0,0,6,0"/>
+                    <Button Content="&#xE722;" Style="{StaticResource IconButton}" ToolTip="快速抓图 (Ctrl+S)" Command="{Binding QuickCaptureCommand}" CommandParameter="{Binding SelectedTile}" Margin="0,0,2,0"/>
+                    <Button Content="&#xE748;" Style="{StaticResource IconButton}" ToolTip="全部窗口抓图" Command="{Binding QuickCaptureAllCommand}" Margin="0,0,6,0"/>
+                    <Separator Width="1" Height="16" Background="#363A42" Margin="0,0,6,0"/>
+                    <Button Style="{StaticResource IconButton}" ToolTip="切换声音" Command="{Binding ToggleMuteCommand}">
+                        <TextBlock FontFamily="Segoe MDL2 Assets">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Text" Value="&#xE767;"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding SelectedTile.IsMuted}" Value="False">
+                                            <Setter Property="Text" Value="&#xE995;"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Button>
+                </StackPanel>
+
+                <!-- 右侧：码流选择、分屏与全屏 -->
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                    <!-- 码流选择器 -->
+                    <StackPanel Orientation="Horizontal" Visibility="{Binding IsPlayback, Converter={StaticResource InverseVisibility}}" VerticalAlignment="Center" Margin="0,0,12,0">
+                        <ComboBox ItemsSource="{Binding StreamOptions}" SelectedValue="{Binding StreamType}" DisplayMemberPath="Label" SelectedValuePath="Value" Width="80" Height="26"/>
+                        <Button Content="&#xE72C;" Style="{StaticResource IconButton}" ToolTip="应用码流切换" Command="{Binding ApplyStreamCommand}" Margin="3,0,0,0"/>
+                    </StackPanel>
+
+                    <!-- 分屏按钮组 (1 / 4 / 9 / 16) -->
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                        <Button Content="1" ToolTip="单窗口" Command="{Binding SetLayoutCommand}" CommandParameter="1" Width="28" Height="24" Padding="0">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding LayoutCount}" Value="1">
+                                            <Setter Property="Background" Value="#FF8C00"/>
+                                            <Setter Property="Foreground" Value="#FFFFFF"/>
+                                            <Setter Property="FontWeight" Value="Bold"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="4" ToolTip="四分屏" Command="{Binding SetLayoutCommand}" CommandParameter="4" Width="28" Height="24" Padding="0" Margin="3,0,0,0">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding LayoutCount}" Value="4">
+                                            <Setter Property="Background" Value="#FF8C00"/>
+                                            <Setter Property="Foreground" Value="#FFFFFF"/>
+                                            <Setter Property="FontWeight" Value="Bold"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="9" ToolTip="九分屏" Command="{Binding SetLayoutCommand}" CommandParameter="9" Width="28" Height="24" Padding="0" Margin="3,0,0,0">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding LayoutCount}" Value="9">
+                                            <Setter Property="Background" Value="#FF8C00"/>
+                                            <Setter Property="Foreground" Value="#FFFFFF"/>
+                                            <Setter Property="FontWeight" Value="Bold"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="16" ToolTip="十六分屏" Command="{Binding SetLayoutCommand}" CommandParameter="16" Width="30" Height="24" Padding="0" Margin="3,0,0,0">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding LayoutCount}" Value="16">
+                                            <Setter Property="Background" Value="#FF8C00"/>
+                                            <Setter Property="Foreground" Value="#FFFFFF"/>
+                                            <Setter Property="FontWeight" Value="Bold"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- 单窗最大化 / 全屏 -->
+                    <Button Content="&#xE740;" Style="{StaticResource IconButton}" ToolTip="单窗放大 / 还原 (双击画面)" Command="{Binding ToggleMaximizeCommand}" Margin="0,0,2,0"/>
+                    <Button Command="{Binding FullscreenCommand}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource IconButton}">
+                                <Setter Property="ToolTip" Value="全屏显示 (F11)"/>
+                                <Setter Property="Content">
+                                    <Setter.Value>
+                                        <TextBlock Text="&#xE92D;" FontFamily="Segoe MDL2 Assets" FontSize="13"/>
+                                    </Setter.Value>
+                                </Setter>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsFullscreen}" Value="True">
+                                        <Setter Property="ToolTip" Value="退出全屏 (Esc / F11)"/>
+                                        <Setter Property="Content">
+                                            <Setter.Value>
+                                                <TextBlock Text="&#xE73F;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#FF8C00"/>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                </StackPanel>
+
+                <!-- 中间：当前选中窗口状态胶囊 -->
+                <Border Background="#101215" BorderBrush="#262A32" BorderThickness="1" CornerRadius="3" Padding="12,3" HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding SelectedTile.Title, StringFormat='当前焦点: {0}'}" FontSize="11" Foreground="#9EA5B0"/>
+                </Border>
+            </DockPanel>
+        </ControlTemplate>
+    </UserControl.Resources>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition MinWidth="0">
+                <ColumnDefinition.Style>
+                    <Style TargetType="ColumnDefinition">
+                        <Setter Property="Width" Value="260"/>
+                        <Setter Property="MinWidth" Value="220"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsFullscreen}" Value="True">
+                                <Setter Property="Width" Value="0"/>
+                                <Setter Property="MinWidth" Value="0"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ColumnDefinition.Style>
+            </ColumnDefinition>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- 左侧：视频监控资源树面板（iVMS-4200 风格） -->
+        <Border Grid.Column="0" Background="#212428" BorderBrush="#2D3138" BorderThickness="0,0,1,0">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Visible"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsFullscreen}" Value="True">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- 顶栏：标题与在线统计 -->
+                <DockPanel Grid.Row="0" Margin="12,12,12,8">
+                    <Border DockPanel.Dock="Right" Background="#1B2520" BorderBrush="#2A4838" BorderThickness="1" CornerRadius="3" Padding="6,2">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse Width="6" Height="6" Fill="{StaticResource OnlineBrush}" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding OnlineStatsLabel}" FontSize="11" FontWeight="SemiBold" Foreground="#43B581"/>
+                        </StackPanel>
+                    </Border>
+                    <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="#FFFFFF">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Text" Value="监控资源列表"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsPlayback}" Value="True">
+                                        <Setter Property="Text" Value="录像检索"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </DockPanel>
+
+                <!-- 远程回放左侧检索面板（iVMS-4200 风格：日历、时间段、检索与录像段列表） -->
+                <StackPanel Grid.Row="1" Margin="12,0,12,8" Visibility="{Binding IsPlayback, Converter={StaticResource BoolVisibility}}">
+                    <Calendar x:Name="RecordingCalendar" SelectedDate="{Binding RecordingDate}" AutomationProperties.Name="录像日期"/>
+                    <DockPanel Margin="0,8,0,0">
+                        <TextBlock Text="开始时间" FontSize="11" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+                        <TextBox Text="{Binding StartTime}" Width="66" HorizontalAlignment="Right" AutomationProperties.Name="开始时间"/>
+                    </DockPanel>
+                    <DockPanel Margin="0,6,0,0">
+                        <TextBlock Text="结束时间" FontSize="11" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+                        <TextBox Text="{Binding EndTime}" Width="66" HorizontalAlignment="Right" AutomationProperties.Name="结束时间"/>
+                    </DockPanel>
+                    <Button Content="&#xE721; 检索录像" Command="{Binding SearchRecordingsCommand}" IsEnabled="{Binding CanPlayback}" Margin="0,8,0,0" Height="30"/>
+                    <Border Background="#16181B" BorderBrush="#262A32" BorderThickness="1" CornerRadius="3" Margin="0,10,0,0" Padding="8">
+                        <StackPanel>
+                            <DockPanel Margin="0,0,0,6">
+                                <TextBlock Text="录像段" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                                <TextBlock Text="{Binding Recordings.Count, StringFormat=共 {0} 段}" FontSize="10" Foreground="{StaticResource MutedBrush}" HorizontalAlignment="Right"/>
+                            </DockPanel>
+                            <ListBox ItemsSource="{Binding Recordings}" SelectedItem="{Binding SelectedRecording}" MaxHeight="140">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Label}" FontSize="11" TextWrapping="Wrap"/>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <WrapPanel Margin="0,6,0,0">
+                                <Button Content="&#xE768; 播放" Command="{Binding PlayRecordingCommand}" IsEnabled="{Binding CanPlayback}" Height="26" Padding="10,0" Margin="0,0,6,0"/>
+                                <Button Content="&#xE896; 导出" Command="{Binding CreateExportCommand}" IsEnabled="{Binding CanExport}" Height="26" Padding="10,0"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Text="双击左侧通道直接检索；回放前请先选择通道。" FontSize="10" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="2,6,0,0"/>
+                </StackPanel>
+
+                <!-- 搜索过滤条 -->
+                <Grid Grid.Row="2" Margin="12,0,12,8">
+                    <TextBox Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}" Padding="26,5,24,5" AutomationProperties.Name="搜索视频资源"/>
+                    <TextBlock Text="&#xE721;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="8,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                    <Button Content="&#xE711;" Style="{StaticResource IconButton}" Width="20" Height="20" FontSize="8" Command="{Binding ClearSearchCommand}" ToolTip="清空搜索" HorizontalAlignment="Right" Margin="0,0,3,0"/>
+                </Grid>
+
+                <!-- 工具栏：展开、折叠、刷新、收藏筛选 -->
+                <Border Grid.Row="3" Background="#1C1E22" Padding="8,4" Margin="12,0,12,6" CornerRadius="2">
+                    <DockPanel LastChildFill="False">
+                        <Button Content="&#xE72C;" Style="{StaticResource IconButton}" Width="24" Height="22" FontSize="11" ToolTip="刷新资源列表" Command="{Binding RefreshResourcesCommand}" Margin="0,0,2,0"/>
+                        <Button Content="&#xE740;" Style="{StaticResource IconButton}" Width="24" Height="22" FontSize="11" ToolTip="展开所有节点" Command="{Binding ExpandAllResourcesCommand}" Margin="0,0,2,0"/>
+                        <Button Content="&#xE73F;" Style="{StaticResource IconButton}" Width="24" Height="22" FontSize="11" ToolTip="折叠所有节点" Command="{Binding CollapseAllResourcesCommand}" Margin="0,0,2,0"/>
+                        <Separator Width="6" Margin="2,0"/>
+                        <CheckBox Content="仅收藏" IsChecked="{Binding FavoritesOnly}" VerticalAlignment="Center" Margin="4,0,0,0" FontSize="11"/>
+                        <Button Content="&#xE734;" Style="{StaticResource IconButton}" Width="24" Height="22" FontSize="11" ToolTip="收藏/取消收藏当前选中通道" Command="{Binding ToggleFavoriteCommand}" DockPanel.Dock="Right"/>
+                    </DockPanel>
+                </Border>
+
+                <!-- 核心树形结构控件 -->
+                <TreeView x:Name="ResourceTree" Grid.Row="4" ItemsSource="{Binding Resources}"
+                          SelectedItemChanged="ResourceSelected" MouseDoubleClick="ResourceDoubleClicked"
+                          PreviewMouseLeftButtonDown="DragStarted" PreviewMouseMove="DragMoved"
+                          Padding="6,0"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                          ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <TreeView.ItemTemplate>
+                        <HierarchicalDataTemplate DataType="{x:Type vm:ResourceNode}" ItemsSource="{Binding Children}">
+                            <DockPanel Margin="0,3" LastChildFill="True">
+                                <TextBlock DockPanel.Dock="Left" Text="{Binding IconGlyph}" FontFamily="Segoe MDL2 Assets" FontSize="13" Margin="0,0,8,0" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#E5A93C"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsChannel}" Value="True">
+                                                    <Setter Property="Foreground" Value="#747F8D"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding IsOnline}" Value="True">
+                                                    <Setter Property="Foreground" Value="#43B581"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <TextBlock Text="{Binding DisplayName}" ToolTip="{Binding DisplayName}" TextTrimming="CharacterEllipsis" FontSize="12" VerticalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#E1E4E8"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsOnline}" Value="True">
+                                                    <Setter Property="Foreground" Value="#FFFFFF"/>
+                                                </DataTrigger>
+                                                <MultiDataTrigger>
+                                                    <MultiDataTrigger.Conditions>
+                                                        <Condition Binding="{Binding IsChannel}" Value="True"/>
+                                                        <Condition Binding="{Binding IsOnline}" Value="False"/>
+                                                    </MultiDataTrigger.Conditions>
+                                                    <Setter Property="Foreground" Value="#7A808C"/>
+                                                </MultiDataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </DockPanel>
+                        </HierarchicalDataTemplate>
+                    </TreeView.ItemTemplate>
+                </TreeView>
+
+                <!-- 底部方案设置抽屉（折叠式，仅主预览） -->
+                <Expander Grid.Row="5" Header="方案设置" Foreground="{StaticResource MutedBrush}" Margin="8,4" Padding="4" IsExpanded="False"
+                          Visibility="{Binding IsPlayback, Converter={StaticResource InverseVisibility}}">
+                    <StackPanel Margin="0,6,0,0">
+                        <ComboBox ItemsSource="{Binding Layouts}" SelectedItem="{Binding SelectedLayout}" DisplayMemberPath="Label" Margin="0,0,0,6"/>
+                        <TextBlock Text="方案名称" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,4"/>
+                        <TextBox Text="{Binding LayoutName}" AutomationProperties.Name="方案名称" Margin="0,0,0,6"/>
+                        <CheckBox Content="设为巡视轮巡" IsChecked="{Binding SaveAsPatrol}" Margin="0,0,0,6"/>
+                        <DockPanel Margin="0,0,0,6">
+                            <TextBlock Text="轮巡停留秒数" VerticalAlignment="Center"/>
+                            <TextBox Text="{Binding IntervalSeconds}" Width="60" HorizontalAlignment="Right"/>
+                        </DockPanel>
+                        <CheckBox Content="共享到平台" IsChecked="{Binding ShareLayout}" IsEnabled="{Binding CanShareLayouts}" Margin="0,0,0,8"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                            <Button Content="应用" Command="{Binding ApplyLayoutCommand}" Margin="0,0,4,0"/>
+                            <Button Content="删除" Command="{Binding DeleteLayoutCommand}" Margin="0,0,4,0"/>
+                            <Button Content="&#xE72C;" Style="{StaticResource IconButton}" ToolTip="刷新方案列表" Command="{Binding RefreshResourcesCommand}"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="另存方案" Command="{Binding SaveLayoutCommand}" Margin="0,0,4,0"/>
+                            <Button Content="更新方案" Command="{Binding UpdateLayoutCommand}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Expander>
             </Grid>
-            <Border Grid.Row="2" Background="{StaticResource PanelBrush}" Padding="12,8" Visibility="{Binding IsPlayback, Converter={StaticResource BoolVisibility}}"><StackPanel>
-                <WrapPanel><DatePicker SelectedDate="{Binding RecordingDate}" Width="126"/><TextBox Text="{Binding StartTime}" Width="88" Margin="6,0" AutomationProperties.Name="开始时间"/><TextBlock Text="至"/><TextBox Text="{Binding EndTime}" Width="88" Margin="6,0" AutomationProperties.Name="结束时间"/><Button Content="检索" Command="{Binding SearchRecordingsCommand}" IsEnabled="{Binding CanPlayback}"/><ComboBox ItemsSource="{Binding Recordings}" SelectedItem="{Binding SelectedRecording}" DisplayMemberPath="Label" Width="200" Margin="6,0"/><Button Content="&#xE768;" Style="{StaticResource IconButton}" ToolTip="播放选中录像" Command="{Binding PlayRecordingCommand}"/><Button Content="导出" Command="{Binding CreateExportCommand}" IsEnabled="{Binding CanExport}"/></WrapPanel>
-                <views:RecordingTimeline x:Name="Timeline" Start="{Binding RangeStart}" End="{Binding RangeEnd}" Position="{Binding Playhead}" Segments="{Binding TimelineSegments}" Margin="0,8,0,4" AutomationProperties.Name="录像时间轴"/>
-                <WrapPanel><CheckBox Content="统一控制" IsChecked="{Binding UnifiedControl}" VerticalAlignment="Center" Margin="0,0,16,0"/><Button Content="&#xE769;" Style="{StaticResource IconButton}" ToolTip="暂停回放" Command="{Binding PlaybackActionCommand}" CommandParameter="pause"/><Button Content="&#xE768;" Style="{StaticResource IconButton}" ToolTip="继续回放" Command="{Binding PlaybackActionCommand}" CommandParameter="resume"/><ComboBox ItemsSource="{Binding SpeedOptions}" SelectedItem="{Binding PlaybackSpeed}" Width="66" Margin="12,0,2,0"/><TextBlock Text="倍速"/><Button Content="&#xE8FB;" Style="{StaticResource IconButton}" ToolTip="应用回放倍速" Command="{Binding ApplySpeedCommand}"/><TextBlock Text="{Binding Playhead, StringFormat={}{0:yyyy-MM-dd HH:mm:ss zzz}}" Margin="18,0" Foreground="#F1B46C"/></WrapPanel>
-            </StackPanel></Border>
-            <TextBlock Grid.Row="3" Text="{Binding Status}" Margin="12,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}" Foreground="{StaticResource MutedBrush}"/>
+        </Border>
+
+        <!-- 分割条 -->
+        <GridSplitter Grid.Column="1" Width="3" HorizontalAlignment="Stretch" Background="#181A1D">
+            <GridSplitter.Style>
+                <Style TargetType="GridSplitter">
+                    <Setter Property="Visibility" Value="Visible"/>
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding IsFullscreen}" Value="True">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </GridSplitter.Style>
+        </GridSplitter>
+
+        <!-- 中右侧主工作区 -->
+        <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Row 0: 主预览视图标签栏（iVMS-4200 经典视图切换条） -->
+            <Border Grid.Row="0" Background="#1B1E22" BorderBrush="#2A2E35" BorderThickness="0,0,0,1" Padding="8,5">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsPlayback}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsFullscreen}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <DockPanel LastChildFill="True">
+                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" Margin="8,0,0,0">
+                        <Button Command="{Binding TogglePatrolCommand}" Height="26" Padding="10,0" Margin="0,0,6,0">
+                            <Button.Style>
+                                <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                    <Setter Property="Content" Value="&#xE768; 开始轮巡"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsPatrolling}" Value="True">
+                                            <Setter Property="Content" Value="&#xE71A; 停止轮巡"/>
+                                            <Setter Property="Background" Value="#FF8C00"/>
+                                            <Setter Property="Foreground" Value="#FFFFFF"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                        <Button Content="&#xE710; 新建视图" Command="{Binding NewViewCommand}" Height="26" Padding="10,0" Margin="0,0,6,0"/>
+                        <Button Content="&#xE74E; 保存视图" Command="{Binding SaveViewCommand}" Height="26" Padding="10,0"/>
+                    </StackPanel>
+                    <TextBlock Text="视图" FontSize="11" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ListBox x:Name="ViewTabs" ItemsSource="{Binding Layouts}" SelectedItem="{Binding SelectedLayout}"
+                             PreviewMouseLeftButtonUp="ViewTabClicked" Background="Transparent" BorderThickness="0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <StackPanel Orientation="Horizontal"/>
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemContainerStyle>
+                            <Style TargetType="ListBoxItem">
+                                <Setter Property="Padding" Value="0"/>
+                                <Setter Property="Margin" Value="0,0,6,0"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ListBoxItem">
+                                            <Border x:Name="B" Background="#262A30" BorderBrush="#343941" BorderThickness="1" CornerRadius="2" Padding="12,4">
+                                                <ContentPresenter VerticalAlignment="Center"/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="B" Property="Background" Value="#2F343C"/>
+                                                </Trigger>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter TargetName="B" Property="Background" Value="#2B2F36"/>
+                                                    <Setter TargetName="B" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ListBox.ItemContainerStyle>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="10" Foreground="{StaticResource AccentBrush}" VerticalAlignment="Center" Margin="0,0,6,0">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Kind}" Value="patrol">
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding Name}" FontSize="12" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <TextBlock Text="（点击视图切换分屏方案）" FontSize="10" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" Margin="8,0,0,0"
+                               TextTrimming="CharacterEllipsis"/>
+                </DockPanel>
+            </Border>
+
+            <!-- Row 1: 视频监控矩阵与可折叠云台控制抽屉 -->
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- 中央视频网格 -->
+                <Border Grid.Column="0" Background="#101114">
+                    <Grid x:Name="VideoMatrixHost" PreviewMouseMove="VideoMatrixHostMouseMove" MouseLeave="VideoMatrixHostMouseLeave">
+                        <ItemsControl ItemsSource="{Binding Tiles}" Margin="0">
+                            <ItemsControl.ItemContainerStyle>
+                                <Style TargetType="ContentPresenter">
+                                    <Setter Property="Visibility" Value="{Binding IsVisible, Converter={StaticResource BoolVisibility}}"/>
+                                </Style>
+                            </ItemsControl.ItemContainerStyle>
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Columns="{Binding GridColumns}"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <views:VideoTileView/>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </Grid>
+                </Border>
+
+                <!-- 云台折叠开关细条 -->
+                <Border Grid.Column="1" Background="#1C1E23" BorderBrush="#2D3139" BorderThickness="1,0,1,0" Width="14" VerticalAlignment="Stretch">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsPlayback}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsFullscreen}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <Button Style="{StaticResource IconButton}" Width="14" Padding="0" Cursor="Hand" Command="{Binding TogglePtzCollapsedCommand}" ToolTip="展开 / 收起云台面板">
+                        <TextBlock FontFamily="Segoe MDL2 Assets" FontSize="9" Foreground="{StaticResource MutedBrush}">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Text" Value="&#xE76C;"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsPtzCollapsed}" Value="True">
+                                            <Setter Property="Text" Value="&#xE76B;"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </Button>
+                </Border>
+
+                <!-- 右侧云台控制面板（海康威视 iVMS-4200 经典圆形罗盘） -->
+                <Border Grid.Column="2" Width="220" Background="#212428" BorderBrush="#2D3138" BorderThickness="0,0,0,0">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsPlayback}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsPtzCollapsed}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsFullscreen}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="14,12" IsEnabled="{Binding CanPtz}">
+                            <!-- 面板标题与当前通道 -->
+                            <DockPanel Margin="0,0,0,12">
+                                <TextBlock Text="云台控制" FontWeight="Bold" FontSize="13" Foreground="#FFFFFF"/>
+                                <Border Background="#1A1D22" CornerRadius="2" Padding="6,1" HorizontalAlignment="Right">
+                                    <TextBlock Text="{Binding SelectedTile.Channel.Name, FallbackValue='未选通道'}" FontSize="10" Foreground="{StaticResource AccentBrush}" MaxWidth="110" TextTrimming="CharacterEllipsis"/>
+                                </Border>
+                            </DockPanel>
+
+                            <!-- 海康威视经典圆形八向云台罗盘 -->
+                            <Border Width="150" Height="150" Background="#1B1E22" BorderBrush="#353A44" BorderThickness="2" CornerRadius="75" Margin="0,4,0,14" HorizontalAlignment="Center">
+                                <Grid>
+                                    <!-- 8向箭头与中心自动键布局 -->
+                                    <!-- 上 -->
+                                    <Button Content="&#xE70E;" Style="{StaticResource IconButton}" Width="32" Height="30" FontSize="13" ToolTip="向上倾斜" Tag="up"
+                                            VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,4,0,0"
+                                            PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/>
+                                    <!-- 下 -->
+                                    <Button Content="&#xE70D;" Style="{StaticResource IconButton}" Width="32" Height="30" FontSize="13" ToolTip="向下倾斜" Tag="down"
+                                            VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,4"
+                                            PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/>
+                                    <!-- 左 -->
+                                    <Button Content="&#xE76B;" Style="{StaticResource IconButton}" Width="30" Height="32" FontSize="13" ToolTip="向左旋转" Tag="left"
+                                            VerticalAlignment="Center" HorizontalAlignment="Left" Margin="4,0,0,0"
+                                            PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/>
+                                    <!-- 右 -->
+                                    <Button Content="&#xE76C;" Style="{StaticResource IconButton}" Width="30" Height="32" FontSize="13" ToolTip="向右旋转" Tag="right"
+                                            VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,4,0"
+                                            PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased"/>
+
+                                    <!-- 中心：圆形停止 / 自动巡航键 -->
+                                    <Border Width="50" Height="50" CornerRadius="25" Background="#262A32" BorderBrush="#3E4552" BorderThickness="2" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <Button Style="{StaticResource IconButton}" Width="46" Height="46" Tag="auto" ToolTip="自动扫描 / 停止" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased">
+                                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="14" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"/>
+                                                <TextBlock Text="自动" FontSize="9" Foreground="#ECEDEF" HorizontalAlignment="Center" Margin="0,1,0,0"/>
+                                            </StackPanel>
+                                        </Button>
+                                    </Border>
+                                </Grid>
+                            </Border>
+
+                            <!-- 云台速度滑块 -->
+                            <Border Background="#1A1C20" CornerRadius="3" Padding="8,6" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <DockPanel Margin="0,0,0,4">
+                                        <TextBlock Text="云台速度" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                                        <TextBlock Text="{Binding PtzSpeed, StringFormat='步长: {0}'}" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Right"/>
+                                    </DockPanel>
+                                    <Slider Minimum="1" Maximum="7" TickFrequency="1" IsSnapToTickEnabled="True" Value="{Binding PtzSpeed}"/>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 镜头控制组：变倍、聚焦、光圈 -->
+                            <Border Background="#1A1C20" CornerRadius="3" Padding="8,6" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <!-- 变倍 (Zoom) -->
+                                    <DockPanel Margin="0,2">
+                                        <TextBlock Text="变倍" FontSize="11" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                            <Button Content="&#xE710; 放大" ToolTip="拉近焦距" Tag="zoomIn" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased" Height="24" Padding="6,0" FontSize="10" Margin="0,0,4,0"/>
+                                            <Button Content="&#xE738; 缩小" ToolTip="拉远焦距" Tag="zoomOut" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased" Height="24" Padding="6,0" FontSize="10"/>
+                                        </StackPanel>
+                                    </DockPanel>
+
+                                    <!-- 聚焦 (Focus) -->
+                                    <DockPanel Margin="0,4">
+                                        <TextBlock Text="聚焦" FontSize="11" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                            <Button Content="&#xE710; 远焦" ToolTip="聚焦远" Tag="focusFar" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased" Height="24" Padding="6,0" FontSize="10" Margin="0,0,4,0"/>
+                                            <Button Content="&#xE738; 近焦" ToolTip="聚焦近" Tag="focusNear" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased" Height="24" Padding="6,0" FontSize="10"/>
+                                        </StackPanel>
+                                    </DockPanel>
+
+                                    <!-- 光圈 (Iris) -->
+                                    <DockPanel Margin="0,2">
+                                        <TextBlock Text="光圈" FontSize="11" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+                                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                            <Button Content="&#xE710; 开大" ToolTip="开大光圈" Tag="irisOpen" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased" Height="24" Padding="6,0" FontSize="10" Margin="0,0,4,0"/>
+                                            <Button Content="&#xE738; 缩小" ToolTip="缩小光圈" Tag="irisClose" PreviewMouseLeftButtonDown="PtzPressed" LostMouseCapture="PtzReleased" Height="24" Padding="6,0" FontSize="10"/>
+                                        </StackPanel>
+                                    </DockPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- 预置点控制组 -->
+                            <Border Background="#1A1C20" CornerRadius="3" Padding="8,6">
+                                <StackPanel>
+                                    <TextBlock Text="预置点管理" FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,6"/>
+                                    <DockPanel>
+                                        <Button Content="调用" DockPanel.Dock="Right" Command="{Binding CallPresetCommand}" Height="26" Padding="12,0" Margin="6,0,0,0"/>
+                                        <TextBox Text="{Binding Preset}" Height="26" VerticalContentAlignment="Center"/>
+                                    </DockPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+
+            <!-- Row 2: 紧贴中央视频墙底部的标准控制栏（iVMS-4200 风格，正常模式固定停靠，全屏模式彻底折叠为0，绝不挤压画面） -->
+            <Border Grid.Row="2" x:Name="BottomToolbar" Background="#181A1D" BorderBrush="#2A2E35" BorderThickness="0,1,0,0" Padding="10,0">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="Height" Value="36"/>
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <!-- 全屏模式下彻底折叠为0，将100%空间全部分配给视频矩阵，杜绝任何挤压 -->
+                            <DataTrigger Binding="{Binding IsFullscreen}" Value="True">
+                                <Setter Property="Height" Value="0"/>
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+                <ContentControl Template="{StaticResource BottomToolbarContentTemplate}"/>
+            </Border>
+
+            <!-- Row 3: 录像回放时间轴与播放控制（仅回放模式显示；检索在左侧面板） -->
+            <Border Grid.Row="3" Background="#1B1E22" Padding="12,8" BorderBrush="#292D34" BorderThickness="0,1,0,0" Visibility="{Binding IsPlayback, Converter={StaticResource BoolVisibility}}">
+                <StackPanel>
+                    <views:RecordingTimeline x:Name="Timeline" Start="{Binding RangeStart}" End="{Binding RangeEnd}" Position="{Binding Playhead}" Segments="{Binding TimelineSegments}" Margin="0,0,0,6" AutomationProperties.Name="录像时间轴"/>
+                    <WrapPanel>
+                        <CheckBox Content="统一控制" IsChecked="{Binding UnifiedControl}" VerticalAlignment="Center" Margin="0,0,16,0"/>
+                        <Button Content="&#xE769;" Style="{StaticResource IconButton}" ToolTip="暂停回放" Command="{Binding PlaybackActionCommand}" CommandParameter="pause"/>
+                        <Button Content="&#xE768;" Style="{StaticResource IconButton}" ToolTip="继续回放" Command="{Binding PlaybackActionCommand}" CommandParameter="resume"/>
+                        <ComboBox ItemsSource="{Binding SpeedOptions}" SelectedItem="{Binding PlaybackSpeed}" Width="66" Margin="12,0,2,0"/>
+                        <TextBlock Text="倍速" Margin="4,0"/>
+                        <Button Content="&#xE8FB;" Style="{StaticResource IconButton}" ToolTip="应用回放倍速" Command="{Binding ApplySpeedCommand}"/>
+                        <Button Content="&#xE896; 导出录像" Command="{Binding CreateExportCommand}" IsEnabled="{Binding CanExport}" Height="26" Padding="10,0" Margin="18,0,0,0"/>
+                        <TextBlock Text="{Binding Playhead, StringFormat={}{0:yyyy-MM-dd HH:mm:ss zzz}}" Margin="18,0" Foreground="#F1B46C"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
         </Grid>
+
+        <!-- 抓图浮动 Toast 通知卡片（仿 iVMS-4200 右下角） -->
+        <Border Grid.Column="2" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,20,48" Background="#F01E2228" BorderBrush="#454C58" BorderThickness="1" CornerRadius="4" Padding="14,10" Visibility="{Binding IsToastVisible, Converter={StaticResource BoolVisibility}}" MaxWidth="400">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="16" Opacity="0.5" ShadowDepth="3"/>
+            </Border.Effect>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="&#xE722;" FontFamily="Segoe MDL2 Assets" FontSize="20" Foreground="#43B581" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding ToastMessage}" FontWeight="SemiBold" FontSize="12" Foreground="#FFFFFF" TextTrimming="CharacterEllipsis"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <Button Content="查看图片" Padding="8,3" FontSize="11" Command="{Binding OpenToastFileCommand}"/>
+                        <Button Content="打开文件夹" Padding="8,3" FontSize="11" Margin="6,0,0,0" Command="{Binding OpenToastFolderCommand}"/>
+                    </StackPanel>
+                </StackPanel>
+                <Button Grid.Column="2" Content="&#xE711;" Style="{StaticResource IconButton}" Width="20" Height="20" FontSize="9" VerticalAlignment="Top" Margin="8,-6,-6,0" Command="{Binding DismissToastCommand}" ToolTip="关闭"/>
+            </Grid>
+        </Border>
+
+        <!-- 全屏模式下浮动的底部控制栏（Top-level Popup 渲染，悬浮置顶，绝不被原生视频遮挡，绝不挤压画面） -->
+        <Popup x:Name="FloatingToolbarPopup"
+               PlacementTarget="{Binding ElementName=VideoMatrixHost}"
+               Placement="Custom"
+               AllowsTransparency="True"
+               Focusable="False"
+               PopupAnimation="Fade"
+               DataContext="{Binding DataContext, ElementName=VideoMatrixHost}">
+            <Border x:Name="FloatingToolbarContent"
+                    Background="#F0181A1D" BorderBrush="#353A44" BorderThickness="0,1,0,0"
+                    Padding="12,0" Height="38"
+                    Width="{Binding ActualWidth, ElementName=VideoMatrixHost}"
+                    MouseEnter="FloatingToolbarMouseEnter"
+                    MouseLeave="FloatingToolbarMouseLeave">
+                <Border.Effect>
+                    <DropShadowEffect BlurRadius="12" Direction="90" ShadowDepth="3" Opacity="0.4"/>
+                </Border.Effect>
+                <ContentControl Template="{StaticResource BottomToolbarContentTemplate}"/>
+            </Border>
+        </Popup>
+
+        <!-- 全屏模式下右上角浮动的退出全屏悬浮条（Top-level Popup 渲染，悬浮置顶，绝不被右上方画面遮挡） -->
+        <Popup x:Name="FloatingExitFullscreenPopup"
+               PlacementTarget="{Binding ElementName=VideoMatrixHost}"
+               Placement="Custom"
+               AllowsTransparency="True"
+               Focusable="False"
+               PopupAnimation="Fade"
+               IsOpen="{Binding IsFullscreen}"
+               DataContext="{Binding DataContext, ElementName=VideoMatrixHost}">
+            <Border Background="#D01E2228" BorderBrush="#4A5160" BorderThickness="1" CornerRadius="4" Padding="6,4">
+                <Button Style="{StaticResource IconButton}" Command="{Binding FullscreenCommand}" ToolTip="退出全屏 (Esc / F11)" Height="28" Padding="8,2">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE73F;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#FF8C00" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <TextBlock Text="退出全屏 (Esc)" FontSize="12" Foreground="#FFFFFF" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
+            </Border>
+        </Popup>
     </Grid>
 </UserControl>

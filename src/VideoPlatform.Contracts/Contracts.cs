@@ -27,6 +27,7 @@ public sealed record FavoritesRequest(long[] ChannelIds);
 public sealed record LayoutRequest(string Name, string Kind, bool Shared, int Layout, int IntervalSeconds, long?[] ChannelIds);
 public sealed record AlarmActionRequest(string Action, string? Note);
 public sealed record PublishRequest(string? MinimumVersion = null, bool ForceUpdate = false);
+public sealed record ReleaseUpdateRequest(string? Version = null, string? ReleaseNotes = null, string? MinimumVersion = null, bool? ForceUpdate = null);
 public sealed record EventNotice(string Id, long Version, string Kind);
 public sealed record PlatformSettings(
     int LivePerUser = 16, int PlaybackPerUser = 4, int PlaybackPerDevice = 20, int PlaybackGlobal = 32,

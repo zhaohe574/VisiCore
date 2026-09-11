@@ -46,7 +46,7 @@ internal sealed class ZlmClient : IDisposable
     }
     public async Task DeleteProxyAsync(string key) => await CallAsync("delStreamProxy", new() { ["key"] = key });
     public async Task CloseAsync(string app, string stream) => await CallAsync("close_streams", new() { ["vhost"] = "__defaultVhost__", ["app"] = app, ["stream"] = stream, ["force"] = "1" });
-    public async Task WaitReadyAsync(string app, string stream, CancellationToken token)
+    public async Task WaitReadyAsync(string app, string stream, CancellationToken token, string schema = "rtmp")
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(_readyTimeout);
@@ -57,7 +57,7 @@ internal sealed class ZlmClient : IDisposable
                 timeout.Token.ThrowIfCancellationRequested();
                 try
                 {
-                    var state = await CallAsync("getMediaInfo", new() { ["schema"] = "rtsp", ["vhost"] = "__defaultVhost__", ["app"] = app, ["stream"] = stream }, timeout.Token);
+                    var state = await CallAsync("getMediaInfo", new() { ["schema"] = schema, ["vhost"] = "__defaultVhost__", ["app"] = app, ["stream"] = stream }, timeout.Token);
                     if (state.TryGetProperty("online", out var online) && online.ValueKind == JsonValueKind.True) return;
                     if (state.TryGetProperty("tracks", out var tracks) && tracks.GetArrayLength() > 0) return;
                 }

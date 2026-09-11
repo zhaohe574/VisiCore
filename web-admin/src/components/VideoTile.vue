@@ -41,7 +41,10 @@ async function attach() {
       else { error.value = '视频访问权限已失效'; void stop() }
     })
     player.attachMediaElement(video.value); player.load()
-    await player.play()
+    await Promise.race([
+      player.play(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('视频播放启动超时，请重试')), 10000))
+    ])
   } catch (e) {
     if (current !== playerGeneration || disposed) return
     error.value = e instanceof Error && e.name === 'NotAllowedError' ? '浏览器暂停了自动播放，请点击播放' : errorMessage(e)
@@ -51,9 +54,10 @@ function scheduleRetry() {
   clearTimeout(retryTimer)
   if (retryCount.value >= 3 || disposed) { error.value = '视频连接失败，请重试'; return }
   retryCount.value++
-  retryTimer = setTimeout(() => { if (!disposed && props.channel) void start(false) }, Math.min(10000, retryCount.value * 2000))
+  const resumePos = playback.value?.currentTime
+  retryTimer = setTimeout(() => { if (!disposed && props.channel) void start(false, resumePos) }, Math.min(10000, retryCount.value * 2000))
 }
-async function start(resetRetry = true) {
+async function start(resetRetry = true, resumePosition?: string) {
   const current = ++generation
   clearTimeout(retryTimer); destroyPlayer(); error.value = ''; busy.value = true
   if (resetRetry) retryCount.value = 0
@@ -61,8 +65,16 @@ async function start(resetRetry = true) {
     if (!props.channel) { await lease.close(); return }
     if (props.mode === 'live' && !channelOnline(props.channel)) { await lease.close(); error.value = '通道离线'; return }
     if (props.mode === 'playback' && !props.range) { await lease.close(); return }
-    await lease.open({ channelId: props.channel.id, mode: props.mode, streamType: props.streamType, ...props.range })
+    const startAt = (props.mode === 'playback' && resumePosition && resumePosition > props.range!.start && resumePosition < props.range!.end)
+      ? resumePosition
+      : props.range?.start
+    await lease.open({ channelId: props.channel.id, mode: props.mode, streamType: props.streamType, start: startAt, end: props.range?.end })
     renewAt = Date.now()
+    if (session.value?.state === 'failed') {
+      const sessErr = session.value && 'error' in session.value ? (session.value as PlaybackSession).error : null
+      error.value = sessErr || '媒体会话失败，请重试'
+      return
+    }
     if (current === generation && !disposed) await attach()
   } catch (e) {
     if (current === generation && !disposed) {
@@ -93,12 +105,35 @@ async function refresh() {
 }
 async function control(command: PlaybackControl) {
   if (!session.value || props.mode !== 'playback') return
+  busy.value = true
   try {
     await lease.control(command)
-    if (command.action === 'pause') video.value?.pause()
-    if (command.action === 'resume') await video.value?.play()
-    if (command.action === 'seek' || command.action === 'speed') await attach()
+    if (command.action === 'pause') {
+      // 仅暂停本地视频渲染，保持 HTTP-FLV 连接不断
+      video.value?.pause()
+    } else if (command.action === 'resume') {
+      // 仅恢复本地视频渲染，无需重连
+      try { await video.value?.play() } catch { /* NotAllowedError 忽略，用户可点击播放 */ }
+    }
+    // seek: 后端会重启 pipeline 并产生新的流状态，refresh() 会在 httpFlvUrl 变化时自动触发 attach()；
+    // speed: 后端重启 pipeline，同上；
+    // 此处不主动调用 attach()，避免与后端管道重建时序冲突导致播放器重载循环。
+    if (command.action === 'seek' || command.action === 'speed') {
+      // 主动等待后端 pipeline 重建完成（状态回到 playing），然后重新 attach
+      destroyPlayer()
+      let waited = 0
+      while (waited < 10000) {
+        await new Promise(resolve => setTimeout(resolve, 500))
+        waited += 500
+        await lease.refresh(false)
+        const s = (session.value as PlaybackSession | null)
+        if (!s || disposed) break
+        if (s.state === 'playing' || s.state === 'paused') { await attach(); break }
+        if (s.state === 'failed' || s.state === 'stopped') { error.value = s.error || '回放重载失败'; break }
+      }
+    }
   } catch (e) { error.value = errorMessage(e); throw e }
+  finally { busy.value = false }
 }
 async function togglePause() {
   if (props.mode === 'playback') { try { await control({ action: playback.value?.state === 'paused' ? 'resume' : 'pause' }) } catch { /* 窗口中显示控制错误。 */ } }
@@ -115,7 +150,7 @@ function screenshot() {
   } catch { ElMessage.error('此媒体来源不允许截图') }
 }
 function drop(event: DragEvent) { const id = Number(event.dataTransfer?.getData('application/x-platform-channel')); if (Number.isSafeInteger(id) && id > 0) emit('dropChannel', id) }
-function seek(value: number | number[]) { if (!props.range || typeof value !== 'number') return; const position = new Date(Date.parse(props.range.start) + value / 100 * (Date.parse(props.range.end) - Date.parse(props.range.start))).toISOString(); void control({ action: 'seek', position }).catch(() => undefined) }
+function seek(value: number | number[]) { if (!props.range || typeof value !== 'number') return; const position = new Date(Date.parse(props.range.start) + value / 100 * (Date.parse(props.range.end) - Date.parse(props.range.start))).toISOString(); void control({ action: 'seek', position }).catch(e => { ElMessage.error(errorMessage(e)) }) }
 const stopEvent = () => void stop()
 const hideEvent = () => void stop(true)
 watch(() => [props.channel?.id, props.mode, props.streamType, props.range?.start, props.range?.end], () => void start())

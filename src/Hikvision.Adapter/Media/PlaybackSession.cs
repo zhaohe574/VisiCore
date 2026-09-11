@@ -16,6 +16,7 @@ internal sealed class PlaybackSession : IAsyncDisposable
     private IPlaybackSource? _source;
     private BoundedMediaBuffer? _buffer;
     private Task? _monitor;
+    private MediaCodecs? _probedCodecs;
     private string _state = "starting", _codec = "unknown";
     private string? _error;
     private bool _transcoded;
@@ -26,6 +27,7 @@ internal sealed class PlaybackSession : IAsyncDisposable
     private Process? _publisher;
     private bool _userPaused, _sourcePaused;
     private volatile bool _transferComplete;
+    private volatile bool _segmentCompleted;
     private long _lastSourcePoll;
     public PlaybackStartRequest Request { get; }
 
@@ -37,10 +39,10 @@ internal sealed class PlaybackSession : IAsyncDisposable
     }
     public async Task StartAsync()
     {
+        _monitor = Task.Run(MonitorAsync);
         await _gate.WaitAsync();
         try { await StartAtAsync(Request.Start); }
         finally { _gate.Release(); }
-        _monitor = Task.Run(MonitorAsync);
     }
     public PlaybackSummary Summary()
     {
@@ -53,10 +55,22 @@ internal sealed class PlaybackSession : IAsyncDisposable
     private async Task StartAtAsync(DateTimeOffset target)
     {
         await StopPipelineAsync();
-        _sourcePaused = false; _transferComplete = false; _userPaused = false;
+        _sourcePaused = false; _transferComplete = false; _segmentCompleted = false; _userPaused = false;
         _segmentIndex = -1;
         for (var i = 0; i < _segments.Count; i++)
             if (_segments[i].Start <= target && _segments[i].End > target) { _segmentIndex = i; break; }
+        if (_segmentIndex < 0)
+        {
+            for (var i = 0; i < _segments.Count; i++)
+            {
+                if (_segments[i].End > target)
+                {
+                    target = _segments[i].Start > target ? _segments[i].Start : target;
+                    _segmentIndex = i;
+                    break;
+                }
+            }
+        }
         lock (_stateGate)
         {
             _currentTime = target;
@@ -67,20 +81,31 @@ internal sealed class PlaybackSession : IAsyncDisposable
         var segment = _segments[_segmentIndex];
         _buffer = new BoundedMediaBuffer();
         var buffer = _buffer;
-        _source = _device.OpenPlayback(Request.Channel, target, segment.End, segment.FileIndex, (type, pointer, size) =>
-        {
-            if (type is 1 or 2 or 3 or 4 or 5) buffer.TryCopy(pointer, size);
-            if (type == 12) { _transferComplete = true; buffer.Complete(); }
-        });
+        _source = OpenSegmentSource(segment, target, buffer);
         _pipelineStop = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
-        if (!_device.Simulated) _pipeline = PublishAsync(buffer, _pipelineStop.Token);
+        var readyTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_device.Simulated) _pipeline = PublishAsync(buffer, readyTcs, _pipelineStop.Token);
+        else readyTcs.TrySetResult(true);
         _source.Start();
         if (_speed != 1) _source.SetSpeed(_speed);
         if (_device.Simulated)
             lock (_stateGate) { _state = "playing"; _codec = Request.Profile == "native" ? "H265" : "H264"; _transcoded = Request.Profile == "browser"; }
+        await Task.WhenAny(readyTcs.Task, Task.Delay(TimeSpan.FromSeconds(8)));
     }
 
-    private async Task PublishAsync(BoundedMediaBuffer buffer, CancellationToken token)
+    private IPlaybackSource OpenSegmentSource(PlaybackSegment segment, DateTimeOffset start, BoundedMediaBuffer buffer)
+    {
+        return _device.OpenPlayback(Request.Channel, start, segment.End, segment.FileIndex, (type, pointer, size) =>
+        {
+            if (type is 1 or 2 or 3 or 4 or 5) buffer.TryCopy(pointer, size);
+            if (type == 12)
+            {
+                _segmentCompleted = true;
+            }
+        });
+    }
+
+    private async Task PublishAsync(BoundedMediaBuffer buffer, TaskCompletionSource<bool> readyTcs, CancellationToken token)
     {
         var origin = _currentTime;
         var speed = _speed;
@@ -92,16 +117,22 @@ internal sealed class PlaybackSession : IAsyncDisposable
         try
         {
             // 只保留有限的探测前缀；识别录像自身的编码后，同一批字节原样送入发布进程。
-            var prefix = await PlaybackPrefix.ReadAsync(buffer, token);
-            var codecs = await MediaTools.ProbeAsync("pipe:0", token, prefix.Sample());
-            var transcode = false;
-            var args = PlaybackPublisher.Arguments("pipe:0", $"{MediaTools.RtspBase.TrimEnd('/')}/playback/{_stream}", codecs, transcode, Request.Profile, speed);
+            var prefix = await PlaybackPrefix.ReadAsync(buffer, token, _probedCodecs is null ? PlaybackPrefix.TargetBytes : 64 * 1024);
+            var codecs = _probedCodecs ?? await MediaTools.ProbeAsync("pipe:0", token, prefix.Sample());
+            _probedCodecs = codecs;
+            var transcode = Request.Profile == "browser" && codecs.RequiresBrowserTranscode;
+            if (transcode) slot = _budget.Acquire();
+            var target = $"{MediaTools.RtmpBase.TrimEnd('/')}/playback/{_stream}";
+            var args = PlaybackPublisher.Arguments("pipe:0", target, codecs, transcode, Request.Profile, speed, "flv");
             process = MediaTools.Start(MediaTools.Ffmpeg, args, true);
             var publishing = process;
             publishing.Exited += (_, _) =>
             {
                 if (!token.IsCancellationRequested && !_transferComplete)
+                {
                     lock (_stateGate) { _state = "failed"; _error = "回放发布进程提前退出。"; }
+                    readyTcs.TrySetResult(false);
+                }
             };
             publishing.EnableRaisingEvents = true;
             diagnostic = MediaTools.CaptureAsync(process.StandardError, 16 * 1024, CancellationToken.None);
@@ -114,10 +145,23 @@ internal sealed class PlaybackSession : IAsyncDisposable
             lock (_stateGate)
             {
                 _publisher = process; _codec = transcode ? "H264" : codecs.DisplayVideo; _transcoded = transcode;
-                if (_userPaused) PlaybackPublisher.Pause(process, true);
+                // 不使用 SIGSTOP 来实现暂停，只依靠 SDK 端暂停数据推送。
             }
             await prefix.ReplayAsync(process.StandardInput.BaseStream, token);
-            var readiness = _zlm.WaitReadyAsync("playback", _stream, token);
+            var readiness = _zlm.WaitReadyAsync("playback", _stream, token, "rtmp");
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await readiness;
+                    readyTcs.TrySetResult(true);
+                    lock (_stateGate) { if (_state == "starting") _state = "playing"; }
+                }
+                catch (Exception ex)
+                {
+                    readyTcs.TrySetException(ex);
+                }
+            }, token);
             while (true)
             {
                 if (readiness.IsFaulted) await readiness;
@@ -136,6 +180,7 @@ internal sealed class PlaybackSession : IAsyncDisposable
         catch (Exception ex)
         {
             failure = ex;
+            readyTcs.TrySetResult(false);
             lock (_stateGate) { _state = "failed"; _error = ex is AdapterException ? ex.Message : "回放缓冲或媒体发布失败，请重新建立会话。"; }
         }
         finally
@@ -161,6 +206,13 @@ internal sealed class PlaybackSession : IAsyncDisposable
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(20));
             while (await timer.WaitForNextTickAsync(_stop.Token))
             {
+                if (!_device.Simulated && !_transferComplete && _source is { } activeSource)
+                {
+                    var shouldPause = _userPaused || _buffer?.HighWatermark == true;
+                    if (!_sourcePaused && shouldPause) { activeSource.Pause(true); _sourcePaused = true; }
+                    else if (_sourcePaused && !_userPaused && _buffer?.LowWatermark == true) { activeSource.Pause(false); _sourcePaused = false; }
+                }
+
                 await _gate.WaitAsync(_stop.Token);
                 try
                 {
@@ -168,24 +220,47 @@ internal sealed class PlaybackSession : IAsyncDisposable
                         lock (_stateGate) { _state = "failed"; _error = "回放缓冲溢出，会话已停止，请重新建立会话。"; }
                     if (_state == "failed") { await StopPipelineAsync(); continue; }
                     if (_source is null) continue;
-                    if (!_device.Simulated && !_transferComplete)
-                    {
-                        var shouldPause = _userPaused || _buffer?.HighWatermark == true;
-                        if (!_sourcePaused && shouldPause) { _source.Pause(true); _sourcePaused = true; }
-                        else if (_sourcePaused && !_userPaused && _buffer?.LowWatermark == true) { _source.Pause(false); _sourcePaused = false; }
-                    }
                     if (Environment.TickCount64 - _lastSourcePoll >= 250)
                     {
                         _lastSourcePoll = Environment.TickCount64;
                         if (_device.Simulated && _source.CurrentTime is { } position && position >= Request.Start && position <= Request.End)
                             lock (_stateGate) _currentTime = position;
-                        if (_source.Completed) { _transferComplete = true; _buffer?.Complete(); }
+                        if (_source.Completed) _segmentCompleted = true;
                     }
-                    if (!_userPaused && _transferComplete && (_pipeline is null || _pipeline.IsCompleted))
+                    if (!_userPaused && _segmentCompleted && _buffer is not null && !_buffer.Failed)
                     {
-                        if (_state == "failed") continue;
-                        var next = _segments[_segmentIndex].End;
-                        await StartAtAsync(next);
+                        _segmentCompleted = false;
+                        var nextIndex = _segmentIndex + 1;
+                        if (nextIndex < _segments.Count && _segments[nextIndex].Start <= _segments[_segmentIndex].End.AddSeconds(5))
+                        {
+                            _source?.Dispose();
+                            _segmentIndex = nextIndex;
+                            var nextSeg = _segments[nextIndex];
+                            _source = OpenSegmentSource(nextSeg, nextSeg.Start, _buffer);
+                            _source.Start();
+                            if (_speed != 1) _source.SetSpeed(_speed);
+                            _sourcePaused = false;
+                        }
+                        else if (nextIndex < _segments.Count)
+                        {
+                            if (_buffer.Bytes == 0)
+                            {
+                                var nextSeg = _segments[nextIndex];
+                                await StartAtAsync(nextSeg.Start);
+                            }
+                        }
+                        else
+                        {
+                            _transferComplete = true;
+                            _buffer.Complete();
+                        }
+                    }
+                    if (_transferComplete && (_pipeline is null || _pipeline.IsCompleted))
+                    {
+                        lock (_stateGate)
+                        {
+                            if (_state != "failed") _state = "completed";
+                        }
                     }
                 }
                 catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
@@ -202,8 +277,15 @@ internal sealed class PlaybackSession : IAsyncDisposable
 
     public async Task<PlaybackSummary> ControlAsync(PlaybackControlRequest request)
     {
-        if (request.Action == "seek" && (request.Position is not { } validTarget || validTarget < Request.Start || validTarget > Request.End))
-            throw new ArgumentException("定位时间不在回放范围内。");
+        if (request.Action == "seek")
+        {
+            if (request.Position is not { } p)
+                throw new ArgumentException("定位时间不能为空。");
+            if (p < Request.Start.AddSeconds(-2) || p > Request.End.AddSeconds(2))
+                throw new ArgumentException("定位时间不在回放范围内。");
+            var clamped = p < Request.Start ? Request.Start : p > Request.End ? Request.End : p;
+            request = request with { Position = clamped };
+        }
         await _gate.WaitAsync();
         try
         {
@@ -222,11 +304,10 @@ internal sealed class PlaybackSession : IAsyncDisposable
                     else SetPaused(false);
                     break;
                 case "seek":
-                    if (request.Position is not { } target || target < Request.Start || target > Request.End) throw new ArgumentException("定位时间不在回放范围内。");
-                    await StartAtAsync(target);
+                    await StartAtAsync(request.Position!.Value);
                     break;
                 case "speed":
-                    if (request.Speed is not (0.25 or 0.5 or 1 or 2 or 4)) throw new ArgumentException("回放倍速支持 0.25、0.5、1、2、4。");
+                    if (request.Speed is not (0.25 or 0.5 or 1 or 2 or 4 or 8)) throw new ArgumentException("回放倍速支持 0.25、0.5、1、2、4、8。");
                     if (_source is null) throw new AdapterException(409, "PLAYBACK_GAP", "当前没有可播放片段，不能设置倍速。");
                     try
                     {
@@ -261,7 +342,9 @@ internal sealed class PlaybackSession : IAsyncDisposable
         }
         lock (_stateGate)
         {
-            if (_publisher is not null) PlaybackPublisher.Pause(_publisher, pause);
+            // 不对 FFmpeg 发 SIGSTOP，SIGSTOP 会导致 RTMP 心跳停止，ZLM 会断开播放连接。
+            // SDK 端已暂停推送数据，FFmpeg 输入管道空闲，画面自然静止；
+            // 恢复时 SDK 重新推送，FFmpeg 自动继续读取输出。
             _userPaused = pause; _state = pause ? "paused" : "playing";
         }
     }
@@ -274,6 +357,10 @@ internal sealed class PlaybackSession : IAsyncDisposable
             if (_pipelineStop is not null) await _pipelineStop.CancelAsync();
             if (_pipeline is not null) await _pipeline;
             _pipelineStop?.Dispose(); _pipelineStop = null; _pipeline = null; _buffer = null;
+            if (!_device.Simulated)
+            {
+                try { await _zlm.CloseAsync("playback", _stream); } catch { }
+            }
         }
     }
     public async ValueTask DisposeAsync()
@@ -285,7 +372,6 @@ internal sealed class PlaybackSession : IAsyncDisposable
         try
         {
             await StopPipelineAsync();
-            if (!_device.Simulated) await _zlm.CloseAsync("playback", _stream);
             lock (_stateGate) _state = "stopped";
         }
         catch { Interlocked.Exchange(ref _disposed, 0); throw; }
