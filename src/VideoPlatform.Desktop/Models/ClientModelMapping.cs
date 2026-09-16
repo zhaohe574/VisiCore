@@ -30,12 +30,14 @@ internal static class ClientModelMapping
         value.Areas.Select(From).ToArray(), value.Units.Select(From).ToArray());
 
     public static MediaSession From(Generated.LiveSessionDto value) => new(value.Id.ToString(), value.ChannelId, value.StreamType,
-        value.State, value.ExpiresAt, value.RtspUrl, value.HttpFlvUrl, value.HlsUrl, value.Codec, value.Transcoded, HttpTsUrl: value.HttpTsUrl);
+        value.State, value.ExpiresAt, value.RtspUrl, value.HttpFlvUrl, value.HlsUrl, value.Codec, value.Transcoded, HttpTsUrl: value.HttpTsUrl,
+        Width: value.Width, Height: value.Height, BitrateKbps: value.BitrateKbps);
 
     public static MediaSession From(Generated.PlaybackSessionDto value) => new(value.Id.ToString(), value.ChannelId, value.StreamType,
         value.State, value.ExpiresAt, value.RtspUrl, value.HttpFlvUrl, value.HlsUrl, value.Codec, value.Transcoded,
         value.Start, value.End, value.CurrentTime, value.Progress, value.Speed,
-        value.Segments.Select(segment => new RecordingSegment(segment.Start, segment.End)).ToArray(), value.HttpTsUrl);
+        value.Segments.Select(segment => new RecordingSegment(segment.Start, segment.End)).ToArray(), value.HttpTsUrl,
+        value.Width, value.Height, value.BitrateKbps);
 
     public static Recording From(Generated.RecordingDto value) => new(value.FileName, value.Start, value.End, value.FileSize,
         value.FileType, value.StreamType, checked((uint)value.FileIndex));
@@ -58,6 +60,21 @@ internal static class ClientModelMapping
 
     public static Release From(Generated.LatestReleaseDto value) => new(value.Id, value.Version, value.FileName, value.Sha256,
         value.FileSize, value.ReleaseNotes, value.MinimumVersion, value.ForceUpdate, value.Status, value.PublishedAt, value.DownloadCount, value.DownloadUrl);
+
+    public static Preferences From(Generated.UserPreferencesDto value) => new(value.Theme ?? "light",
+        value.PreferSubStreamInGrid ?? true, value.HardwareDecoding ?? true, value.NetworkCachingMs ?? 800, value.ShowDiagnostics ?? false);
+
+    public static StreamCapability From(Generated.StreamCapabilityDto value) => new(value.StreamType, value.Available,
+        value.Codec, value.Width, value.Height, value.BitrateKbps, value.Error);
+
+    public static Generated.UserPreferencesDto To(Preferences value) => new()
+    {
+        Theme = value.Theme,
+        PreferSubStreamInGrid = value.PreferSubStreamInGrid,
+        HardwareDecoding = value.HardwareDecoding,
+        NetworkCachingMs = value.NetworkCachingMs,
+        ShowDiagnostics = value.ShowDiagnostics
+    };
 
     private static JsonElement? Payload(object? value) => value is null ? null : JsonSerializer.SerializeToElement(value);
 }

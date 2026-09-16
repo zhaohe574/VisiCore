@@ -1,4 +1,8 @@
 using System.Diagnostics;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Security;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Windows.Forms;
@@ -7,7 +11,30 @@ namespace VideoPlatform.Updater;
 
 internal static class Program
 {
-    private static readonly HttpClient Http = new(new SocketsHttpHandler { AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(15) }) { Timeout = TimeSpan.FromMinutes(30) };
+    private static readonly HttpClient Http = new(new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        ConnectTimeout = TimeSpan.FromSeconds(15),
+        ConnectCallback = async (context, token) =>
+        {
+            var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            if (context.DnsEndPoint.Host.StartsWith("10.37."))
+            {
+                var local = NetworkInterface.GetAllNetworkInterfaces()
+                    .Where(i => i.OperationalStatus == OperationalStatus.Up)
+                    .SelectMany(i => i.GetIPProperties().UnicastAddresses)
+                    .Select(a => a.Address)
+                    .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && a.ToString().StartsWith("10.37."));
+                if (local is not null) socket.Bind(new IPEndPoint(local, 0));
+            }
+            await socket.ConnectAsync(context.DnsEndPoint, token);
+            return new NetworkStream(socket, ownsSocket: true);
+        },
+        SslOptions = new SslClientAuthenticationOptions
+        {
+            RemoteCertificateValidationCallback = (_, _, _, _) => true
+        }
+    }) { Timeout = TimeSpan.FromMinutes(30) };
 
     [STAThread]
     private static async Task<int> Main(string[] args)

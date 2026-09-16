@@ -11,6 +11,14 @@ public sealed record DeviceRequest(string Name, string Host, int Port, string Us
 public sealed record DeviceDto(long Id, string Name, string Host, int Port, string Username, bool Enabled, string Status, string? Model, string? SerialNumber, DateTimeOffset? LastSeenAt, long ChannelCount, long OnlineChannels, string? PluginId = "hikvision", string? PluginName = null);
 public sealed record ChannelDto(long Id, long DeviceId, string DeviceName, int DeviceChannel, string Name, string? Alias, string? Model, string Status, long? UnitId, bool PtzCapable, string? Codec);
 public sealed record ChannelUpdateRequest(string? Alias, long? UnitId = null);
+/// <summary>码流档位能力探测请求。StreamType：1 主码流、2 子码流。</summary>
+public sealed record StreamProbeRequest(int StreamType);
+/// <summary>
+/// 码流档位能力。<c>Available</c> 为 false 表示设备确认该档位不存在；
+/// 分辨率与码率探测不到时为 null，调用方必须按“未知”处理，不得用估计值顶替。
+/// </summary>
+public sealed record StreamCapabilityDto(int StreamType, bool Available, string? Codec = null,
+    int? Width = null, int? Height = null, int? BitrateKbps = null, string? Error = null);
 public sealed record OrganizationRequest(string Name, string Code, string Status = "active", long? ParentId = null);
 public sealed record AssignmentRequest(long[] ChannelIds, long? UnitId);
 public sealed record UserRequest(string Username, string? Password, string? DisplayName, string? Phone, string Status, long[] RoleIds);
@@ -20,7 +28,7 @@ public sealed record ScopeItem(string Type, long Id);
 public sealed record ScopeRequest(bool AllChannels, ScopeItem[] Scopes);
 public sealed record LiveRequest(long ChannelId, int StreamType = 2, string Profile = "browser");
 public sealed record RecordingRequest(long ChannelId, DateTimeOffset Start, DateTimeOffset End);
-public sealed record PlaybackRequest(long ChannelId, DateTimeOffset Start, DateTimeOffset End, string Profile = "browser");
+public sealed record PlaybackRequest(long ChannelId, DateTimeOffset Start, DateTimeOffset End, string Profile = "browser", int StreamType = 1);
 public sealed record PlaybackControlRequest(string Action, DateTimeOffset? Position = null, double? Speed = null);
 public sealed record PtzRequest(string Command, int Speed = 4);
 public sealed record FavoritesRequest(long[] ChannelIds);
@@ -30,10 +38,30 @@ public sealed record PublishRequest(string? MinimumVersion = null, bool ForceUpd
 public sealed record ReleaseUpdateRequest(string? Version = null, string? ReleaseNotes = null, string? MinimumVersion = null, bool? ForceUpdate = null);
 public sealed record EventNotice(string Id, long Version, string Kind);
 public sealed record PlatformSettings(
-    int LivePerUser = 16, int PlaybackPerUser = 4, int PlaybackPerDevice = 20, int PlaybackGlobal = 32,
+    int LivePerUser = 25, int PlaybackPerUser = 4, int PlaybackPerDevice = 20, int PlaybackGlobal = 32,
     int TranscodeGlobal = 4, int ExportGlobal = 2, int ExportPerDevice = 1, int ExportRetentionDays = 7,
     int ExportQuotaGb = 100, int AlarmRetentionDays = 180, int AuditRetentionDays = 180);
 public sealed record DevicePluginDto(string Id, string Name, string Vendor, string Version, string? Description, string Status, string EndpointUrl, string[] Capabilities, string? ConfigSchema, long DeviceCount, string? HealthStatus, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
 public sealed record PluginStatusRequest(string Status);
 public sealed record PluginCreateRequest(string Id, string Name, string Vendor, string Version, string? Description, string EndpointUrl, string[]? Capabilities = null, string? ConfigSchema = null);
 public sealed record PluginProbeRequest(string EndpointUrl);
+public sealed record SslCertificateDto(
+    long Id, string Name, string CommonName, string[] DnsNames, string IssuerDn, string SubjectDn,
+    string SerialNumber, string Thumbprint, DateTimeOffset ValidFrom, DateTimeOffset ValidTo,
+    int DaysRemaining, string Status, bool IsActive, long BoundDomainCount, DateTimeOffset CreatedAt,
+    string? CertPem = null);
+public sealed record SslCertificateUploadRequest(string Name, string CertPem, string KeyPem);
+public sealed record SslDomainDto(
+    long Id, string Domain, int Port, string Protocol, string Description,
+    bool IsPrimary, bool ForceHttps, bool HstsEnabled, long? CertificateId,
+    string? CertificateName, string? CertificateCommonName, DateTimeOffset? CertificateValidTo,
+    string CertMatchStatus, bool Enabled, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt);
+public sealed record SslDomainRequest(
+    string Domain, int Port = 443, string Protocol = "https", string Description = "",
+    bool IsPrimary = false, bool ForceHttps = true, bool HstsEnabled = true,
+    long? CertificateId = null, bool Enabled = true);
+public sealed record SslOverviewDto(
+    SslCertificateDto? ActiveCertificate, long TotalCertificates, long ExpiringCertificates,
+    long TotalDomains, SslDomainDto? PrimaryDomain, bool HttpsEnforced,
+    string CertFilePath, string KeyFilePath, bool FileSynced);
+public sealed record NginxConfigDto(string Content, string ConfigPath, string ReloadCommand);

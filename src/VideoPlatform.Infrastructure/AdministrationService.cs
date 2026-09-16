@@ -8,10 +8,11 @@ using VideoPlatform.Application;
 using VideoPlatform.Contracts;
 using VideoPlatform.Domain;
 
+using System.Net.NetworkInformation;
+
 namespace VideoPlatform.Infrastructure;
 
-public sealed record AdministrationPage<T>(IReadOnlyList<T> Items, long Total, int Page, int PageSize);
-public sealed record OrganizationNodeDto(long Id, string Name, string Code, string Status, long? ParentId);
+public sealed record AdministrationPage<T>(IReadOnlyList<T> Items, long Total, int Page, int PageSize);public sealed record OrganizationNodeDto(long Id, string Name, string Code, string Status, long? ParentId);
 public sealed record OrganizationTreeDto(IReadOnlyList<OrganizationNodeDto> Workshops, IReadOnlyList<OrganizationNodeDto> Areas, IReadOnlyList<OrganizationNodeDto> Units);
 public sealed record AdministrationRoleDto(long Id, string Name, string Code, string Status, string[] PermissionCodes, long UserCount);
 public sealed record PermissionDto(string Code, string Name);
@@ -21,12 +22,19 @@ public sealed record AdministrationLayoutDto(long Id, string Name, string Kind, 
 public sealed record DashboardDto(long Users, long Roles, long Devices, long OnlineDevices, long Channels, long OnlineChannels, long AlarmsToday, long PendingAlarms, long LiveSessions, long PlaybackSessions, long OnlineSessions);
 public sealed record ServiceHealthDto(string Name, string Status, string? Reason = null);
 public sealed record MediaStatisticsDto(long LiveSessions, long PlaybackSessions, long Transcodes);
-public sealed record SystemStatisticsDto(double? CpuPercent, long? MemoryTotalBytes, long? MemoryUsedBytes, long? DiskTotalBytes, long? DiskFreeBytes, long UptimeSeconds, IReadOnlyList<ServiceHealthDto> Services, MediaStatisticsDto Media, string Version);
+public sealed record NetworkInterfaceDto(string Name, string Description, string Type, string Status, long Speed, long BytesReceived, long BytesSent, string? IpAddress);
+public sealed record NetworkMetricsDto(double RxBytesPerSecond, double TxBytesPerSecond, long TotalBytesReceived, long TotalBytesSent, IReadOnlyList<NetworkInterfaceDto> Interfaces);
+public sealed record ServerPerformanceDto(int CpuCores, double? ProcessCpuPercent, int ProcessThreads, long ProcessWorkingSetBytes, long ProcessPrivateMemoryBytes, long? GcHeapBytes, long? SwapTotalBytes, long? SwapUsedBytes);
+public sealed record DiskInfoDto(string Name, string? Label, long? TotalBytes, long? FreeBytes, long? UsedBytes, double? UsedPercent, bool IsDataPath);
+public sealed record HostInfoDto(string OsDescription, string OsArchitecture, string Framework, string MachineName, long SystemUptimeSeconds, DateTimeOffset ServerTime);
+public sealed record SystemStatisticsDto(double? CpuPercent, long? MemoryTotalBytes, long? MemoryUsedBytes, long? DiskTotalBytes, long? DiskFreeBytes, long UptimeSeconds, IReadOnlyList<ServiceHealthDto> Services, MediaStatisticsDto Media, string Version, NetworkMetricsDto? Network = null, ServerPerformanceDto? Performance = null, IReadOnlyList<DiskInfoDto>? Disks = null, HostInfoDto? Host = null);
 
 public sealed class AdministrationService(Database db, AccessService access, MediaService media, ISettingsStore settings, PlatformOptions options, IDeviceAdapter adapter, IHttpClientFactory httpClients)
 {
     // 授权写入共用事务锁，防止两个请求同时撤掉最后管理员或绕过范围校验。
     private const long AdministrationLock = 72002010;
+    /// <summary>允许的分屏格数，与 database/v2/010_layout25_and_permissions.sql 的约束保持一致。</summary>
+    public static readonly int[] SupportedLayoutCounts = [1, 4, 6, 8, 9, 10, 16, 25];
     private const string LayoutColumns = "id,user_id,name,kind,shared,layout,interval_seconds,to_jsonb(channel_ids) as channel_ids,updated_at";
     private const string UserColumns = """
         u.id,u.username,u.display_name,u.phone,u.status,
@@ -474,7 +482,8 @@ public sealed class AdministrationService(Database db, AccessService access, Med
     {
         var name = Rules.Text(request.Name, "布局名称");
         Rules.Require(request.Kind is "layout" or "patrol", "布局类型无效");
-        Rules.Require(request.Layout is 1 or 4 or 9 or 16, "仅支持 1、4、9、16 分屏");
+        // 1/4/9/16/25 为等分档位，8（1+7）与 10（1+9）为「一大屏 + 多小屏」聚焦档位（兼容历史 6），与迁移 010 保持一致。
+        Rules.Require(SupportedLayoutCounts.Contains(request.Layout), "仅支持 1、4、9、16、25 分屏，以及 1+7（8 格）与 1+9（10 格）聚焦档位");
         Rules.Require(request.IntervalSeconds is >= 10 and <= 300, "轮巡间隔必须为 10～300 秒");
         Rules.Require(request.ChannelIds is not null && request.ChannelIds.Length <= (request.Kind == "layout" ? request.Layout : 1000) && request.ChannelIds.All(i => i is null or > 0), "布局通道编号或数量无效");
         Rules.Require(request.ChannelIds!.Any(i => i is > 0), "布局至少需要一个通道");
@@ -568,8 +577,13 @@ public sealed class AdministrationService(Database db, AccessService access, Med
         services.Add(new("ZLMediaKit", await zlmHealth));
         ct.ThrowIfCancellationRequested();
         var uptime = (long)Math.Max(0, (DateTimeOffset.UtcNow - new DateTimeOffset(Process.GetCurrentProcess().StartTime.ToUniversalTime())).TotalSeconds);
+        var network = AdministrationHostMetrics.Network();
+        var performance = AdministrationHostMetrics.Performance();
+        var disks = AdministrationHostMetrics.Disks(options.DataPath);
+        var host = AdministrationHostMetrics.Host();
         return new(cpu, memoryTotal, memoryUsed, diskTotal, diskFree, uptime, services,
-            new(row.Id("liveSessions"), row.Id("playbackSessions"), row.Id("transcodes")), "2.0.0");
+            new(row.Id("liveSessions"), row.Id("playbackSessions"), row.Id("transcodes")), "2.0.0",
+            network, performance, disks, host);
     }
 
     private async Task<string> ProbeAdapterAsync(CancellationToken ct)
@@ -832,6 +846,236 @@ public static class AdministrationHostMetrics
             return drive is null ? (null, null) : (drive.TotalSize, drive.AvailableFreeSpace);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { return (null, null); }
+    }
+
+    private static long _lastNetworkTicks = Stopwatch.GetTimestamp();
+    private static long _lastRxBytes = -1;
+    private static long _lastTxBytes = -1;
+    private static double _lastRxRate = 0;
+    private static double _lastTxRate = 0;
+    private static readonly object _netLock = new();
+
+    private static long _lastProcTicks = Stopwatch.GetTimestamp();
+    private static TimeSpan _lastProcCpu = TimeSpan.Zero;
+    private static double _lastProcCpuPercent = 0;
+    private static readonly object _procLock = new();
+
+    public static NetworkMetricsDto Network()
+    {
+        try
+        {
+            var interfaces = new List<NetworkInterfaceDto>();
+            long totalRx = 0;
+            long totalTx = 0;
+
+            foreach (var nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.OperationalStatus != OperationalStatus.Up || nic.NetworkInterfaceType == NetworkInterfaceType.Loopback)
+                    continue;
+
+                var desc = nic.Description ?? string.Empty;
+                if (desc.Contains("Filter", StringComparison.OrdinalIgnoreCase) ||
+                    desc.Contains("QoS", StringComparison.OrdinalIgnoreCase) ||
+                    desc.Contains("WFP", StringComparison.OrdinalIgnoreCase) ||
+                    desc.Contains("Virtual Switch Extension", StringComparison.OrdinalIgnoreCase) ||
+                    desc.Contains("WAN Miniport", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                IPInterfaceStatistics stats;
+                try { stats = nic.GetIPStatistics(); }
+                catch { continue; }
+
+                totalRx += stats.BytesReceived;
+                totalTx += stats.BytesSent;
+
+                string? ip = null;
+                try
+                {
+                    var ipProps = nic.GetIPProperties();
+                    var unicast = ipProps.UnicastAddresses
+                        .FirstOrDefault(a => a.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)?.Address.ToString()
+                        ?? ipProps.UnicastAddresses.FirstOrDefault()?.Address.ToString();
+                    ip = unicast;
+                }
+                catch { }
+
+                long speed = nic.Speed;
+                if (speed <= 0 || speed == 4294967295L * 1_000_000L || speed == 4294967295L || speed > 800_000_000_000L)
+                {
+                    speed = -1;
+                }
+
+                interfaces.Add(new(
+                    nic.Name,
+                    nic.Description ?? string.Empty,
+                    nic.NetworkInterfaceType.ToString(),
+                    nic.OperationalStatus.ToString(),
+                    speed,
+                    stats.BytesReceived,
+                    stats.BytesSent,
+                    ip));
+            }
+
+            double rxRate;
+            double txRate;
+            lock (_netLock)
+            {
+                var now = Stopwatch.GetTimestamp();
+                var elapsedSeconds = (double)(now - _lastNetworkTicks) / Stopwatch.Frequency;
+                if (_lastRxBytes >= 0 && elapsedSeconds >= 0.3)
+                {
+                    _lastRxRate = Math.Max(0, (totalRx - _lastRxBytes) / elapsedSeconds);
+                    _lastTxRate = Math.Max(0, (totalTx - _lastTxBytes) / elapsedSeconds);
+                    _lastRxBytes = totalRx;
+                    _lastTxBytes = totalTx;
+                    _lastNetworkTicks = now;
+                }
+                else if (_lastRxBytes < 0)
+                {
+                    _lastRxBytes = totalRx;
+                    _lastTxBytes = totalTx;
+                    _lastNetworkTicks = now;
+                    _lastRxRate = 0;
+                    _lastTxRate = 0;
+                }
+                rxRate = Math.Round(_lastRxRate, 1);
+                txRate = Math.Round(_lastTxRate, 1);
+            }
+
+            return new(rxRate, txRate, totalRx, totalTx, interfaces);
+        }
+        catch (Exception)
+        {
+            return new(0, 0, 0, 0, Array.Empty<NetworkInterfaceDto>());
+        }
+    }
+
+    public static ServerPerformanceDto Performance()
+    {
+        int cores = Environment.ProcessorCount;
+        int threads = 0;
+        long workingSet = 0;
+        long privateBytes = 0;
+        long gcHeap = 0;
+        double? procCpu = null;
+        long? swapTotal = null;
+        long? swapUsed = null;
+
+        try
+        {
+            using var proc = Process.GetCurrentProcess();
+            threads = proc.Threads.Count;
+            workingSet = proc.WorkingSet64;
+            privateBytes = proc.PrivateMemorySize64;
+            gcHeap = GC.GetTotalMemory(false);
+
+            lock (_procLock)
+            {
+                var now = Stopwatch.GetTimestamp();
+                var elapsedSec = (double)(now - _lastProcTicks) / Stopwatch.Frequency;
+                var currentCpu = proc.TotalProcessorTime;
+                if (_lastProcCpu > TimeSpan.Zero && elapsedSec >= 0.3)
+                {
+                    var cpuUsedSec = (currentCpu - _lastProcCpu).TotalSeconds;
+                    _lastProcCpuPercent = Math.Clamp(Math.Round(100d * cpuUsedSec / (elapsedSec * cores), 1), 0, 100);
+                    _lastProcCpu = currentCpu;
+                    _lastProcTicks = now;
+                }
+                else if (_lastProcCpu == TimeSpan.Zero)
+                {
+                    _lastProcCpu = currentCpu;
+                    _lastProcTicks = now;
+                }
+                procCpu = _lastProcCpuPercent;
+            }
+        }
+        catch { }
+
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                var state = new MemoryStatus { Length = (uint)Marshal.SizeOf<MemoryStatus>() };
+                if (GlobalMemoryStatusEx(ref state))
+                {
+                    swapTotal = (long)state.TotalPageFile;
+                    swapUsed = (long)(state.TotalPageFile - state.AvailablePageFile);
+                }
+            }
+            else if (OperatingSystem.IsLinux())
+            {
+                var values = File.ReadLines("/proc/meminfo").Select(line => line.Split(':', 2)).Where(parts => parts.Length == 2)
+                    .ToDictionary(parts => parts[0], parts => long.Parse(parts[1].Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries)[0], CultureInfo.InvariantCulture) * 1024);
+                if (values.TryGetValue("SwapTotal", out var sTotal) && values.TryGetValue("SwapFree", out var sFree))
+                {
+                    swapTotal = sTotal;
+                    swapUsed = sTotal - sFree;
+                }
+            }
+        }
+        catch { }
+
+        return new(cores, procCpu, threads, workingSet, privateBytes, gcHeap, swapTotal, swapUsed);
+    }
+
+    public static IReadOnlyList<DiskInfoDto> Disks(string dataPath)
+    {
+        var list = new List<DiskInfoDto>();
+        try
+        {
+            var resolvedDataPath = Path.GetFullPath(dataPath);
+            var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            var seen = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+
+            foreach (var d in DriveInfo.GetDrives())
+            {
+                if (!d.IsReady || d.TotalSize <= 0) continue;
+
+                var name = d.Name;
+                if (OperatingSystem.IsLinux())
+                {
+                    if (name.StartsWith("/sys") || name.StartsWith("/proc") || name.StartsWith("/dev") || name.StartsWith("/run"))
+                        continue;
+                }
+
+                var total = d.TotalSize;
+                var free = d.AvailableFreeSpace;
+                var used = total - free;
+                var percent = total > 0 ? Math.Round(100d * used / total, 1) : 0;
+
+                var root = d.RootDirectory.FullName;
+                bool isData = resolvedDataPath.Equals(root.TrimEnd(Path.DirectorySeparatorChar), comparison)
+                    || resolvedDataPath.StartsWith(Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar, comparison);
+
+                string label = string.IsNullOrWhiteSpace(d.VolumeLabel) ? (OperatingSystem.IsWindows() ? d.DriveType.ToString() : name) : d.VolumeLabel;
+
+                var dedupKey = OperatingSystem.IsLinux() ? $"{total}:{free}" : name;
+                if (seen.Contains(dedupKey))
+                {
+                    if (isData)
+                    {
+                        var idx = list.FindIndex(item => (OperatingSystem.IsLinux() ? $"{item.TotalBytes}:{item.FreeBytes}" : item.Name) == dedupKey);
+                        if (idx >= 0) list[idx] = list[idx] with { IsDataPath = true };
+                    }
+                    continue;
+                }
+                seen.Add(dedupKey);
+
+                list.Add(new(d.Name, label, total, free, used, percent, isData));
+            }
+        }
+        catch { }
+        return list;
+    }
+
+    public static HostInfoDto Host()
+    {
+        var osDesc = RuntimeInformation.OSDescription;
+        var osArch = RuntimeInformation.OSArchitecture.ToString();
+        var framework = RuntimeInformation.FrameworkDescription;
+        var machineName = Environment.MachineName;
+        var uptimeSeconds = Environment.TickCount64 / 1000;
+        return new(osDesc, osArch, framework, machineName, uptimeSeconds, DateTimeOffset.UtcNow);
     }
 
     private static (ulong Idle, ulong Total)? ReadCpu()

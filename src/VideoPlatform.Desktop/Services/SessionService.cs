@@ -23,8 +23,8 @@ public sealed class SessionService(HttpClient http, ICredentialStore credentials
     private long _generation;
     private long _revision;
     private Task<bool>? _refresh;
-    private string _server = "https://10.37.200.74";
-    public string Server { get { lock (_sync) return _server; } }
+    private string _server = http.BaseAddress?.ToString().TrimEnd('/') ?? "";
+    public string Server { get { lock (_sync) return !string.IsNullOrEmpty(_server) ? _server : (http.BaseAddress?.ToString().TrimEnd('/') ?? ""); } }
     public long Generation { get { lock (_sync) return _generation; } }
     public User? CurrentUser { get; private set; }
     public bool IsAuthenticated { get { lock (_sync) return _token is not null; } }
@@ -151,15 +151,22 @@ public sealed class SessionService(HttpClient http, ICredentialStore credentials
         catch (Exception ex) { ClientFiles.Log($"服务器退出会话失败：{ex.Message}"); }
     }
 
+    /// <summary>
+    /// 清空当前账号的媒体会话。走生成客户端而不是手写 HTTP，保证路径、方法与 all 查询参数
+    /// 都由服务端契约生成，不会因为端点调整而静默失效。
+    /// </summary>
     public async Task ClearMediaSessionsAsync(string kind = "live", bool all = true, CancellationToken cancellationToken = default)
     {
-        var token = await GetTokenAsync();
-        if (token is null) return;
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Delete, $"{Server}/api/v2/{kind}-sessions" + (all ? "?all=true" : ""));
-            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            using var response = await http.SendAsync(request, cancellationToken);
+            await SendAuthorizedAsync(async (client, ct) =>
+            {
+                // 服务端契约把 all 声明为 string 查询参数，按字面量传递。
+                var flag = all ? "true" : "false";
+                if (kind == "live") await client.StopActiveliveSessionsAsync(all: flag, cancellationToken: ct);
+                else await client.StopActiveplaybackSessionsAsync(all: flag, cancellationToken: ct);
+                return true;
+            }, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -203,9 +210,11 @@ public sealed class SessionService(HttpClient http, ICredentialStore credentials
 
     private async Task<T> SendRawAsync<T>(Func<Generated.IVideoPlatformClient, CancellationToken, Task<T>> operation, string? token, CancellationToken cancellationToken)
     {
+        var server = Server;
+        var baseUri = !string.IsNullOrEmpty(server) ? new Uri(server.TrimEnd('/') + "/") : (http.BaseAddress ?? new Uri("http://localhost/"));
         using var clientHttp = new HttpClient(new GeneratedClientTransport(http, token))
         {
-            BaseAddress = new Uri(Server + "/"), Timeout = Timeout.InfiniteTimeSpan
+            BaseAddress = baseUri, Timeout = Timeout.InfiniteTimeSpan
         };
         try { return await operation(new Generated.VideoPlatformClient(clientHttp), cancellationToken).ConfigureAwait(false); }
         catch (Generated.ApiException ex) { throw TranslateError(ex); }
@@ -254,3 +263,4 @@ public sealed class SessionService(HttpClient http, ICredentialStore credentials
         return new PlatformException(message, statusCode, error?.Code, error?.TraceId);
     }
 }
+

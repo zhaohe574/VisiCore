@@ -78,9 +78,35 @@ async function main() {
   const first = await generate({ input: snapshot, output: path.join(directory, '.runtime/repro-a'), strict: true });
   const second = await generate({ input: snapshot, output: path.join(directory, '.runtime/repro-b'), strict: true });
   check('相同 OpenAPI 快照重复生成全部文件哈希一致', () => assert.deepEqual(first.manifest.files, second.manifest.files));
+  // 漂移门禁需要与「本次服务端实际导出的规范」比较，因此先导出规范、再用它重新生成产物。
+  // 顺序很关键：历史上这里是先比对后导出，导致产物永远落后一轮——「服务端新增端点但客户端没跟上」
+  // 的问题正是这样反复出现的。
   const dotnet = await findDotnet();
   const outputText = await command(dotnet, ['run', '--project', path.join(directory, 'Tests/VideoPlatform.ClientGenerator.Tests.csproj'), '--no-restore']);
   console.log(outputText.trim());
+  const upstream = path.join(directory, '.runtime/metadata-openapi.json');
+  await generate({ input: upstream, output, strict: true });
+
+  const committed = path.join(root, 'src/VideoPlatform.Client/Generated/VideoPlatformClient.g.cs');
+  const generated = await fs.readFile(path.join(output, 'csharp/VideoPlatformClient.g.cs'), 'utf8');
+  const committedText = await fs.readFile(committed, 'utf8');
+  // 生成客户端里的 "Operation Path" 不带前导斜杠，服务端规范带前导斜杠，比较前统一规范化。
+  const normalizePath = value => value.replace(/^\/+/, '');
+  const operations = text => new Set([...text.matchAll(/Operation Path: "([^"]+)"/g)].map(match => normalizePath(match[1])));
+  const generatedOps = operations(generated);
+  const committedOps = operations(committedText);
+  const missing = [...generatedOps].filter(op => !committedOps.has(op)).sort();
+  const extra = [...committedOps].filter(op => !generatedOps.has(op)).sort();
+  check('已提交的生成客户端与服务端规范操作集合一致', () => {
+    assert.equal(missing.length, 0, `仓库客户端缺少操作：${missing.join('、')}。请按 README 重新生成并同步入库。`);
+    assert.equal(extra.length, 0, `仓库客户端存在规范中不存在的操作：${extra.join('、')}。`);
+    assert.ok(generatedOps.size > 0, '未能从生成结果中解析出任何操作路径。');
+  });
+  check('已提交的生成客户端与规范生成结果逐字节一致', () => {
+    const normalize = text => text.replaceAll('\r\n', '\n').replace(/[ \t]+$/gm, '');
+    assert.equal(normalize(committedText), normalize(generated),
+      '仓库客户端与服务端规范生成结果不一致，请重新生成后同步 src/VideoPlatform.Client/Generated/VideoPlatformClient.g.cs。');
+  });
   console.log(`Web 与可重复生成验证通过：${passed} 项。`);
 }
 try { await main(); } catch (error) { console.error(`验证失败：${error.stack ?? error}`); process.exitCode = 1; }

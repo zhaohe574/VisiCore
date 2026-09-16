@@ -275,6 +275,43 @@ public sealed class VideoTileFallbackTests
         Assert.Equal("sub-session", tile.SessionId);
     }
 
+    [Fact]
+    public async Task LiveSessionCreationRetriesOnTimeoutAndSucceeds()
+    {
+        var media = Media();
+        var factory = new PlayerFactory();
+        var callCount = 0;
+        var api = new FakeApi
+        {
+            Post = (_, _) =>
+            {
+                callCount++;
+                if (callCount == 1)
+                {
+                    throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 30 seconds elapsing");
+                }
+                return Task.FromResult<object>(media);
+            }
+        };
+        await using var tile = Tile(api, factory);
+        await tile.StartAsync(Fixtures.Channel(1), false, 2, default, default);
+        Assert.Equal(2, callCount);
+        Assert.Equal(media.Id, tile.SessionId);
+    }
+
+    [Fact]
+    public async Task LiveSessionCreationExhaustsTimeoutAndDisplaysFriendlyChinese()
+    {
+        var factory = new PlayerFactory();
+        var api = new FakeApi
+        {
+            Post = (_, _) => throw new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout of 30 seconds elapsing")
+        };
+        await using var tile = Tile(api, factory);
+        await Assert.ThrowsAsync<TaskCanceledException>(() => tile.StartAsync(Fixtures.Channel(1), false, 2, default, default));
+        Assert.Equal("连接超时，请重试", tile.StateLabel);
+    }
+
     private static MediaSession Media() => Fixtures.Media() with { HttpTsUrl = "https://platform.test/media/native.live.ts" };
     private static FakeApi Api(MediaSession media)
     {

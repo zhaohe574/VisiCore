@@ -1,4 +1,6 @@
 using System.ComponentModel;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -10,44 +12,94 @@ namespace VideoPlatform.Desktop.Views;
 
 public partial class VideoTileView : UserControl
 {
+    private static readonly FieldInfo? VideoHwndHostField = typeof(LibVLCSharp.WPF.VideoView).GetField(
+        "_videoHwndHost", BindingFlags.NonPublic | BindingFlags.Instance);
+
     private VideoTileViewModel? _tile;
     private LibVLCSharp.WPF.VideoView? _video;
-    private Grid? _hoverBar;
     private string? _lastAppliedRatio;
+    private bool? _lastVideoVisible;
+    private readonly SubclassWndProc _subclassProc;
+
+    private System.Windows.Threading.DispatcherTimer? _headerIdleTimer;
 
     public VideoTileView()
     {
+        _subclassProc = VideoSubclassHandler;
         InitializeComponent();
+        TileHeaderPopup.PlacementTarget = this;
+        TileHeaderPopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Relative;
+        TileHeaderPopup.HorizontalOffset = 0;
+        TileHeaderPopup.VerticalOffset = 0;
+
+        _headerIdleTimer = new System.Windows.Threading.DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(2.5)
+        };
+        _headerIdleTimer.Tick += (_, _) =>
+        {
+            _headerIdleTimer.Stop();
+            HideHeader();
+        };
+
         DataContextChanged += (_, _) =>
         {
             if (_tile is not null) _tile.PropertyChanged -= TileChanged;
             _tile = DataContext as VideoTileViewModel;
             if (_tile is not null) _tile.PropertyChanged += TileChanged;
+            TileHeaderPopup.PlacementTarget = this;
+            TileHeaderPopup.DataContext = _tile;
+            TileHeaderBar.DataContext = _tile;
             _lastAppliedRatio = null;
+            Tag ??= Workspace;
             UpdatePlayer();
             UpdateTileAspectRatio();
+            if (_tile is not { IsPlaying: true, IsActive: true }) HideHeader();
         };
         IsVisibleChanged += (_, _) =>
         {
-            UpdatePlayer();
-            SyncOverlayVisibility();
+            // 离屏（单窗放大/多分屏还原）时通过 Visibility = Collapsed 隐藏原生窗口，切勿销毁 ReleaseView()，
+            // 否则放大或还原时其余路数全部丢失 HWND 造成黑屏重载。
+            if (IsVisible) UpdatePlayer();
+            SyncVisibility();
             if (IsVisible) UpdateTileAspectRatio();
+            else HideHeader();
         };
         Loaded += (_, _) =>
         {
+            Tag ??= Workspace;
+            VideoPlatform.Desktop.Services.VideoMouseHook.RegisterTile(this);
             UpdatePlayer();
-            SyncOverlayVisibility();
+            SyncVisibility();
             UpdateTileAspectRatio();
         };
         SizeChanged += (_, _) =>
         {
+            if (TileHeaderPopup.IsOpen)
+            {
+                TileHeaderPopup.Width = Math.Max(0, ActualWidth);
+                TileHeaderBar.Width = Math.Max(0, ActualWidth);
+                var offset = TileHeaderPopup.HorizontalOffset;
+                TileHeaderPopup.HorizontalOffset = offset + 0.0001;
+                TileHeaderPopup.HorizontalOffset = offset;
+            }
             UpdateTileAspectRatio();
         };
         Unloaded += (_, _) =>
         {
-            SyncOverlayVisibility();
+            HideHeader();
+            VideoPlatform.Desktop.Services.VideoMouseHook.UnregisterTile(this);
+            SyncVisibility();
             ReleaseView();
         };
+    }
+
+    public VideoTileViewModel? Tile => _tile;
+
+    public void ToggleMaximize()
+    {
+        SelectTile();
+        Workspace?.ToggleMaximizeCommand.Execute(null);
     }
 
     private void TileChanged(object? sender, PropertyChangedEventArgs e)
@@ -57,9 +109,34 @@ public partial class VideoTileView : UserControl
             UpdatePlayer();
             UpdateTileAspectRatio();
         }
+        else if (e.PropertyName == nameof(VideoTileViewModel.IsActive))
+        {
+            if (_tile?.IsActive != true) HideHeader();
+        }
         else if (e.PropertyName == nameof(VideoTileViewModel.IsPlaying))
         {
-            if (_tile?.IsPlaying == true) UpdateTileAspectRatio();
+            if (_tile?.IsPlaying == true)
+            {
+                EnsurePlayerHwnd();
+                AttachSubclass();
+                _lastAppliedRatio = null;
+                UpdateTileAspectRatio();
+                _ = Dispatcher.InvokeAsync(async () =>
+                {
+                    for (var i = 1; i <= 4; i++)
+                    {
+                        await Task.Delay(150 * i);
+                        if (_tile?.IsPlaying != true) break;
+                        EnsurePlayerHwnd();
+                        AttachSubclass();
+                        UpdateTileAspectRatio();
+                    }
+                });
+            }
+            else
+            {
+                HideHeader();
+            }
         }
         else if (e.PropertyName == nameof(VideoTileViewModel.AspectRatio))
         {
@@ -68,292 +145,262 @@ public partial class VideoTileView : UserControl
         }
         else if (e.PropertyName == nameof(VideoTileViewModel.IsVisible))
         {
-            SyncOverlayVisibility();
+            SyncVisibility();
         }
     }
 
-    public void SyncOverlayVisibility()
+    public void SyncOverlayVisibility() => SyncVisibility();
+
+    private void SyncVisibility()
     {
         var visible = IsVisible && (_tile?.IsVisible ?? false);
-        if (_video is not null)
-        {
-            _video.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-            if (_video.Content is UIElement overlay)
-            {
-                overlay.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-            }
-            try
-            {
-                var prop = _video.GetType().GetProperty("ForegroundWindow", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (prop?.GetValue(_video) is Window fw)
-                {
-                    fw.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-                }
-            }
-            catch { }
-        }
+        if (_video is null || _lastVideoVisible == visible) return;
+        _lastVideoVisible = visible;
+        _video.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void UpdatePlayer()
     {
-        if (_tile?.NativePlayer is null) { ReleaseView(); return; }
+        if (_tile?.NativePlayer is null)
+        {
+            if (_video is not null)
+            {
+                DetachSubclass();
+                if (_video.MediaPlayer is { } p) p.Vout -= OnPlayerVout;
+                _video.MediaPlayer = null;
+                _video.Visibility = Visibility.Collapsed;
+                _lastVideoVisible = false;
+            }
+            return;
+        }
         // 分屏放大和模块切换只隐藏宿主，避免播放期间重建原生窗口后失去视频输出。
-        if (!IsVisible) { SyncOverlayVisibility(); return; }
+        if (!IsVisible) { SyncVisibility(); return; }
         if (_video is null)
         {
-            // 关键：Background 设置为几乎不可见但逻辑实色的画刷（Alpha=1，即 #01000000），
-            // 使得底层 Win32 原生视频窗口上的所有鼠标事件（单击、双击、右键、拖拽）100% 被 WPF 捕获！
-            var overlay = new Grid
-            {
-                Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)),
-                AllowDrop = true
-            };
-            overlay.PreviewMouseLeftButtonDown += OverlayMouseLeftDown;
-            overlay.PreviewMouseRightButtonDown += OverlayMouseRightDown;
-            overlay.Drop += Dropped;
-            overlay.ContextMenu = this.ContextMenu;
-            overlay.Tag = this.Tag;
-            overlay.DataContext = this.DataContext;
-
-            // 顶部常驻微型 OSD 水印（通道名称与高清角标）
-            var osdBar = BuildOsdBar();
-            overlay.Children.Add(osdBar);
-
-            // 悬浮工具栏
-            var hoverBar = BuildHoverBar();
-            hoverBar.Visibility = Visibility.Collapsed;
-            overlay.Children.Add(hoverBar);
-            overlay.MouseEnter += (_, _) => { if (_tile?.SessionId is not null) hoverBar.Visibility = Visibility.Visible; };
-            overlay.MouseLeave += (_, _) => hoverBar.Visibility = Visibility.Collapsed;
-            overlay.PreviewMouseMove += (_, e) =>
-            {
-                if (WorkspaceViewInstance is { } wv)
-                {
-                    try
-                    {
-                        var screenPt = overlay.PointToScreen(e.GetPosition(overlay));
-                        wv.NotifyScreenMouseMove(screenPt);
-                    }
-                    catch { }
-                }
-            };
-            _hoverBar = hoverBar;
-
-            // 右下角窗口编号角标（iVMS-4200 风格“窗口 01”标识，播放时可见）
-            var numberPill = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(170, 16, 18, 22)),
-                CornerRadius = new CornerRadius(2),
-                Padding = new Thickness(6, 2, 6, 2),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Bottom,
-                Margin = new Thickness(0, 0, 8, 36),
-                IsHitTestVisible = false
-            };
-            var numberText = new TextBlock
-            {
-                FontSize = 10,
-                Foreground = new SolidColorBrush(Color.FromRgb(0x9E, 0xA5, 0xB0)),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            numberText.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(VideoTileViewModel.Number)) { StringFormat = "窗口 {0:D2}" });
-            numberPill.Child = numberText;
-            numberPill.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(VideoTileViewModel.IsPlaying))
-            {
-                Converter = Application.Current.TryFindResource("BoolVisibility") as System.Windows.Data.IValueConverter
-            });
-            overlay.Children.Add(numberPill);
-
+            // 关键：VideoView.Content 严格保持为 null，杜绝 LibVLCSharp 生成 16 个透明 ForegroundWindow 压垮 DWM
             _video = new LibVLCSharp.WPF.VideoView
             {
-                Content = overlay,
+                Content = null,
                 Background = Brushes.Black,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 VerticalAlignment = VerticalAlignment.Stretch
             };
+            _video.ApplyTemplate();
             _video.Loaded += (_, _) =>
             {
-                try
-                {
-                    if (Application.Current.MainWindow is { } win)
-                    {
-                        var handle = new System.Windows.Interop.WindowInteropHelper(win).Handle;
-                        MainWindow.EnsureChildWindowsBlack(handle);
-                    }
-                }
-                catch { }
+                EnsurePlayerHwnd();
+                AttachSubclass();
             };
             PlayerHost.Content = _video;
+            _lastVideoVisible = null;
         }
-        else if (_video.Content is Grid overlay)
+        EnsurePlayerHwnd();
+        if (!ReferenceEquals(_video.MediaPlayer, _tile.NativePlayer))
         {
-            overlay.Tag = this.Tag;
-            overlay.DataContext = this.DataContext;
+            if (_video.MediaPlayer is { } oldPlayer) oldPlayer.Vout -= OnPlayerVout;
+            _video.MediaPlayer = _tile.NativePlayer;
+            if (_tile.NativePlayer is { } newPlayer) newPlayer.Vout += OnPlayerVout;
         }
-        _video.MediaPlayer = _tile.NativePlayer;
-        SyncOverlayVisibility();
+        EnsurePlayerHwnd();
+        AttachSubclass();
+        SyncVisibility();
     }
 
-    private Grid BuildOsdBar()
+    private void OnPlayerVout(object? sender, EventArgs e)
     {
-        var grid = new Grid
+        _ = Dispatcher.InvokeAsync(async () =>
         {
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(6, 6, 6, 0),
-            IsHitTestVisible = false
-        };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        // 左侧通道名称与绿灯微型药丸
-        var leftPill = new Border
-        {
-            Background = new SolidColorBrush(Color.FromArgb(170, 16, 18, 22)),
-            CornerRadius = new CornerRadius(3),
-            Padding = new Thickness(6, 3, 8, 3),
-            HorizontalAlignment = HorizontalAlignment.Left
-        };
-        var leftPanel = new StackPanel { Orientation = Orientation.Horizontal };
-        var dot = new System.Windows.Shapes.Ellipse
-        {
-            Width = 6,
-            Height = 6,
-            Fill = new SolidColorBrush(Color.FromRgb(0x43, 0xB5, 0x81)),
-            Margin = new Thickness(0, 0, 6, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var titleBlock = new TextBlock
-        {
-            FontSize = 11,
-            Foreground = Brushes.White,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxWidth = 200
-        };
-        titleBlock.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(VideoTileViewModel.Title)));
-        leftPanel.Children.Add(dot);
-        leftPanel.Children.Add(titleBlock);
-        leftPill.Child = leftPanel;
-        Grid.SetColumn(leftPill, 0);
-        grid.Children.Add(leftPill);
-
-        // 右侧高清码流角标
-        var badge = new Border
-        {
-            Background = new SolidColorBrush(Color.FromArgb(190, 48, 52, 60)),
-            CornerRadius = new CornerRadius(2),
-            Padding = new Thickness(5, 2, 5, 2),
-            HorizontalAlignment = HorizontalAlignment.Right
-        };
-        var badgeText = new TextBlock
-        {
-            FontSize = 9,
-            FontWeight = FontWeights.Bold,
-            Foreground = Brushes.White,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        badgeText.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(VideoTileViewModel.StreamBadge)));
-        badge.Child = badgeText;
-        Grid.SetColumn(badge, 1);
-        grid.Children.Add(badge);
-
-        return grid;
+            EnsurePlayerHwnd();
+            AttachSubclass();
+            _lastAppliedRatio = null;
+            UpdateTileAspectRatio();
+            await Task.Delay(100);
+            EnsurePlayerHwnd();
+            AttachSubclass();
+            UpdateTileAspectRatio();
+        });
     }
 
-    private Grid BuildHoverBar()
+    private void EnsurePlayerHwnd()
     {
-        var grid = new Grid
+        try
         {
-            VerticalAlignment = VerticalAlignment.Bottom,
-            Background = new SolidColorBrush(Color.FromArgb(210, 20, 22, 26)),
-            Height = 30
-        };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var titleBlock = new TextBlock
-        {
-            Margin = new Thickness(10, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            FontSize = 11,
-            Foreground = Brushes.LightGray,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-        titleBlock.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding(nameof(VideoTileViewModel.Title)));
-        Grid.SetColumn(titleBlock, 0);
-        grid.Children.Add(titleBlock);
-
-        var actions = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Margin = new Thickness(0, 0, 6, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        Button CreateBtn(string icon, string tooltip, Action onClick)
-        {
-            var btn = new Button
+            var hostHandle = GetVideoHwnd();
+            if (hostHandle != IntPtr.Zero && _tile?.NativePlayer is { } player)
             {
-                Content = icon,
-                ToolTip = tooltip,
-                Style = TryFindResource("IconButton") as Style,
-                Width = 26,
-                Height = 24,
-                FontSize = 12,
-                Margin = new Thickness(2, 0, 2, 0)
-            };
-            btn.Click += (_, e) => { onClick(); e.Handled = true; };
-            return btn;
-        }
-
-        actions.Children.Add(CreateBtn("\uE722", "一键抓图", () =>
-        {
-            if (_tile is not null && Workspace is not null) Workspace.QuickCaptureCommand.Execute(_tile);
-        }));
-
-        actions.Children.Add(CreateBtn("\uE767", "开启/关闭声音", () =>
-        {
-            if (_tile is not null && Workspace is not null) Workspace.ToggleMuteTileCommand.Execute(_tile);
-        }));
-
-        actions.Children.Add(CreateBtn("\uE740", "单窗放大/还原", () =>
-        {
-            if (Workspace is not null)
-            {
-                if (_tile is not null) Workspace.SelectedTile = _tile;
-                Workspace.ToggleMaximizeCommand.Execute(null);
+                if (player.Hwnd != hostHandle)
+                {
+                    player.Hwnd = hostHandle;
+                }
             }
-        }));
-
-        actions.Children.Add(CreateBtn("\uE711", "停止预览", () =>
-        {
-            if (_tile is not null && Workspace is not null) Workspace.StopTileCommand.Execute(_tile);
-        }));
-
-        Grid.SetColumn(actions, 1);
-        grid.Children.Add(actions);
-        return grid;
+        }
+        catch { }
     }
 
     private void ReleaseView()
     {
         _lastAppliedRatio = null;
+        _lastVideoVisible = null;
         if (_video is null) return;
-        try
+        DetachSubclass();
+        if (_video.MediaPlayer is { } player)
         {
-            var prop = _video.GetType().GetProperty("ForegroundWindow", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            if (prop?.GetValue(_video) is Window fw)
-            {
-                fw.Visibility = Visibility.Collapsed;
-                fw.Close();
-            }
+            player.Vout -= OnPlayerVout;
         }
-        catch { }
-        _video.MediaPlayer = null; PlayerHost.Content = null; _video.Dispose(); _video = null; _hoverBar = null;
+        _video.MediaPlayer = null;
+        PlayerHost.Content = null;
+        _video.Dispose();
+        _video = null;
     }
 
-    private WorkspaceViewModel? Workspace => WorkspaceViewInstance?.DataContext as WorkspaceViewModel;
+    #region Win32 Subclassing (零透明窗口捕获视频区域鼠标交互)
+
+    private const uint WM_PARENTNOTIFY = 0x0210;
+    private const uint WM_LBUTTONDOWN = 0x0201;
+    private const uint WM_LBUTTONDBLCLK = 0x0203;
+    private const uint WM_RBUTTONDOWN = 0x0204;
+    private const uint WM_RBUTTONUP = 0x0205;
+    private const uint WM_CONTEXTMENU = 0x007B;
+
+    private IntPtr VideoSubclassHandler(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, UIntPtr uIdSubclass, UIntPtr dwRefData)
+    {
+        switch (uMsg)
+        {
+            case WM_PARENTNOTIFY:
+                if ((wParam.ToInt64() & 0xFFFF) == 1) // WM_CREATE
+                {
+                    var childHwnd = lParam;
+                    if (childHwnd != IntPtr.Zero)
+                    {
+                        SetWindowSubclass(childHwnd, _subclassProc, (UIntPtr)1, UIntPtr.Zero);
+                        _ = Dispatcher.InvokeAsync(() => AttachSubclass());
+                    }
+                }
+                break;
+            case WM_LBUTTONDOWN:
+                _ = Dispatcher.InvokeAsync(SelectTile);
+                break;
+            case WM_LBUTTONDBLCLK:
+                _ = Dispatcher.InvokeAsync(() =>
+                {
+                    SelectTile();
+                    Workspace?.ToggleMaximizeCommand.Execute(null);
+                });
+                break;
+            case WM_RBUTTONDOWN:
+                _ = Dispatcher.InvokeAsync(SelectTile);
+                return IntPtr.Zero;
+            case WM_CONTEXTMENU:
+            case WM_RBUTTONUP:
+                _ = Dispatcher.InvokeAsync(() =>
+                {
+                    SelectTile();
+                    OpenTileContextMenu();
+                });
+                return IntPtr.Zero;
+        }
+        return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+    }
+
+    public void SelectTile()
+    {
+        if (DataContext is VideoTileViewModel tile && Workspace is { } workspace)
+            workspace.SelectedTile = tile;
+    }
+
+    public void OpenTileContextMenu() => OpenTileContextMenuAt(null);
+
+    public void OpenTileContextMenuAt(Point? screenPt)
+    {
+        Tag ??= Workspace;
+        if (ContextMenu is { } menu)
+        {
+            menu.PlacementTarget = this;
+            if (Workspace is { } ws)
+            {
+                menu.DataContext = ws;
+            }
+            if (screenPt.HasValue)
+            {
+                menu.Placement = System.Windows.Controls.Primitives.PlacementMode.AbsolutePoint;
+                menu.HorizontalOffset = screenPt.Value.X;
+                menu.VerticalOffset = screenPt.Value.Y;
+            }
+            else
+            {
+                menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+            }
+            menu.IsOpen = false;
+            menu.IsOpen = true;
+        }
+    }
+
+    private void AttachSubclass()
+    {
+        try
+        {
+            var hostHandle = GetVideoHwnd();
+            if (hostHandle == IntPtr.Zero) return;
+            SetWindowSubclass(hostHandle, _subclassProc, (UIntPtr)1, UIntPtr.Zero);
+            EnumChildWindows(hostHandle, (child, _) =>
+            {
+                SetWindowSubclass(child, _subclassProc, (UIntPtr)1, UIntPtr.Zero);
+                EnableWindow(child, false);
+                return true;
+            }, IntPtr.Zero);
+            MainWindow.EnsureChildWindowsBlack(hostHandle);
+        }
+        catch { }
+    }
+
+    private void DetachSubclass()
+    {
+        try
+        {
+            var hostHandle = GetVideoHwnd();
+            if (hostHandle == IntPtr.Zero) return;
+            RemoveWindowSubclass(hostHandle, _subclassProc, (UIntPtr)1);
+            EnumChildWindows(hostHandle, (child, _) =>
+            {
+                RemoveWindowSubclass(child, _subclassProc, (UIntPtr)1);
+                return true;
+            }, IntPtr.Zero);
+        }
+        catch { }
+    }
+
+    private IntPtr GetVideoHwnd()
+    {
+        if (_video is null) return IntPtr.Zero;
+        if (VideoHwndHostField?.GetValue(_video) is System.Windows.Interop.HwndHost host)
+            return host.Handle;
+        return IntPtr.Zero;
+    }
+
+    private delegate IntPtr SubclassWndProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam, UIntPtr uIdSubclass, UIntPtr dwRefData);
+
+    [DllImport("comctl32.dll", SetLastError = true)]
+    private static extern bool SetWindowSubclass(IntPtr hWnd, SubclassWndProc pfnSubclass, UIntPtr uIdSubclass, UIntPtr dwRefData);
+
+    [DllImport("comctl32.dll", SetLastError = true)]
+    private static extern IntPtr DefSubclassProc(IntPtr hWnd, uint uMsg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("comctl32.dll", SetLastError = true)]
+    private static extern bool RemoveWindowSubclass(IntPtr hWnd, SubclassWndProc pfnSubclass, UIntPtr uIdSubclass);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumChildWindows(IntPtr hWndParent, EnumChildProc lpEnumFunc, IntPtr lParam);
+    private delegate bool EnumChildProc(IntPtr hwnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool EnableWindow(IntPtr hWnd, bool bEnable);
+
+    #endregion
+
+    private WorkspaceViewModel? Workspace => (Tag as WorkspaceViewModel)
+        ?? (WorkspaceViewInstance?.DataContext as WorkspaceViewModel)
+        ?? (Application.Current?.MainWindow?.DataContext as ShellViewModel)?.Workspace;
 
     private WorkspaceView? WorkspaceViewInstance
     {
@@ -369,13 +416,20 @@ public partial class VideoTileView : UserControl
         }
     }
 
+    private static T? FindVisualAncestor<T>(DependencyObject current) where T : DependencyObject
+    {
+        DependencyObject? node = current;
+        while (node is not null)
+        {
+            if (node is T match) return match;
+            node = VisualTreeHelper.GetParent(node);
+        }
+        return null;
+    }
+
     private void TileMouseLeftDown(object sender, MouseButtonEventArgs e) => HandleLeftDown(e);
 
     private void TileMouseRightDown(object sender, MouseButtonEventArgs e) => HandleRightDown(e);
-
-    private void OverlayMouseLeftDown(object sender, MouseButtonEventArgs e) => HandleLeftDown(e);
-
-    private void OverlayMouseRightDown(object sender, MouseButtonEventArgs e) => HandleRightDown(e);
 
     private void HandleLeftDown(MouseButtonEventArgs e)
     {
@@ -385,6 +439,13 @@ public partial class VideoTileView : UserControl
         {
             workspace.ToggleMaximizeCommand.Execute(null);
             e.Handled = true;
+            return;
+        }
+
+        // 若点击的是顶部工具条中的按钮（声音、抓图、放大、停止），绝不能吞噬事件，放行给 Button 触发点击与命令
+        if (e.OriginalSource is DependencyObject dep && FindVisualAncestor<System.Windows.Controls.Primitives.ButtonBase>(dep) is not null)
+        {
+            return;
         }
     }
 
@@ -403,34 +464,111 @@ public partial class VideoTileView : UserControl
 
     private async void SwitchToMainStreamClicked(object sender, RoutedEventArgs e)
     {
-        if (_tile is not null && Workspace is not null)
+        var tile = _tile ?? DataContext as VideoTileViewModel;
+        if (tile is not null && Workspace is not null)
         {
             try
             {
-                await _tile.SwitchStreamAsync(1);
-                Workspace.Status = $"窗口 {_tile.Number} 已切换为主码流。";
+                tile.ManualStreamOverride = 1;
+                await tile.SwitchStreamAsync(1);
+                Workspace.Status = $"窗口 {tile.Number} 已切为主码流。";
             }
             catch (Exception ex)
             {
-                Workspace.Status = $"窗口 {_tile.Number} 切换主码流失败：{ex.Message}";
+                Workspace.Status = $"窗口 {tile.Number} 切换主码流失败：{ex.Message}";
             }
         }
     }
 
     private async void SwitchToSubStreamClicked(object sender, RoutedEventArgs e)
     {
-        if (_tile is not null && Workspace is not null)
+        var tile = _tile ?? DataContext as VideoTileViewModel;
+        if (tile is not null && Workspace is not null)
         {
             try
             {
-                await _tile.SwitchStreamAsync(2);
-                Workspace.Status = $"窗口 {_tile.Number} 已切换为子码流。";
+                tile.ManualStreamOverride = 2;
+                await tile.SwitchStreamAsync(2);
+                Workspace.Status = $"窗口 {tile.Number} 已切为子码流。";
             }
             catch (Exception ex)
             {
-                Workspace.Status = $"窗口 {_tile.Number} 切换子码流失败：{ex.Message}";
+                Workspace.Status = $"窗口 {tile.Number} 切换子码流失败：{ex.Message}";
             }
         }
+    }
+
+    public bool IsTileHeaderVisible => TileHeaderPopup.IsOpen;
+
+    public void ShowHeader()
+    {
+        if (_tile is not { IsPlaying: true, IsActive: true } || !IsVisible || ActualWidth <= 0 || ActualHeight <= 0)
+        {
+            HideHeader();
+            return;
+        }
+        TileHeaderPopup.PlacementTarget = this;
+        TileHeaderPopup.DataContext = _tile;
+        TileHeaderBar.DataContext = _tile;
+        TileHeaderPopup.Width = Math.Max(0, ActualWidth);
+        TileHeaderBar.Width = Math.Max(0, ActualWidth);
+        if (!TileHeaderPopup.IsOpen)
+        {
+            TileHeaderPopup.IsOpen = true;
+        }
+        RestartIdleTimer();
+    }
+
+    public void HideHeader()
+    {
+        _headerIdleTimer?.Stop();
+        if (TileHeaderPopup.IsOpen)
+        {
+            TileHeaderPopup.IsOpen = false;
+        }
+    }
+
+    public void RestartIdleTimer()
+    {
+        if (!TileHeaderPopup.IsOpen) return;
+        _headerIdleTimer?.Stop();
+        _headerIdleTimer?.Start();
+    }
+
+    private void OnHeaderMuteClicked(object sender, RoutedEventArgs e)
+    {
+        if (_tile is not null && Workspace is { } ws)
+        {
+            ws.ToggleMuteTileCommand.Execute(_tile);
+        }
+    }
+
+    private async void OnHeaderCaptureClicked(object sender, RoutedEventArgs e)
+    {
+        if (_tile is not null && Workspace is { } ws)
+        {
+            await ws.QuickCaptureCommand.ExecuteAsync(_tile);
+        }
+    }
+
+    private void OnHeaderMaximizeClicked(object sender, RoutedEventArgs e)
+    {
+        ToggleMaximize();
+    }
+
+    private async void OnHeaderStopClicked(object sender, RoutedEventArgs e)
+    {
+        HideHeader();
+        if (_tile is not null && Workspace is { } ws)
+        {
+            await ws.StopTileCommand.ExecuteAsync(_tile);
+        }
+    }
+
+    private void OnHeaderRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+        OpenTileContextMenu();
     }
 
     public void UpdateTileAspectRatio()
@@ -440,12 +578,19 @@ public partial class VideoTileView : UserControl
         string? targetRatio;
         if (string.IsNullOrEmpty(mode) || mode is "fill" or "default")
         {
-            var w = (int)Math.Round(ActualWidth);
-            var h = (int)Math.Round(ActualHeight);
-            if (w <= 10 || h <= 10) return;
-            targetRatio = $"{w}:{h}";
+            // 自适应铺满：按当前宿主窗格实际像素宽高计算比例，使 LibVLC 严格铺满，杜绝上下/左右黑边
+            var w = PlayerHost.ActualWidth > 10 ? PlayerHost.ActualWidth : ActualWidth;
+            var h = PlayerHost.ActualHeight > 10 ? PlayerHost.ActualHeight : ActualHeight;
+            if (w > 10 && h > 10)
+            {
+                targetRatio = $"{(int)Math.Round(w)}:{(int)Math.Round(h)}";
+            }
+            else
+            {
+                targetRatio = null;
+            }
         }
-        else if (mode == "original")
+        else if (mode is "original")
         {
             targetRatio = null;
         }

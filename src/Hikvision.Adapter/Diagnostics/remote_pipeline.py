@@ -249,11 +249,23 @@ def main():
     encoded = base64.b64encode(script.encode()).decode()
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    sock = None
+    bind_ip = os.environ.get("VIDEO_PLATFORM_BIND_IP", "10.37.6.210" if os.name == "nt" else None)
+    if bind_ip:
+        import socket
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind((bind_ip, 0))
+            s.connect(('10.37.200.74', 22))
+            sock = s
+        except Exception:
+            sock = None
+    password = os.environ.get('VIDEO_PLATFORM_SSH_PASSWORD', 'liteware')
     try:
-        client.connect('10.37.200.74', username='liteware', password=os.environ['VIDEO_PLATFORM_SSH_PASSWORD'], timeout=15, look_for_keys=False, allow_agent=False)
+        client.connect('10.37.200.74', username='liteware', password=password, sock=sock, timeout=15, look_for_keys=False, allow_agent=False)
         command = "sudo -S -p '' python3 -u -c \"import base64,sys;sys.excepthook=lambda t,v,b: print('诊断失败：'+str(v),file=sys.stderr);exec(base64.b64decode('" + encoded + "'))\""
         stdin, stdout, stderr = client.exec_command(command, timeout=600)
-        stdin.write(os.environ['VIDEO_PLATFORM_SSH_PASSWORD'] + '\n')
+        stdin.write(password + '\n')
         stdin.flush()
         stdin.channel.shutdown_write()
         for line in stdout:

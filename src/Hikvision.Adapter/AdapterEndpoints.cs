@@ -19,11 +19,14 @@ internal static class AdapterEndpoints
         app.MapPut("/internal/devices/{deviceId:long}", async (long deviceId, DeviceRegistration request) => Results.Ok(await registry.RegisterAsync(deviceId, request)));
         app.MapDelete("/internal/devices/{deviceId:long}", async (long deviceId) => { await registry.DeleteAsync(deviceId); return Results.NoContent(); });
         app.MapPost("/internal/devices/{deviceId:long}/sync", async (long deviceId) => Results.Ok(await registry.SyncAsync(deviceId)));
+        // 码流能力探测：平台据此在通道上标注“无子码流”，客户端无需再靠试错发现。
+        app.MapPost("/internal/devices/{deviceId:long}/streams/probe", async (long deviceId, StreamProbeRequest request, HttpContext context) =>
+            Results.Ok(await registry.ProbeStreamAsync(deviceId, request.Channel, request.StreamType, context.RequestAborted)));
         app.MapPost("/internal/devices/{deviceId:long}/live", async (long deviceId, LiveStartRequest request, HttpContext context) =>
-            Results.Ok(await registry.UseAsync(deviceId, entry => (entry.Live ?? throw new AdapterException(409, "DEVICE_DISABLED", "设备已禁用。")).StartAsync(request, context.RequestAborted))));
+            Results.Ok(await registry.StartLiveAsync(deviceId, request, context.RequestAborted)));
         app.MapDelete("/internal/devices/{deviceId:long}/live/{sessionId:guid}", async (long deviceId, Guid sessionId) =>
         {
-            await registry.UseAsync(deviceId, async entry => { if (entry.Live is not null) await entry.Live.StopAsync(sessionId); return true; });
+            await registry.StopLiveAsync(deviceId, sessionId);
             return Results.NoContent();
         });
         app.MapPost("/internal/devices/{deviceId:long}/recordings/search", async (long deviceId, RecordingSearchRequest request) =>

@@ -1,3 +1,4 @@
+using System.Net.Http;
 using Microsoft.AspNetCore.SignalR.Client;
 using VideoPlatform.Desktop.Models;
 
@@ -14,6 +15,18 @@ public sealed class EventService(SessionService session) : IAsyncDisposable
         _connection = new HubConnectionBuilder().WithUrl(session.Server + "/hubs/v2/events", options =>
         {
             options.AccessTokenProvider = session.GetTokenAsync;
+            options.HttpMessageHandlerFactory = handler =>
+            {
+                if (handler is HttpClientHandler clientHandler)
+                {
+                    clientHandler.ServerCertificateCustomValidationCallback = (_, _, _, _) => true;
+                }
+                return handler;
+            };
+            options.WebSocketConfiguration = sockets =>
+            {
+                sockets.RemoteCertificateValidationCallback = (_, _, _, _) => true;
+            };
         }).WithAutomaticReconnect(new RetryPolicy()).Build();
         foreach (var name in new[] { "alarm.changed", "device.changed", "media.changed", "export.changed", "access.changed" })
             _connection.On<ResourceEvent>(name, async _ => await NotifyAsync(name));

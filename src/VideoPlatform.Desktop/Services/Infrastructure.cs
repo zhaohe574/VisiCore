@@ -146,6 +146,9 @@ public interface IUserInteraction
     string? SaveFile(string suggestedName, string filter);
     bool Confirm(string message);
     void Shutdown();
+    bool ShowProfileDialog(ViewModels.ShellViewModel shell);
+    bool ShowChangePasswordDialog(ViewModels.ShellViewModel shell);
+    string? SelectFolder(string description);
 }
 public sealed class UserInteraction : IUserInteraction
 {
@@ -156,4 +159,27 @@ public sealed class UserInteraction : IUserInteraction
     }
     public bool Confirm(string message) => MessageBox.Show(Application.Current.MainWindow, message, "VisiCore（视枢）", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
     public void Shutdown() => Application.Current.MainWindow.Close();
+    public bool ShowProfileDialog(ViewModels.ShellViewModel shell)
+    {
+        var dialog = new Views.ProfileDialog(shell)
+        {
+            Owner = Application.Current.MainWindow,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
+        };
+        return dialog.ShowDialog() == true;
+    }
+    public bool ShowChangePasswordDialog(ViewModels.ShellViewModel shell)
+    {
+        var dialog = new Views.ChangePasswordDialog(shell)
+        {
+            Owner = Application.Current.MainWindow,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
+        };
+        return dialog.ShowDialog() == true;
+    }
+    public string? SelectFolder(string description)
+    {
+        var dialog = new OpenFolderDialog { Title = description, Multiselect = false };
+        return dialog.ShowDialog(Application.Current.MainWindow) == true ? dialog.FolderName : null;
+    }
 }

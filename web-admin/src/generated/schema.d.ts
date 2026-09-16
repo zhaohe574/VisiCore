@@ -160,6 +160,22 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/auth/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["GetPreferences"];
+        put: operations["UpdatePreferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/auth/profile": {
         parameters: {
             query?: never;
@@ -201,6 +217,22 @@ export type paths = {
         };
         get: operations["ListChannels"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/channels/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["UpdateChannel"];
         post?: never;
         delete?: never;
         options?: never;
@@ -250,6 +282,22 @@ export type paths = {
         get?: never;
         put?: never;
         post: operations["StopPtz"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/channels/{id}/streams/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ProbeChannelStream"];
         delete?: never;
         options?: never;
         head?: never;
@@ -474,7 +522,7 @@ export type paths = {
         get?: never;
         put?: never;
         post: operations["StartLive"];
-        delete?: never;
+        delete: operations["StopActiveliveSessions"];
         options?: never;
         head?: never;
         patch?: never;
@@ -586,7 +634,7 @@ export type paths = {
         get?: never;
         put?: never;
         post: operations["StartPlayback"];
-        delete?: never;
+        delete: operations["StopActiveplaybackSessions"];
         options?: never;
         head?: never;
         patch?: never;
@@ -634,6 +682,22 @@ export type paths = {
         get?: never;
         put?: never;
         post: operations["RenewplaybackSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/public/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["ListPublicReleases"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -688,6 +752,22 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/releases/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["UpdateRelease"];
+        post?: never;
+        delete: operations["DeleteRelease"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/releases/{id}/download": {
         parameters: {
             query?: never;
@@ -730,6 +810,38 @@ export type paths = {
         get?: never;
         put?: never;
         post: operations["RevokeRelease"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/releases/version/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["DeleteReleaseByVersion"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/releases/version/{version}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["PublishReleaseByVersion"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1052,7 +1164,7 @@ export type components = {
             user: components["schemas"]["UserDto"];
         };
         ChannelDto: {
-            alias?: null | string;
+            alias: null | string;
             codec: null | string;
             /** Format: int32 */
             deviceChannel: number | string;
@@ -1067,6 +1179,11 @@ export type components = {
             status: string;
             /** Format: int64 */
             unitId: null | number | string;
+        };
+        ChannelUpdateRequest: {
+            alias: null | string;
+            /** Format: int64 */
+            unitId?: null | number | string;
         };
         CsrfTokenResponse: {
             token: string;
@@ -1108,6 +1225,9 @@ export type components = {
             name: string;
             /** Format: int64 */
             onlineChannels: number | string;
+            /** @default hikvision */
+            pluginId: null | string;
+            pluginName?: null | string;
             /** Format: int32 */
             port: number | string;
             serialNumber: null | string;
@@ -1117,9 +1237,12 @@ export type components = {
         DeviceRequest: {
             /** @default true */
             enabled: boolean;
+            extraConfig?: null | string;
             host: string;
             name: string;
             password: null | string;
+            /** @default hikvision */
+            pluginId: null | string;
             /** Format: int32 */
             port: number | string;
             username: string;
@@ -1193,6 +1316,7 @@ export type components = {
             updateAvailable: boolean;
             version: string;
         };
+        "LatestReleaseDto[]": components["schemas"]["LatestReleaseDto"][];
         LayoutRequest: {
             channelIds: (null | number | string)[];
             /** Format: int32 */
@@ -1215,11 +1339,15 @@ export type components = {
             streamType: number | string;
         };
         LiveSessionDto: {
+            /** Format: int32 */
+            bitrateKbps?: null | number | string;
             /** Format: int64 */
             channelId: number | string;
             codec: string;
             /** Format: date-time */
             expiresAt: string;
+            /** Format: int32 */
+            height?: null | number | string;
             hlsUrl: string;
             httpFlvUrl: string;
             httpTsUrl?: null | string;
@@ -1230,6 +1358,8 @@ export type components = {
             /** Format: int32 */
             streamType: number | string;
             transcoded: boolean;
+            /** Format: int32 */
+            width?: null | number | string;
         };
         LoginRequest: {
             /** @default web */
@@ -1398,8 +1528,15 @@ export type components = {
             profile: string;
             /** Format: date-time */
             start: string;
+            /**
+             * Format: int32
+             * @default 1
+             */
+            streamType: number | string;
         };
         PlaybackSessionDto: {
+            /** Format: int32 */
+            bitrateKbps?: null | number | string;
             /** Format: int64 */
             channelId: number | string;
             codec: string;
@@ -1410,6 +1547,8 @@ export type components = {
             error?: null | string;
             /** Format: date-time */
             expiresAt: string;
+            /** Format: int32 */
+            height?: null | number | string;
             hlsUrl: string;
             httpFlvUrl: string;
             httpTsUrl?: null | string;
@@ -1427,6 +1566,8 @@ export type components = {
             /** Format: int32 */
             streamType: number | string;
             transcoded: boolean;
+            /** Format: int32 */
+            width?: null | number | string;
         };
         ProfileRequest: {
             displayName: null | string;
@@ -1504,6 +1645,12 @@ export type components = {
             status: string;
             version: string;
         };
+        ReleaseUpdateRequest: {
+            forceUpdate?: null | boolean;
+            minimumVersion?: null | string;
+            releaseNotes?: null | string;
+            version?: null | string;
+        };
         ResourceCreatedResponse: {
             /** Format: int64 */
             id: number | string;
@@ -1528,6 +1675,23 @@ export type components = {
             name: string;
             reason?: null | string;
             status: string;
+        };
+        StreamCapabilityDto: {
+            available: boolean;
+            /** Format: int32 */
+            bitrateKbps?: null | number | string;
+            codec?: null | string;
+            error?: null | string;
+            /** Format: int32 */
+            height?: null | number | string;
+            /** Format: int32 */
+            streamType: number | string;
+            /** Format: int32 */
+            width?: null | number | string;
+        };
+        StreamProbeRequest: {
+            /** Format: int32 */
+            streamType: number | string;
         };
         SystemStatisticsDto: {
             /** Format: double */
@@ -1555,6 +1719,21 @@ export type components = {
             roleIds: (number | string)[];
             status: string;
             username: string;
+        };
+        UserPreferencesDto: {
+            /** @default true */
+            hardwareDecoding: boolean;
+            /**
+             * Format: int32
+             * @default 800
+             */
+            networkCachingMs: number | string;
+            /** @default true */
+            preferSubStreamInGrid: boolean;
+            /** @default false */
+            showDiagnostics: boolean;
+            /** @default light */
+            theme: string;
         };
         UserRequest: {
             displayName: null | string;
@@ -2537,6 +2716,197 @@ export interface operations {
             };
         };
     };
+    GetPreferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功响应 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPreferencesDto"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    UpdatePreferences: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。 */
+                "X-CSRF-Token"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserPreferencesDto"];
+            };
+        };
+        responses: {
+            /** @description 成功响应 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserPreferencesDto"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     UpdateProfile: {
         parameters: {
             query?: never;
@@ -2830,6 +3200,107 @@ export interface operations {
             };
         };
     };
+    UpdateChannel: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。 */
+                "X-CSRF-Token"?: string;
+            };
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelDto"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     StartPtz: {
         parameters: {
             query?: never;
@@ -3045,6 +3516,107 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ProbeChannelStream: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。 */
+                "X-CSRF-Token"?: string;
+            };
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StreamProbeRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功响应 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StreamCapabilityDto"];
+                };
             };
             /** @description 请求失败；认证中间件也可能返回空正文。 */
             400: {
@@ -5144,6 +5716,101 @@ export interface operations {
             };
         };
     };
+    StopActiveliveSessions: {
+        parameters: {
+            query?: {
+                all?: string;
+            };
+            header?: {
+                /** @description 使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。 */
+                "X-CSRF-Token"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 操作完成，无响应正文 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     GetliveSession: {
         parameters: {
             query?: never;
@@ -6012,6 +6679,101 @@ export interface operations {
             };
         };
     };
+    StopActiveplaybackSessions: {
+        parameters: {
+            query?: {
+                all?: string;
+            };
+            header?: {
+                /** @description 使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。 */
+                "X-CSRF-Token"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 操作完成，无响应正文 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     GetplaybackSession: {
         parameters: {
             query?: never;
@@ -6323,6 +7085,98 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlaybackSessionDto"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    ListPublicReleases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 成功响应 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LatestReleaseDto[]"];
                 };
             };
             /** @description 请求失败；认证中间件也可能返回空正文。 */
@@ -6802,6 +7656,202 @@ export interface operations {
             };
         };
     };
+    UpdateRelease: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。 */
+                "X-CSRF-Token"?: string;
+            };
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReleaseUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description 成功响应 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseDto"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    DeleteRelease: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。 */
+                "X-CSRF-Token"?: string;
+            };
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 操作完成，无响应正文 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     DownloadRelease: {
         parameters: {
             query?: never;
@@ -7008,6 +8058,200 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description 操作完成，无响应正文 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    DeleteReleaseByVersion: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。 */
+                "X-CSRF-Token"?: string;
+            };
+            path: {
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 操作完成，无响应正文 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    PublishReleaseByVersion: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。 */
+                "X-CSRF-Token"?: string;
+            };
+            path: {
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PublishRequest"];
+            };
+        };
         responses: {
             /** @description 操作完成，无响应正文 */
             204: {

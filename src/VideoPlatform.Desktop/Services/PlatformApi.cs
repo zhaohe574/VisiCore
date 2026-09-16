@@ -32,18 +32,19 @@ public sealed class PlatformApi(SessionService session) : IPlatformApi
         var value = await session.SendAuthorizedAsync<object>(async (client, ct) => route.Parts switch
         {
             ["auth", "me"] => ClientModelMapping.From(await client.GetCurrentUserAsync(ct)),
+            ["channels", var id, "stream-probe"] => ClientModelMapping.From(await client.ProbeChannelStreamAsync(Id(id), new Generated.StreamProbeRequest { StreamType = route.Integer("streamType") ?? 2 }, cancellationToken: ct)),
             ["channels"] => ClientModelMapping.From(await client.ListChannelsAsync(route.Long("deviceId"), route.Long("unitId"),
                 route.Boolean("online"), route.Integer("page"), route.Integer("pageSize"), route.Text("search"), ct)),
             ["favorites"] => (await client.GetFavoritesAsync(ct)).Select(ClientModelMapping.From).ToArray(),
             ["layouts"] => (await client.GetLayoutsAsync(ct)).Select(ClientModelMapping.From).ToArray(),
             ["organization"] => ClientModelMapping.From(await client.GetOrganizationAsync(ct)),
+            ["auth", "preferences"] => ClientModelMapping.From(await client.GetPreferencesAsync(ct)),
             ["live-sessions", var id] => ClientModelMapping.From(await client.GetliveSessionAsync(Guid.Parse(id), ct)),
             ["playback-sessions", var id] => ClientModelMapping.From(await client.GetplaybackSessionAsync(Guid.Parse(id), ct)),
             ["alarms"] => ClientModelMapping.From(await client.ListAlarmsAsync(route.Text("state"), route.Long("deviceId"),
                 route.Long("channelId"), route.Text("eventType"), route.Date("from"), route.Date("to"),
                 route.Integer("page"), route.Integer("pageSize"), route.Text("search"), ct)),
-            ["alarms", var id] => ClientModelMapping.From(await client.GetAlarmAsync(Id(id), ct)),
-            ["exports"] => ClientModelMapping.From(await client.ListExportsAsync(route.Integer("page"), route.Integer("pageSize"), ct)),
+            ["alarms", var id] => ClientModelMapping.From(await client.GetAlarmAsync(Id(id), ct)),            ["exports"] => ClientModelMapping.From(await client.ListExportsAsync(route.Integer("page"), route.Integer("pageSize"), ct)),
             _ => throw Unsupported(HttpMethod.Get, path)
         }, cancellationToken);
         return Result<T>(value);
@@ -57,7 +58,7 @@ public sealed class PlatformApi(SessionService session) : IPlatformApi
             (["live-sessions"], LiveRequest request) => ClientModelMapping.From(await client.StartLiveAsync(new Generated.LiveRequest
                 { ChannelId = request.ChannelId, StreamType = request.StreamType, Profile = request.Profile }, cancellationToken: ct)),
             (["playback-sessions"], PlaybackRequest request) => ClientModelMapping.From(await client.StartPlaybackAsync(new Generated.PlaybackRequest
-                { ChannelId = request.ChannelId, Start = request.Start, End = request.End, Profile = request.Profile }, cancellationToken: ct)),
+                { ChannelId = request.ChannelId, Start = request.Start, End = request.End, Profile = request.Profile, StreamType = request.StreamType }, cancellationToken: ct)),
             (["recordings", "search"], RecordingRequest request) => (await client.SearchRecordingsAsync(new Generated.RecordingRequest
                 { ChannelId = request.ChannelId, Start = request.Start, End = request.End }, cancellationToken: ct)).Select(ClientModelMapping.From).ToArray(),
             (["layouts"], LayoutRequest request) => ClientModelMapping.From(await client.CreateLayoutAsync(ClientModelMapping.To(request), cancellationToken: ct)),
@@ -79,6 +80,8 @@ public sealed class PlatformApi(SessionService session) : IPlatformApi
                     await client.UpdateProfileAsync(new Generated.ProfileRequest { DisplayName = request.DisplayName, Phone = request.Phone }, cancellationToken: ct); break;
                 case ("PUT", ["auth", "password"], PasswordRequest request):
                     await client.ChangePasswordAsync(new Generated.PasswordRequest { CurrentPassword = request.CurrentPassword, NewPassword = request.NewPassword }, cancellationToken: ct); break;
+                case ("PUT", ["auth", "preferences"], Preferences request):
+                    await client.UpdatePreferencesAsync(ClientModelMapping.To(request), cancellationToken: ct); break;
                 case ("PUT", ["favorites"], FavoritesRequest request):
                     await client.UpdateFavoritesAsync(new Generated.FavoritesRequest { ChannelIds = request.ChannelIds }, cancellationToken: ct); break;
                 case ("PUT", ["layouts", var id], LayoutRequest request):

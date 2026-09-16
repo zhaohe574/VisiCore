@@ -4,9 +4,11 @@ using System.Runtime.InteropServices;
 
 internal static class PlaybackPublisher
 {
-    public static IReadOnlyList<string> Arguments(string input, string target, MediaCodecs codecs, bool transcode, string profile, double speed, string format = "flv", bool paced = true)
+    public static IReadOnlyList<string> Arguments(string input, string target, MediaCodecs codecs, bool transcode, string profile, double speed, string format = "rtsp", bool paced = true, bool fastProbe = false)
     {
-        var args = new List<string> { "-hide_banner", "-loglevel", "error", "-nostats", "-stats_period", "0.25", "-progress", "pipe:1", "-fflags", "+genpts+discardcorrupt", "-analyzeduration", "10000000", "-probesize", "10485760" };
+        var analyzeDuration = fastProbe ? "1000000" : "2000000";
+        var probeSize = fastProbe ? "1048576" : "2097152";
+        var args = new List<string> { "-hide_banner", "-loglevel", "warning", "-nostats", "-stats_period", "0.25", "-progress", "pipe:1", "-fflags", "+genpts", "-analyzeduration", analyzeDuration, "-probesize", probeSize };
         // readrate 必须与倍速一致，否则快进时 FFmpeg 读取管道速率远低于设备下发速率，导致音视频时间戳严重失步直至卡死。
         if (paced) args.AddRange(["-readrate", speed.ToString("R", CultureInfo.InvariantCulture)]);
         args.AddRange(["-itsscale", (1 / speed).ToString("R", CultureInfo.InvariantCulture), "-i", input, "-map", "0:v:0", "-map", "0:a:0?", "-c:v", transcode ? "libx264" : "copy"]);

@@ -8,6 +8,8 @@ internal sealed class DeviceEntry(long id, AlarmJournal journal)
     public DeviceRegistration? Registration;
     public IDevice? Device;
     public LiveSessions? Live;
+    /// <summary>码流能力探测缓存，按设备持有，随设备条目一起释放。</summary>
+    public StreamCapabilityProbe? Probe;
     public Dictionary<Guid, PlaybackSession> Playback { get; } = new();
     public string State = "registered";
     public string? Error;
@@ -76,6 +78,30 @@ internal sealed class DeviceRegistry : IAsyncDisposable
         try { return await action(entry); }
         finally { entry.Gate.Release(); }
     }
+    public async Task<LiveSummary> StartLiveAsync(long id, LiveStartRequest request, CancellationToken token)
+    {
+        var entry = Find(id);
+        LiveSessions live;
+        await entry.Gate.WaitAsync(token);
+        try
+        {
+            live = entry.Live ?? throw new AdapterException(409, "DEVICE_DISABLED", "设备已禁用。");
+        }
+        finally { entry.Gate.Release(); }
+        return await live.StartAsync(request, token);
+    }
+    public async Task StopLiveAsync(long id, Guid sessionId)
+    {
+        var entry = Find(id);
+        LiveSessions? live;
+        await entry.Gate.WaitAsync();
+        try
+        {
+            live = entry.Live;
+        }
+        finally { entry.Gate.Release(); }
+        if (live is not null) await live.StopAsync(sessionId);
+    }
     public async Task<DeviceSnapshot> SyncAsync(long id)
     {
         return await UseAsync(id, entry =>
@@ -84,9 +110,18 @@ internal sealed class DeviceRegistry : IAsyncDisposable
             catch { entry.State = "offline"; entry.Error = "设备同步失败，请检查连接和凭据。"; throw; }
         });
     }
+
+    /// <summary>探测指定通道的码流档位能力；结果在适配器内按设备缓存，重复调用不会再打设备。</summary>
+    public async Task<StreamCapability> ProbeStreamAsync(long id, int channel, int streamType, CancellationToken token)
+        => await UseAsync(id, entry =>
+        {
+            var probe = entry.Probe ??= new StreamCapabilityProbe(entry.Required);
+            return probe.ProbeAsync(channel, streamType, token);
+        });
     public async Task<PlaybackSummary> StartPlaybackAsync(long id, PlaybackStartRequest request)
     {
         Validate.Range(request.Channel, request.Start, request.End); Validate.Session(request.SessionId, request.Profile);
+        if (request.StreamType is not (1 or 2)) throw new AdapterException(400, "PLAYBACK_STREAM", "回放码流类型无效。");
         return await UseAsync(id, async entry =>
         {
             if (entry.Playback.TryGetValue(request.SessionId, out var existing))
@@ -96,7 +131,7 @@ internal sealed class DeviceRegistry : IAsyncDisposable
             }
             if (entry.Playback.Count >= 20) throw new AdapterException(429, "PLAYBACK_LIMIT", "单设备回放会话达到上限。");
             var device = entry.Required;
-            var segments = PlaybackTimeline.Normalize(device.SearchRecordings(request.Channel, request.Start, request.End), request.Start, request.End);
+            var segments = PlaybackTimeline.Normalize(device.SearchRecordings(request.Channel, request.Start, request.End), request.Start, request.End, request.StreamType);
             var session = new PlaybackSession(device, request, segments, _zlm, _budget);
             try { await session.StartAsync(); entry.Playback.Add(request.SessionId, session); return session.Summary(); }
             catch { await session.DisposeAsync(); throw; }

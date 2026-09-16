@@ -11,6 +11,43 @@ export function bytes(value?: number | null) {
   while (size >= 1024 && i < units.length - 1) { size /= 1024; i++ }
   return `${size.toFixed(1)} ${units[i]}`
 }
+export function networkSpeed(value?: number | null) {
+  if (value === null || value === undefined || value < 0) return '0 B/s'
+  if (value < 1024) return `${Math.round(value)} B/s`
+  const units = ['KB/s', 'MB/s', 'GB/s']
+  let rate = value / 1024, i = 0
+  while (rate >= 1024 && i < units.length - 1) { rate /= 1024; i++ }
+  return `${rate >= 100 ? rate.toFixed(0) : rate.toFixed(1)} ${units[i]}`
+}
+export function formatLinkSpeed(value?: number | null): string {
+  if (value === null || value === undefined || value === 0) return '—'
+  if (value === -1 || value === 4294967295 * 1000000 || value === 4294967295 || value > 800_000_000_000) {
+    return '虚拟网卡 (动态不限速)'
+  }
+  if (value < 0) return '—'
+  if (value >= 1_000_000_000) {
+    const gbps = value / 1_000_000_000
+    return Number.isInteger(gbps) ? `${gbps} Gbps` : `${gbps.toFixed(1)} Gbps`
+  }
+  if (value >= 1_000_000) {
+    const mbps = value / 1_000_000
+    return Number.isInteger(mbps) ? `${mbps} Mbps` : `${mbps.toFixed(1)} Mbps`
+  }
+  return `${Math.round(value / 1000)} Kbps`
+}
+export function duration(seconds?: number | null) {
+  if (seconds === null || seconds === undefined || seconds < 0) return '—'
+  const sec = Math.floor(seconds)
+  if (sec < 60) return `${sec} 秒`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min} 分钟`
+  const hours = Math.floor(min / 60)
+  const remMin = min % 60
+  if (hours < 24) return remMin > 0 ? `${hours} 小时 ${remMin} 分钟` : `${hours} 小时`
+  const days = Math.floor(hours / 24)
+  const remHours = hours % 24
+  return remHours > 0 ? `${days} 天 ${remHours} 小时` : `${days} 天`
+}
 export const percent = (part: number | null, total: number | null) => total && total > 0 && part !== null ? Math.max(0, Math.min(100, Math.round(part / total * 100))) : 0
 export function localizedError(value: unknown, status?: number): string {
   const message = typeof value === 'string' ? value.trim() : ''
@@ -45,5 +82,11 @@ export function timeRange(range: [Date, Date] | null, maxHours?: number): { star
 export function safeRedirect(value: unknown) { return typeof value === 'string' && /^\/app(?:\/|$)/.test(value) ? value : '/app' }
 export function safeDownloadUrl(value: string | undefined, fallback: string) {
   if (!value) return fallback
-  try { const url = new URL(value, window.location.origin); return ['https:', 'http:'].includes(url.protocol) ? url.href : fallback } catch { return fallback }
+  try {
+    const url = new URL(value, window.location.origin)
+    if (url.pathname.startsWith('/api/v2/releases/')) {
+      return `${window.location.origin}${url.pathname}${url.search}`
+    }
+    return ['https:', 'http:'].includes(url.protocol) ? url.href : fallback
+  } catch { return fallback }
 }

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Net.Http;
+using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using LibVLCSharp.Shared;
 using VideoPlatform.Desktop.Models;
@@ -25,21 +26,85 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
     public string? SessionId => _session?.Id;
     public string SessionPath => IsPlayback ? "playback-sessions" : "live-sessions";
     public bool PreferRtsp { get; set; }
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(Title))] private Channel? _channel;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(Title))] [NotifyPropertyChangedFor(nameof(HeaderTitle))] private Channel? _channel;
     [ObservableProperty] [NotifyPropertyChangedFor(nameof(Title))] private bool _isPlayback;
     [ObservableProperty] private bool _isSelected;
     [ObservableProperty] private bool _isVisible;
+    [ObservableProperty] private bool _isMaximized;
     [ObservableProperty] private bool _isMuted = true;
+    partial void OnIsMutedChanged(bool value)
+    {
+        if (_player is not null)
+        {
+            _player.Muted = value;
+            if (!value && IsPlaying && _session is not null)
+            {
+                _ = PlayAsync(MediaUrl(_session));
+            }
+        }
+    }
     [ObservableProperty] private MediaPlayer? _nativePlayer;
     [ObservableProperty] private string _stateLabel = "空闲";
     [ObservableProperty] private DateTimeOffset? _currentTime;
     [ObservableProperty] private RecordingSegment[] _segments = [];
     [ObservableProperty] private double _speed = 1;
-    [ObservableProperty] [NotifyPropertyChangedFor(nameof(StreamBadge))] private int _streamType = 2;
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(StreamBadge))] [NotifyPropertyChangedFor(nameof(StreamDetailLabel))] private int _streamType = 2;
     [ObservableProperty] private string? _aspectRatio;
     [ObservableProperty] private bool _isPlaying;
+    /// <summary>分屏网格中的行列跨度与位置；CellWidth/CellHeight 为 0 表示该格不在当前档位内。</summary>
+    [ObservableProperty] private int _rowSpan = 1;
+    [ObservableProperty] private int _columnSpan = 1;
+    [ObservableProperty] private int _gridRow;
+    [ObservableProperty] private int _gridColumn;
+    [ObservableProperty] private GridLength _cellWidth = new(1);
+    [ObservableProperty] private GridLength _cellHeight = new(1);
+    /// <summary>该格是否在当前档位的网格内参与排布（可见且有有效跨度）。</summary>
+    [ObservableProperty] private bool _isActive;
     public string StreamBadge => StreamType == 1 ? "HD" : "SD";
+    /// <summary>服务端回传的真实分辨率；未知为 null（旧版平台或适配器不提供）。</summary>
+    [ObservableProperty] [NotifyPropertyChangedFor(nameof(StreamDetailLabel))] private string? _actualResolution;
+    /// <summary>服务端回传的真实码率；未知为 null。</summary>
+    [ObservableProperty] private string? _actualBitrate;
+    /// <summary>形如「主码流 2560×1440」，仅在拿到真实分辨率时才组成，未知时不伪装。</summary>
+    public string StreamDetailLabel => ActualResolution is null ? "" : $"{(StreamType == 1 ? "主码流" : "子码流")} {ActualResolution}";
+    public string HeaderTitle => Channel?.DisplayName ?? $"窗口 {Number}";
     public string Title => Channel is null ? $"窗口 {Number}" : $"{Channel.DisplayName} · {(IsPlayback ? "回放" : "预览")}";
+    /// <summary>当前是否持有原生解码器：用于状态栏诊断，不触发界面刷新语义。</summary>
+    public bool IsDecoding => _player is not null;
+    /// <summary>原生播放器已推进的播放位置（毫秒）；用于确认低占用场景下确实在解码。</summary>
+    public long? PlaybackPositionMs => _player?.PlaybackPositionMs;
+    /// <summary>当前生效的显示档位，由工作区在布局/放大/全屏变化时写入。</summary>
+    public TileDisplayTier DisplayTier { get; private set; } = TileDisplayTier.Grid;
+    /// <summary>人工指定的码流档位；非空时优先于自动档位策略。</summary>
+    public int? ManualStreamOverride
+    {
+        get => _manualStreamOverride;
+        set
+        {
+            _manualStreamOverride = value;
+            if (value is { } manual && _session is not null && StreamType != manual) _pendingStreamOverride = manual;
+        }
+    }
+    private int? _manualStreamOverride;
+    /// <summary>
+    /// 待生效的人工码流。格子不可见时不做网络切换，等重新进入分屏后再执行；
+    /// 这样单击“切换码流”在窗口隐藏期间也不会出现无声失败。
+    /// </summary>
+    private int? _pendingStreamOverride;
+    /// <summary>当前状态下首次打开通道应采用的码流档位。</summary>
+    public int DesiredStreamType => _manualStreamOverride ?? (DisplayTier == TileDisplayTier.Grid && PreferSubStreamInGrid
+        && !_subStreamUnavailable && !SubStreamKnownUnavailable(Channel) && PlatformDidNotDenySubStream(Channel) ? 2 : 1);
+
+    /// <summary>
+    /// 平台缓存未就绪（Unknown）时返回 true，从而**保持原有行为完全不变**；
+    /// 只有平台明确答复「该通道没有子码流」时才返回 false，直接选主码流避开一次失败往返。
+    /// </summary>
+    private static bool PlatformDidNotDenySubStream(Channel? channel) =>
+        channel is null || !PlatformCapability.TryGetValue(channel.Id, out var available) || available;
+    /// <summary>分屏子码流偏好由工作区设置页写入。</summary>
+    public bool PreferSubStreamInGrid { get; set; } = true;
+    /// <summary>设备确认没有子码流后置位，避免反复尝试降档造成无谓的会话重建。</summary>
+    private bool _subStreamUnavailable;
     partial void OnAspectRatioChanged(string? value)
     {
         if (value is not null && value != "fill" && value != "default" && value != "original" && _player is not null)
@@ -64,7 +129,6 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
             var isSameChannel = Channel?.Id == channel.Id;
             await StopCoreAsync();
             if (generation != _generation) return;
-
             // 切换同一通道码流或重新打开同一通道时，设备端（如海康 NVR/CVR）释放上一条 RTSP 会话与硬件编码通道需要物理耗时。
             // 立即发起新连接会导致设备拒绝或超时（502 Bad Gateway）；在此等待以确保设备完成套接字回收。
             if (hadPreviousLiveSession && isSameChannel && !playback)
@@ -82,14 +146,21 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
             try
             {
                 response = playback
-                    ? await api.PostAsync<MediaSession>(path, new PlaybackRequest(channel.Id, start, end))
+                    ? await api.PostAsync<MediaSession>(path, new PlaybackRequest(channel.Id, start, end, StreamType: streamType))
                     : await api.PostAsync<MediaSession>(path, new LiveRequest(channel.Id, streamType));
             }
-            catch (PlatformException ex) when (!playback && (ex.StatusCode == System.Net.HttpStatusCode.BadGateway || ex.Message.Contains("设备操作未成功")))
+            catch (Exception ex) when (!playback && (
+                ex is TaskCanceledException ||
+                ex is TimeoutException ||
+                ex is HttpRequestException ||
+                ex.Message.Contains("HttpClient.Timeout") ||
+                ex.Message.Contains("canceled") ||
+                (ex is PlatformException pe && (pe.StatusCode == System.Net.HttpStatusCode.BadGateway || pe.StatusCode == System.Net.HttpStatusCode.GatewayTimeout || (int?)pe.StatusCode == 429 || pe.Message.Contains("设备操作未成功") || pe.Message.Contains("超时")))))
             {
                 if (generation != _generation) return;
-                ClientFiles.Log($"请求实时流遇到设备繁忙，等待 800ms 后自动重试：{ex.Message}");
-                await Task.Delay(800);
+                StateLabel = "正在重试连接...";
+                ClientFiles.Log($"通道 {channel.Name} 实时流连接遇到排队或网络波动，等待 1.2s 后自动重试：{ex.Message}");
+                await Task.Delay(1200);
                 if (generation != _generation) return;
                 response = await api.PostAsync<MediaSession>(path, new LiveRequest(channel.Id, streamType));
             }
@@ -110,7 +181,8 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
         catch (Exception ex)
         {
             await StopCoreAsync();
-            StateLabel = $"连接失败：{ex.Message}";
+            var isTimeout = ex is TaskCanceledException || ex is TimeoutException || ex.Message.Contains("HttpClient.Timeout") || ex.Message.Contains("canceled") || ex.Message.Contains("timed out");
+            StateLabel = isTimeout ? "连接超时，请重试" : $"连接失败：{ex.Message}";
             throw;
         }
         finally { _gate.Release(); }
@@ -267,20 +339,40 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
             if (control.Action == "seek")
             {
                 var refreshed = await api.GetAsync<MediaSession>($"playback-sessions/{_session.Id}");
-                if (refreshed is not null && generation == _generation) { _session = refreshed; Apply(refreshed); await PlayAsync(MediaUrl(refreshed)); }
+                if (refreshed is not null && generation == _generation)
+                {
+                    _session = refreshed;
+                    Apply(refreshed);
+                    await PlayAsync(MediaUrl(refreshed));
+                }
+            }
+            else if (control.Action == "step")
+            {
+                _player?.NextFrame();
             }
         }
         finally { _gate.Release(); }
     }
+    public void StepFrame() => _player?.NextFrame();
     public bool Capture(string path) => _player?.Capture(path) == true;
     public string MediaUrl(MediaSession session)
     {
         if (_rtspFailed) return HttpsTsUrl(session) ?? throw new InvalidOperationException("平台未提供有效的 HTTPS TS 回退地址。");
+        // 压力测试可强制指定传输方式，用于对比不同封装／传输的真实 CPU 成本。
+        if (StressMode.StressMediaOverride is { Length: > 0 } forced)
+        {
+            if (forced == "rtsp" && !string.IsNullOrWhiteSpace(session.RtspUrl)) return session.RtspUrl;
+            if (forced == "ts") return HttpsTsUrl(session) ?? throw new InvalidOperationException("平台未提供有效的 HTTPS TS 地址。");
+            if (forced == "flv" && Uri.TryCreate(session.HttpFlvUrl, UriKind.Absolute, out var forcedFlv) && forcedFlv.Scheme == "https") return forcedFlv.AbsoluteUri;
+        }
         if (PreferRtsp && !string.IsNullOrWhiteSpace(session.RtspUrl)) return session.RtspUrl;
+        // 实测结论：HTTPS-FLV 看似“占用更低”，但 16 路下 0/16 路播放位置推进（连得上却不解码），
+        // 只适用于浏览器路径；原生播放必须优先 HTTPS-TS。见 docs/v2-桌面2.1.0界面复核.md 第四节。
         if (Uri.TryCreate(session.HttpTsUrl, UriKind.Absolute, out var ts) && (ts.Scheme == "https" || ts.IsLoopback)) return ts.AbsoluteUri;
         if (Uri.TryCreate(session.HttpFlvUrl, UriKind.Absolute, out var uri) && (uri.Scheme == "https" || uri.IsLoopback)) return uri.AbsoluteUri;
         throw new InvalidOperationException("平台未提供 HTTPS 媒体地址；局域网可在设置中选择 RTSP 兼容模式。");
     }
+
     private static string? HttpsTsUrl(MediaSession session) =>
         Uri.TryCreate(session.HttpTsUrl, UriKind.Absolute, out var uri) && uri.Scheme == "https" ? uri.AbsoluteUri : null;
     public async Task StopAsync()
@@ -295,6 +387,8 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
         CurrentTime = session.CurrentTime;
         Segments = session.Segments ?? [];
         Speed = session.Speed;
+        ActualResolution = session.ResolutionLabel;
+        ActualBitrate = session.BitrateLabel;
         StateLabel = session.State switch
         {
             "playing" => "播放中", "starting" => "连接中", "paused" => "已暂停", "gap" => "录像缺口",
@@ -346,6 +440,109 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
     {
         if (_player is not null) _player.AspectRatio = ratio;
     }
+
+    /// <summary>
+    /// 按显示档位套用码流：格子用子码流，单窗放大/全屏用主码流。只在档位真正变化时重建会话，
+    /// 设备确认无子码流后不再重试，避免反复拆建解码器。
+    /// </summary>
+    public async Task EnsureStreamTierAsync(TileDisplayTier tier, bool preferSubStreamInGrid = true)
+    {
+        DisplayTier = tier;
+        PreferSubStreamInGrid = preferSubStreamInGrid;
+        if (IsPlayback || Channel is null) return;
+        // 非当前显示格位（单窗放大时的后台窗口）保持活跃播放，不拆除会话，以便还原多分屏时秒级恢复无缝渲染。
+        if (tier == TileDisplayTier.Hidden)
+        {
+            return;
+        }
+        // 先把之前排队的人工档位落地，再评估自动档位。
+        if (_pendingStreamOverride is { } pending && StreamType != pending)
+        {
+            _pendingStreamOverride = null;
+            await SwitchTierAsync(pending);
+            if (StreamType == pending) return;
+        }
+        if (ManualStreamOverride is { } manual)
+        {
+            if (StreamType != manual) await SwitchTierAsync(manual);
+            return;
+        }
+        var desired = DesiredStreamType;
+        if (StreamType == desired && IsPlaying) return;
+        if (desired == 2 && _subStreamUnavailable) return;
+        await SwitchTierAsync(desired);
+    }
+
+    /// <summary>
+    /// 设备级子码流可用性缓存。实测存在单个摄像机未配置子码流的情况（适配器会回退主码流），
+    /// 若每格都先请求子码流再回退，每格要多付一次失败重试（约 1.2 秒）并多占一次设备通道。
+    /// 这里按设备记录一次结果，后续格子直接请求主码流。
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, bool> SubStreamAvailability = new();
+
+    private static bool SubStreamKnownUnavailable(Channel? channel) =>
+        channel is not null && SubStreamAvailability.TryGetValue(channel.DeviceId, out var available) && !available;
+
+    /// <summary>
+    /// 平台侧能力探测缓存（B1），按通道保存。平台确认子码流不存在时，客户端直接选主码流，
+    /// 不必「先请求 → 失败 → 回退」。缓存未就绪时返回 false，行为与没有该能力时完全一致。
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, bool> PlatformCapability = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<long, byte> Probing = new();
+
+    /// <summary>
+    /// 尽力而为地探测子码流能力：同一通道只探测一次，失败不写缓存以便下次重试。
+    /// 平台或适配器不支持该接口时静默跳过，不影响打开通道。
+    /// </summary>
+    public void RequestCapabilityProbe(IPlatformApi api)
+    {
+        if (Channel is not { } channel) return;
+        if (PlatformCapability.ContainsKey(channel.Id) || !Probing.TryAdd(channel.Id, 0)) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var capability = await api.GetAsync<StreamCapability>($"channels/{channel.Id}/stream-probe?streamType=2");
+                if (capability is null) Probing.TryRemove(channel.Id, out _);
+                else PlatformCapability[channel.Id] = capability.Available;
+            }
+            catch (Exception ex)
+            {
+                Probing.TryRemove(channel.Id, out _);
+                ClientFiles.Log($"通道 {channel.Name} 码流能力探测不可用，保持原有试错行为：{ex.Message}");
+            }
+        });
+    }
+
+    private static void RememberSubStream(Channel channel, bool available)
+    {
+        if (available) SubStreamAvailability.TryRemove(channel.DeviceId, out _);
+        else SubStreamAvailability[channel.DeviceId] = false;
+    }
+
+    private async Task SwitchTierAsync(int streamType)
+    {
+        try
+        {
+            await SwitchStreamAsync(streamType);
+            if (streamType == 2 && StreamType != 2)
+            {
+                // 适配器确认回退到主码流：标记后不再重复请求子码流。
+                _subStreamUnavailable = true;
+                if (Channel is { } channel) RememberSubStream(channel, false);
+                ClientFiles.Log($"窗口 {Number} 所在设备未提供子码流，已保持主码流。");
+            }
+        }
+        catch (Exception ex)
+        {
+            if (streamType == 2)
+            {
+                _subStreamUnavailable = true;
+                if (Channel is { } channel) RememberSubStream(channel, false);
+            }
+            ClientFiles.Log($"窗口 {Number} 自动切换码流失败，保持当前码流：{ex.Message}");
+        }
+    }
     public string? QuickCapture(string saveDirectory)
     {
         if (_session is null) return null;
@@ -386,3 +583,4 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
     }
     public async ValueTask DisposeAsync() => await StopAsync();
 }
+

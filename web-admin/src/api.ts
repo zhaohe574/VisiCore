@@ -1,4 +1,4 @@
-import type { AccessScope, Alarm, AlarmDetail, Audit, Channel, Dashboard, Device, DeviceInput, DevicePlugin, ExportJob, Layout, LiveSession, LoginResult, OnlineSession, Organization, OrganizationKind, OrganizationNode, Page, Permission, PlaybackControl, PlaybackSession, PluginCreateInput, PtzCommand, Recording, Release, Role, Settings, SystemStatus, User } from './types'
+import type { AccessScope, Alarm, AlarmDetail, Audit, Channel, Dashboard, Device, DeviceInput, DevicePlugin, ExportJob, Layout, LiveSession, LoginResult, NginxConfig, OnlineSession, Organization, OrganizationKind, OrganizationNode, Page, Permission, PlaybackControl, PlaybackSession, PluginCreateInput, PtzCommand, Recording, Release, Role, Settings, SslCertificate, SslCertificateUploadInput, SslDomain, SslDomainInput, SslOverview, SystemStatus, User } from './types'
 import type { components } from './generated/api-schema'
 import type { PublicRelease } from './types'
 export type * from './types'
@@ -79,7 +79,7 @@ const remove = (path: string, keepalive = false) => api<void>(path, { method: 'D
 const segment = (id: string | number) => encodeURIComponent(id)
 
 export const authApi = {
-  login: async (username: string, password: string) => { const result = await post<LoginResult>('/auth/login', { username, password, clientType: 'web', clientVersion: '2.0.0' } satisfies components['schemas']['LoginRequest']); clearCsrf(); return result },
+  login: async (username: string, password: string) => { const result = await post<LoginResult>('/auth/login', { username, password, clientType: 'web', clientVersion: '2.1.0' } satisfies components['schemas']['LoginRequest']); clearCsrf(); return result },
   me: () => api<User>('/auth/me'),
   logout: async () => { await post('/auth/logout'); clearCsrf() },
   profile: (displayName: string, phone: string) => put('/auth/profile', { displayName, phone }),
@@ -152,6 +152,24 @@ export const workflowApi = {
   deleteReleaseVersion: (version: string) => remove(`/releases/version/${segment(version)}`),
   revokeRelease: (id: number) => post(`/releases/${id}/revoke`), releaseUrl: (id: number) => apiUrl(`/releases/${id}/download`),
 }
+export const sslApi = {
+  overview: () => api<SslOverview>('/ssl/overview'),
+  domains: (query?: Query, signal?: AbortSignal) => api<SslDomain[]>(`/ssl/domains${queryString(query)}`, { signal }),
+  saveDomain: (id: number | null, data: SslDomainInput) => id ? put<SslDomain>(`/ssl/domains/${id}`, data) : post<SslDomain>('/ssl/domains', data),
+  setPrimaryDomain: (id: number) => put<SslDomain>(`/ssl/domains/${id}/primary`, {}),
+  deleteDomain: (id: number) => remove(`/ssl/domains/${id}`),
+  certificates: (query?: Query, signal?: AbortSignal) => api<SslCertificate[]>(`/ssl/certificates${queryString(query)}`, { signal }),
+  certificate: (id: number) => api<SslCertificate>(`/ssl/certificates/${id}`),
+  uploadCertificate: (data: SslCertificateUploadInput | FormData) => api<SslCertificate>('/ssl/certificates', {
+    method: 'POST',
+    body: data instanceof FormData ? data : JSON.stringify(data),
+  }),
+  setActiveCertificate: (id: number) => put<SslCertificate>(`/ssl/certificates/${id}/active`, {}),
+  deleteCertificate: (id: number) => remove(`/ssl/certificates/${id}`),
+  downloadCertUrl: (id: number) => apiUrl(`/ssl/certificates/${id}/download`),
+  nginxConfig: () => api<NginxConfig>('/ssl/nginx-config'),
+}
+
 
 export async function allPages<T>(loader: (query: Query) => Promise<Page<T>>, query: Query = {}): Promise<T[]> {
   const result: T[] = []

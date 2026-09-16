@@ -1,0 +1,102 @@
+<!--
+  VisiCore 桌面端浅色主题令牌（默认主题，对齐海康威视 iVMS-4200 主界面观感）。
+  仅包含颜色令牌；控件模板位于 Themes/Controls.xaml，全部通过 DynamicResource 引用这里的键，
+  因此运行时替换本字典即可整体换肤。视频画面区（VideoCanvas*）在两套主题下保持深色。
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+
+    <!-- 表面：页面 - 侧栏 - 卡片 - 浮层 -->
+    <SolidColorBrush x:Key="PageBrush" Color="#F2F4F7"/>
+    <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="SurfaceAltBrush" Color="#F7F8FA"/>
+    <SolidColorBrush x:Key="PanelBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="InputBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="InputDisabledBrush" Color="#F1F2F4"/>
+    <SolidColorBrush x:Key="FlyoutBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="HeaderBrush" Color="#1F2A37"/>
+    <SolidColorBrush x:Key="HeaderTextBrush" Color="#F4F7FB"/>
+    <SolidColorBrush x:Key="HeaderMutedBrush" Color="#A7B3C2"/>
+    <SolidColorBrush x:Key="HeaderHoverBrush" Color="#2C3A4C"/>
+    <SolidColorBrush x:Key="HeaderPressBrush" Color="#364457"/>
+    <SolidColorBrush x:Key="HeaderDividerBrush" Color="#33404F"/>
+    <SolidColorBrush x:Key="HoverBrush" Color="#EDF1F7"/>
+    <SolidColorBrush x:Key="PressedBrush" Color="#E2E7EE"/>
+    <SolidColorBrush x:Key="SelectionBrush" Color="#DCE7FA"/>
+
+    <!-- 文字 -->
+    <SolidColorBrush x:Key="TextBrush" Color="#1F2430"/>
+    <SolidColorBrush x:Key="TextStrongBrush" Color="#12161D"/>
+    <SolidColorBrush x:Key="MutedBrush" Color="#5C6675"/>
+    <!-- 仅用于真正不可用的控件；通道离线等仍需阅读的场景使用 MutedBrush -->
+    <SolidColorBrush x:Key="DisabledTextBrush" Color="#8A93A0"/>
+    <SolidColorBrush x:Key="OnAccentBrush" Color="#FFFFFF"/>
+    <!-- 浅色主题强调橙较深，白字对比度 5.02，因此强调按钮仍用白字 -->
+    <SolidColorBrush x:Key="OnAccentEmphasisBrush" Color="#FFFFFF"/>
+
+    <!-- 边框与分隔 -->
+    <SolidColorBrush x:Key="LineBrush" Color="#D5DAE1"/>
+    <SolidColorBrush x:Key="BorderStrongBrush" Color="#B7BFC9"/>
+    <SolidColorBrush x:Key="SeparatorBrush" Color="#E4E8ED"/>
+
+    <!-- 滚动条 -->
+    <SolidColorBrush x:Key="ScrollThumbBrush" Color="#B4BCC7"/>
+    <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#8B95A2"/>
+
+    <!-- 树/列表系统选中色需要 Color 值（SolidColorBrush 的 Color 属性不支持动态引用） -->
+    <Color x:Key="SelectionBrushColor">#DCE7FA</Color>
+    <Color x:Key="TextBrushColor">#1F2430</Color>
+
+    <!--
+      强调与状态：填充色（*Brush，用于色块、进度条、图标）与文字色（*TextBrush，用于正文与标签）
+      分开定义。填充色可以鲜亮，但小字若直接用填充色在浅色底上对比度不足（实测强调橙 2.85、
+      在线绿 3.19、警示 2.74），因此文字一律使用加深后的 *TextBrush，保证 ≥4.5:1。
+    -->
+    <SolidColorBrush x:Key="AccentBrush" Color="#B45309"/>
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="#9C4505"/>
+    <SolidColorBrush x:Key="AccentSoftBrush" Color="#FDF0E2"/>
+    <SolidColorBrush x:Key="AccentTextBrush" Color="#B45309"/>
+    <SolidColorBrush x:Key="PrimaryBrush" Color="#1668D6"/>
+    <SolidColorBrush x:Key="PrimaryHoverBrush" Color="#1259BA"/>
+    <SolidColorBrush x:Key="PrimarySoftBrush" Color="#E7F0FD"/>
+    <SolidColorBrush x:Key="PrimaryTextBrush" Color="#1259BA"/>
+    <SolidColorBrush x:Key="OnlineBrush" Color="#1B9E63"/>
+    <SolidColorBrush x:Key="OnlineTextBrush" Color="#0F7A4A"/>
+    <SolidColorBrush x:Key="WarningBrush" Color="#B4740A"/>
+    <SolidColorBrush x:Key="WarningTextBrush" Color="#9A6208"/>
+    <SolidColorBrush x:Key="DangerBrush" Color="#C62F2F"/>
+    <SolidColorBrush x:Key="DangerHoverBrush" Color="#A82727"/>
+    <SolidColorBrush x:Key="DangerTextBrush" Color="#B3261E"/>
+    <SolidColorBrush x:Key="OfflineBrush" Color="#7C8794"/>
+    <SolidColorBrush x:Key="OfflineTextBrush" Color="#6B7280"/>
+    <SolidColorBrush x:Key="HikvisionOrangeBrush" Color="#B45309"/>
+    <SolidColorBrush x:Key="HikvisionBlueBrush" Color="#1668D6"/>
+
+    <!-- 按钮 -->
+    <SolidColorBrush x:Key="ButtonBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="ButtonBorderBrush" Color="#C3CAD4"/>
+    <SolidColorBrush x:Key="ButtonHoverBrush" Color="#F2F5F9"/>
+    <SolidColorBrush x:Key="ButtonPressBrush" Color="#E4E9EF"/>
+    <SolidColorBrush x:Key="TitleBarButtonHoverBrush" Color="#C9CFD8"/>
+
+    <!-- 视频画面区（两套主题共用深色画布） -->
+    <SolidColorBrush x:Key="VideoCanvasBrush" Color="#14171B"/>
+    <SolidColorBrush x:Key="VideoCellBrush" Color="#1B1E23"/>
+    <SolidColorBrush x:Key="VideoChromeBrush" Color="#0E1116"/>
+    <SolidColorBrush x:Key="VideoOverlayBrush" Color="#E6101418"/>
+    <SolidColorBrush x:Key="VideoOverlaySolidBrush" Color="#101418"/>
+    <SolidColorBrush x:Key="VideoOverlayLineBrush" Color="#2E353E"/>
+    <SolidColorBrush x:Key="VideoOverlayTextBrush" Color="#E6EAF0"/>
+    <SolidColorBrush x:Key="VideoOverlayMutedBrush" Color="#96A0AD"/>
+    <SolidColorBrush x:Key="VideoPlaceholderIconBrush" Color="#39414B"/>
+    <SolidColorBrush x:Key="VideoBadgeBrush" Color="#B4303339"/>
+    <SolidColorBrush x:Key="VideoBadgeTextBrush" Color="#F2F5F8"/>
+
+    <!-- 面板尺寸令牌独立于主题，仍集中在此便于统一调整 -->
+    <sys:Double x:Key="TitleBarHeight">44</sys:Double>
+    <sys:Double x:Key="NavRailWidth">58</sys:Double>
+    <sys:Double x:Key="StatusBarHeight">28</sys:Double>
+</ResourceDictionary>
+
+

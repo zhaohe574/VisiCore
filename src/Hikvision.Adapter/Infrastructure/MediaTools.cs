@@ -131,14 +131,17 @@ internal static class MediaTools
     {
         try { if (!process.HasExited) process.Kill(true); } catch (InvalidOperationException) { }
     }
+    private static readonly SemaphoreSlim _probeGate = new(6);
     public static async Task<MediaCodecs> ProbeAsync(string input, CancellationToken token, byte[]? prefix = null)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(TimeSpan.FromSeconds(15));
         var args = new List<string> { "-v", "error", "-analyzeduration", "5000000", "-probesize", "5242880" };
         if (input.StartsWith("rtsp://", StringComparison.OrdinalIgnoreCase)) args.AddRange(["-rtsp_transport", "tcp"]);
-        args.AddRange(["-i", input, "-show_entries", "stream=codec_type,codec_name", "-of", "json"]);
+        // 同时取分辨率与码率：平台据此向客户端回传真实媒体参数（状态栏显示“主码流 2560×1440 H.265”）。
+        args.AddRange(["-i", input, "-show_entries", "stream=codec_type,codec_name,width,height,bit_rate", "-of", "json"]);
         string? json = null;
+        await _probeGate.WaitAsync(timeout.Token);
         try
         {
             json = await RunAsync(Ffprobe, args, timeout.Token, prefix);
@@ -147,35 +150,71 @@ internal static class MediaTools
         {
             ReportFailure("ffprobe_probe", ex.Message);
         }
-
-        string? video = null, audio = null;
-        if (!string.IsNullOrWhiteSpace(json))
+        finally
         {
-            try
-            {
-                using var document = JsonDocument.Parse(json);
-                if (document.RootElement.TryGetProperty("streams", out var streamsElement) && streamsElement.ValueKind == JsonValueKind.Array)
-                {
-                    foreach (var stream in streamsElement.EnumerateArray())
-                    {
-                        var type = stream.TryGetProperty("codec_type", out var ct) ? ct.GetString() : null;
-                        var codec = stream.TryGetProperty("codec_name", out var cn) ? cn.GetString() : null;
-                        if (type == "video" && video is null && !string.IsNullOrWhiteSpace(codec)) video = codec;
-                        else if (type == "audio" && audio is null && !string.IsNullOrWhiteSpace(codec)) audio = codec;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                ReportFailure("ffprobe_parse", ex.Message);
-            }
+            _probeGate.Release();
         }
+
+        var parsed = ParseProbeJson(json);
+        var video = parsed.Video;
         if (video is null)
         {
             var isHevc = prefix is not null && ContainsHevcNal(prefix);
             video = isHevc ? "hevc" : "h264";
         }
-        return new(video, audio);
+        return new(video, parsed.Audio, parsed.Width, parsed.Height, parsed.BitrateKbps);
+    }
+
+    /// <summary>
+    /// 解析 ffprobe 的 JSON 输出。独立成静态方法以便用固定样本做回归——
+    /// 没有真实摄像机时也能验证分辨率／码率解析不会因字段缺失而崩。
+    /// </summary>
+    internal static (string? Video, string? Audio, int? Width, int? Height, int? BitrateKbps) ParseProbeJson(string? json)
+    {
+        string? video = null, audio = null;
+        int? width = null, height = null, bitrateKbps = null;
+        if (string.IsNullOrWhiteSpace(json)) return (null, null, null, null, null);
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.TryGetProperty("streams", out var streamsElement) && streamsElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var stream in streamsElement.EnumerateArray())
+                {
+                    var type = stream.TryGetProperty("codec_type", out var ct) ? ct.GetString() : null;
+                    var codec = stream.TryGetProperty("codec_name", out var cn) ? cn.GetString() : null;
+                    if (type == "video")
+                    {
+                        if (video is null && !string.IsNullOrWhiteSpace(codec)) video = codec;
+                        // 只在缺失时填充，避免多路视频流互相覆盖。
+                        if (width is null && TryInt(stream, "width") is { } w and > 0) width = w;
+                        if (height is null && TryInt(stream, "height") is { } h and > 0) height = h;
+                        if (bitrateKbps is null && TryInt(stream, "bit_rate") is { } br and > 0) bitrateKbps = br / 1000;
+                    }
+                    else if (type == "audio" && audio is null && !string.IsNullOrWhiteSpace(codec))
+                    {
+                        audio = codec;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ReportFailure("ffprobe_parse", ex.Message);
+        }
+        return (video, audio, width, height, bitrateKbps);
+    }
+
+    private static int? TryInt(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value)) return null;
+        return value.ValueKind switch
+        {
+            JsonValueKind.Number when value.TryGetInt32(out var number) => number,
+            // ffprobe 的 bit_rate 有时以字符串返回。
+            JsonValueKind.String when int.TryParse(value.GetString(), out var parsed) => parsed,
+            _ => null
+        };
     }
     private static bool ContainsHevcNal(ReadOnlySpan<byte> bytes)
     {
@@ -196,11 +235,13 @@ internal static class MediaTools
     }
 }
 
-internal sealed record MediaCodecs(string Video, string? Audio)
+internal sealed record MediaCodecs(string Video, string? Audio, int? Width = null, int? Height = null, int? BitrateKbps = null)
 {
     public string DisplayVideo => Video is "hevc" or "h265" ? "H265" : Video == "h264" ? "H264" : Video;
     public bool RequiresBrowserTranscode => Video != "h264";
     public bool Mp4AudioCopy => Audio is null or "aac" or "mp3" or "alac" or "ac3" or "eac3";
+    /// <summary>形如 2560×1440；分辨率未知时返回 null，由调用方决定是否显示。</summary>
+    public string? ResolutionLabel => Width is > 0 && Height is > 0 ? $"{Width}×{Height}" : null;
 }
 
 internal sealed class TranscodeBudget

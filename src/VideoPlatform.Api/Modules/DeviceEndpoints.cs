@@ -96,6 +96,23 @@ public static class DeviceEndpoints
             var updated = await service.UpdateChannelAsync(ApiSupport.Actor(context), id, request, ApiSupport.Ip(context), context.RequestAborted);
             return Results.Ok(updated);
         }).Produces<ChannelDto>().WithName("UpdateChannel");
+        // 通道码流档位能力探测（B1）：由适配器直接探测设备该档位是否存在并缓存结果。
+        // 客户端据此避免「先请求子码流 → 失败 → 回退主码流」的试错，每格可省约 1.2 秒与一次设备通道占用。
+        group.MapPost("/channels/{id:long}/streams/probe", async (long id, StreamProbeRequest request, HttpContext context, AccessService access, IDeviceAdapter adapter) =>
+        {
+            Rules.Require(request.StreamType is 1 or 2, "码流类型只能是 1（主码流）或 2（子码流）");
+            var channel = await access.ChannelAsync(ApiSupport.Actor(context), id, "live.view", context.RequestAborted);
+            var payload = new { channel = (int)channel.Id("deviceChannel"), streamType = request.StreamType };
+            var result = await adapter.SendAsync(HttpMethod.Post, $"/internal/devices/{channel.Id("deviceId")}/streams/probe", payload, context.RequestAborted) as JsonObject;
+            return Results.Ok(new StreamCapabilityDto(
+                request.StreamType,
+                result?.Flag("available") ?? false,
+                result?.Text("codec") is { Length: > 0 } codec ? codec : null,
+                result?.Id("width") is > 0 and var width ? (int)width : null,
+                result?.Id("height") is > 0 and var height ? (int)height : null,
+                result?.Id("bitrateKbps") is > 0 and var bitrate ? (int)bitrate : null,
+                result?.Text("error") is { Length: > 0 } error ? error : (result is null ? "适配器未返回探测结果" : null)));
+        }).Produces<StreamCapabilityDto>().WithName("ProbeChannelStream");
     }
 
     private static void Validate(DeviceRequest request, bool create)

@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VideoPlatform.Desktop.Models;
@@ -32,7 +33,7 @@ public sealed partial class ShellViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(BackButtonText))]
     private bool _isAuthenticated;
     [ObservableProperty] private string _username = "";
-    [ObservableProperty] private string _server = "https://10.37.200.74";
+    [ObservableProperty] private string _server = "";
     [ObservableProperty] private string _userLabel = "未登录";
     [ObservableProperty] private string _displayName = "";
     [ObservableProperty] private string _phone = "";
@@ -44,6 +45,22 @@ public sealed partial class ShellViewModel : ViewModelBase
     [ObservableProperty] private bool _canUseWorkspace;
     [ObservableProperty] private bool _preferRtsp;
     [ObservableProperty] private string _clock = "";
+    [ObservableProperty] private string _theme = "light";
+    [ObservableProperty] private bool _showDiagnostics;
+    [ObservableProperty] private bool _preferSubStreamInGrid = true;
+    [ObservableProperty] private bool _hardwareDecoding = true;
+    [ObservableProperty] private int _networkCachingMs = 800;
+    [ObservableProperty] private int _sessionCount;
+    [ObservableProperty] private int _decoderCount;
+    [ObservableProperty] private string _moduleLabel = "实时预览";
+    [ObservableProperty] private string _decodedFramesLabel = "";
+    [ObservableProperty] private string _streamDetailLabel = "";
+    [ObservableProperty] private string _settingsTab = "general";
+    [ObservableProperty] private string _snapshotPath = "";
+    [ObservableProperty] private string _exportPath = "";
+    [ObservableProperty] private string _snapshotFormat = "PNG";
+
+    public string DiagnosticsLabel => $"会话 {SessionCount} · 解码 {DecoderCount}{DecodedFramesLabel}";
 
     public ShellViewModel(SessionService session, IPlatformApi api, EventService events, UpdateService updates,
         WorkspaceViewModel workspace, AlarmsViewModel alarms, ExportsViewModel exports, IUiDispatcher dispatcher, IUserInteraction dialogs)
@@ -51,6 +68,17 @@ public sealed partial class ShellViewModel : ViewModelBase
         _session = session; _api = api; _events = events; _updates = updates; Workspace = workspace; Alarms = alarms; Exports = exports; _dispatcher = dispatcher; _dialogs = dialogs;
         _settings = ClientFiles.LoadSettings(); Server = _settings.Server;
         PreferRtsp = _settings.PreferRtsp;
+        ShowDiagnostics = _settings.ShowDiagnostics;
+        _hardwareDecoding = _settings.HardwareDecoding;
+        _networkCachingMs = _settings.NetworkCachingMs;
+        _preferSubStreamInGrid = _settings.PreferSubStreamInGrid;
+        Workspace.PreferSubStreamInGrid = _settings.PreferSubStreamInGrid;
+        (Workspace.PlayerFactory as IConfigurablePlayerFactory)?.Configure(PlayerOptions());
+        _theme = ThemeService.Normalize(_settings.Theme);
+        ThemeService.Apply(_theme);
+        _snapshotPath = _settings.EffectiveSnapshotPath;
+        _exportPath = _settings.EffectiveExportPath;
+        _snapshotFormat = _settings.SnapshotFormat;
         foreach (var tile in Workspace.Tiles) tile.PreferRtsp = PreferRtsp;
         _events.Changed += kind => _dispatcher.InvokeAsync(() => OnEventAsync(kind));
         _events.StateChanged += value => _ = _dispatcher.InvokeAsync(() => { ConnectionState = value; return Task.CompletedTask; });
@@ -58,7 +86,170 @@ public sealed partial class ShellViewModel : ViewModelBase
         Workspace.ExportCreated += async () => { Module = "exports"; await Exports.RefreshAsync(); };
         Alarms.VideoRequested += (alarm, mode) => _ = _dispatcher.InvokeAsync(async () => await OpenAlarmVideoAsync(alarm, mode));
         Clock = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        UpdateModuleLabel();
     }
+
+    partial void OnThemeChanged(string value)
+    {
+        var normalized = ThemeService.Normalize(value);
+        ThemeService.Apply(normalized);
+        ClientFiles.SaveSettings(_settings = _settings with { Theme = normalized });
+        PushPreferences();
+    }
+
+    partial void OnShowDiagnosticsChanged(bool value)
+    {
+        ClientFiles.SaveSettings(_settings = _settings with { ShowDiagnostics = value });
+        RefreshDiagnostics();
+        PushPreferences();
+    }
+
+    partial void OnPreferSubStreamInGridChanged(bool value)
+    {
+        Workspace.PreferSubStreamInGrid = value;
+        ClientFiles.SaveSettings(_settings = _settings with { PreferSubStreamInGrid = value });
+        _ = Workspace.ApplyLayoutTiersAsync();
+        PushPreferences();
+    }
+
+    partial void OnHardwareDecodingChanged(bool value)
+    {
+        ClientFiles.SaveSettings(_settings = _settings with { HardwareDecoding = value });
+        (Workspace.PlayerFactory as IConfigurablePlayerFactory)?.Configure(PlayerOptions());
+        PushPreferences();
+    }
+
+    partial void OnNetworkCachingMsChanged(int value)
+    {
+        ClientFiles.SaveSettings(_settings = _settings with { NetworkCachingMs = value });
+        (Workspace.PlayerFactory as IConfigurablePlayerFactory)?.Configure(PlayerOptions());
+        PushPreferences();
+    }
+
+    private PlayerOptions PlayerOptions() => new(HardwareDecoding, NetworkCachingMs);
+
+    /// <summary>正在套用平台偏好时抑制回写，避免「读取 → 触发变更 → 立即回写」的无谓往返。</summary>
+    private bool _applyingPreferences;
+
+    /// <summary>
+    /// 登录后拉取平台偏好并覆盖本机设置。平台不可用或仍是旧版本（无该端点）时静默保留本机设置，
+    /// 本机 desktop-v2.json 始终是离线兜底，不会被清空。
+    /// </summary>
+    private async Task LoadPreferencesAsync()
+    {
+        if (!IsAuthenticated) return;
+        try
+        {
+            var preferences = await _api.GetAsync<Preferences>("auth/preferences");
+            if (preferences is null) return;
+            _applyingPreferences = true;
+            try
+            {
+                Theme = preferences.Theme;
+                PreferSubStreamInGrid = preferences.PreferSubStreamInGrid;
+                HardwareDecoding = preferences.HardwareDecoding;
+                NetworkCachingMs = preferences.NetworkCachingMs;
+                ShowDiagnostics = preferences.ShowDiagnostics;
+            }
+            finally { _applyingPreferences = false; }
+            ClientFiles.SaveSettings(_settings = _settings.With(preferences));
+        }
+        catch (Exception ex)
+        {
+            ClientFiles.Log($"读取平台显示偏好失败，保留本机设置：{ex.Message}");
+        }
+    }
+
+    /// <summary>把当前显示偏好回写平台；失败只记日志，不影响本机设置已生效的结果。</summary>
+    private void PushPreferences()
+    {
+        if (_applyingPreferences || !IsAuthenticated) return;
+        var preferences = _settings.ToPreferences();
+        _ = Task.Run(async () =>
+        {
+            try { await _api.SendAsync(HttpMethod.Put, "auth/preferences", preferences); }
+            catch (Exception ex) { ClientFiles.Log($"保存平台显示偏好失败（本机设置已生效）：{ex.Message}"); }
+        });
+    }
+
+    partial void OnModuleChanged(string value) => UpdateModuleLabel();
+
+    private void UpdateModuleLabel()
+    {
+        ModuleLabel = Module switch
+        {
+            "playback" => "远程回放",
+            "alarms" => "报警中心",
+            "exports" => "录像导出",
+            "settings" => "设置与更新",
+            _ => "实时预览"
+        };
+    }
+
+    /// <summary>状态栏诊断只统计可见分屏中的媒体会话与原生解码器数量，供真机性能核对。</summary>
+    public void RefreshDiagnostics()
+    {
+        var tiles = Workspace.Tiles;
+        SessionCount = tiles.Count(tile => tile.SessionId is not null);
+        DecoderCount = tiles.Count(tile => tile.IsDecoding);
+        var positions = tiles.Select(tile => tile.PlaybackPositionMs).Where(value => value is not null).Select(value => value!.Value).ToArray();
+        // 只有在确实取到播放位置时才显示：位置为 0 或缺失说明连接上了但没有推进解码。
+        DecodedFramesLabel = positions.Length == 0 ? "" : $" · 播放 {positions.Sum() / 1000}s";
+        // 焦点窗口的真实档位（分辨率来自服务端回传的媒体参数）；未知时不显示，不用估计值顶替。
+        var detail = Workspace.SelectedTile?.StreamDetailLabel;
+        StreamDetailLabel = string.IsNullOrEmpty(detail) ? "" : $" · {detail}";
+        OnPropertyChanged(nameof(DiagnosticsLabel));
+    }
+
+    [RelayCommand] private Task ToggleDiagnosticsAsync() => RunAsync(() => { ShowDiagnostics = !ShowDiagnostics; return Task.CompletedTask; });
+
+    /// <summary>设置页主题切换：light / dark。</summary>
+    [RelayCommand] private void SetTheme(string? theme)
+    {
+        if (theme is "light" or "dark") Theme = theme;
+    }
+
+    [RelayCommand] private void SetSettingsTab(string? tab)
+    {
+        if (tab is "general" or "media" or "storage" or "about") SettingsTab = tab;
+    }
+
+    partial void OnSnapshotPathChanged(string value) => ClientFiles.SaveSettings(_settings = _settings with { SnapshotPath = value });
+    partial void OnExportPathChanged(string value) => ClientFiles.SaveSettings(_settings = _settings with { ExportPath = value });
+    partial void OnSnapshotFormatChanged(string value) => ClientFiles.SaveSettings(_settings = _settings with { SnapshotFormat = value });
+
+    [RelayCommand] private void BrowseSnapshotPath()
+    {
+        var folder = _dialogs.SelectFolder("选择抓图保存目录");
+        if (!string.IsNullOrWhiteSpace(folder)) SnapshotPath = folder;
+    }
+
+    [RelayCommand] private void BrowseExportPath()
+    {
+        var folder = _dialogs.SelectFolder("选择录像导出保存目录");
+        if (!string.IsNullOrWhiteSpace(folder)) ExportPath = folder;
+    }
+
+    [RelayCommand] private void OpenProfile()
+    {
+        if (!IsAuthenticated) return;
+        _dialogs.ShowProfileDialog(this);
+    }
+
+    [RelayCommand] private void OpenChangePassword()
+    {
+        if (!IsAuthenticated) return;
+        _dialogs.ShowChangePasswordDialog(this);
+    }
+
+    /// <summary>顶栏刷新：重新拉取资源、报警与导出，并刷新诊断计数。</summary>
+    [RelayCommand] private Task RefreshAllAsync() => RunAsync(async () =>
+    {
+        if (!IsAuthenticated) return;
+        await RefreshDataAsync();
+        RefreshDiagnostics();
+    }, "平台数据已刷新。");
+
     partial void OnPreferRtspChanged(bool value)
     {
         foreach (var tile in Workspace.Tiles) tile.PreferRtsp = value;
@@ -67,18 +258,40 @@ public sealed partial class ShellViewModel : ViewModelBase
     public Task InitializeAsync() => RunAsync(async () =>
     {
         _monitor ??= MonitorAsync(_lifetime.Token);
+        _clockTimer ??= StartClockTimer();
         _session.SetServer(Server);
         UpdateRequired = Version.TryParse(_settings.RequiredVersion, out var minimum) && UpdateService.CurrentVersion < minimum;
         await CheckUpdateCoreAsync();
         if (await _session.RestoreAsync(_lifetime.Token)) await AfterLoginAsync();
     });
-    public Task LoginAsync(string password) => RunAsync(async () =>
+
+    /// <summary>时钟独立走 1 秒 DispatcherTimer，不再与业务 tick 绑定，避免每拍触发整条同步链。</summary>
+    private DispatcherTimer? _clockTimer;
+    private DispatcherTimer StartClockTimer()
+    {
+        var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(1) };
+        timer.Tick += (_, _) => Clock = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        timer.Start();
+        return timer;
+    }
+    public Task LoginAsync(string password) => LoginAsync(Username, password);
+
+    /// <summary>
+    /// 登录入口。显式传入账号供压力测试模式复用，界面仍使用输入框内容。
+    /// <paramref name="enforceUpdateGate"/> 为 false 时跳过“必须更新后才能登录”的限制，
+    /// 用于在同一平台上对旧客户端做受控性能采集；界面登录始终走默认的强制校验。
+    /// </summary>
+    public Task LoginAsync(string username, string password, bool enforceUpdateGate = true) => RunAsync(async () =>
     {
         if (_closing) return;
+        Username = username;
         _session.SetServer(Server);
-        await CheckUpdateCoreAsync();
-        if (UpdateRequired) throw new InvalidOperationException("当前版本必须更新后才能登录。");
-        await _session.LoginAsync(Username, password, _lifetime.Token);
+        if (enforceUpdateGate)
+        {
+            await CheckUpdateCoreAsync();
+            if (UpdateRequired) throw new InvalidOperationException("当前版本必须更新后才能登录。");
+        }
+        await _session.LoginAsync(username, password, _lifetime.Token);
         await AfterLoginAsync();
         ClientFiles.SaveSettings(_settings = _settings with { Server = _session.Server });
         Status = "登录成功。";
@@ -89,6 +302,7 @@ public sealed partial class ShellViewModel : ViewModelBase
         if (Module == "settings") Module = "live";
         await ApplyAccessAsync();
         await RefreshDataAsync();
+        await ApplyPreferencesAsync();
         try { await Workspace.PurgeOrphanSessionsAsync(); }
         catch { }
         try { await _events.StartAsync(_lifetime.Token); }
@@ -107,6 +321,9 @@ public sealed partial class ShellViewModel : ViewModelBase
         await Exports.RefreshAsync();
         _lastSync = DateTimeOffset.UtcNow;
     }
+
+    /// <summary>登录后套用账号偏好；与数据刷新分开，避免任一失败影响另一项。</summary>
+    private Task ApplyPreferencesAsync() => LoadPreferencesAsync();
     private async Task OnEventAsync(string kind)
     {
         if (!IsAuthenticated || _closing) return;
@@ -135,20 +352,25 @@ public sealed partial class ShellViewModel : ViewModelBase
     }
     private async Task MonitorAsync(CancellationToken token)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
+        // 5 秒一拍：仅做登录续期、媒体会话同步与低频数据校对；界面读秒由独立的时钟计时器负责。
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
         try
         {
             while (await timer.WaitForNextTickAsync(token))
             {
-                await _dispatcher.InvokeAsync(() => { Clock = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"); return Task.CompletedTask; });
                 await _dispatcher.InvokeAsync(async () =>
                 {
-                    if (!IsAuthenticated || !CanUseWorkspace || _closing) return;
+                    if (!IsAuthenticated || !CanUseWorkspace || _closing)
+                    {
+                        SessionCount = 0; DecoderCount = 0;
+                        return;
+                    }
                     try
                     {
                         await _session.GetTokenAsync();
                         await Workspace.TickAsync();
-                        if (DateTimeOffset.UtcNow - _lastSync > TimeSpan.FromSeconds(30))
+                        RefreshDiagnostics();
+                        if (DateTimeOffset.UtcNow - _lastSync > TimeSpan.FromSeconds(60))
                         {
                             var previous = _session.CurrentUser;
                             var user = await _session.ReloadUserAsync(token);
@@ -295,3 +517,5 @@ public sealed partial class ShellViewModel : ViewModelBase
         // 关闭窗口保留 DPAPI 会话，主动退出命令才撤销服务器登录。
     }
 }
+
+

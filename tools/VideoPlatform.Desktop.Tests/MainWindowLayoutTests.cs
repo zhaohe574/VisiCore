@@ -18,6 +18,7 @@ public sealed class MainWindowLayoutTests(WpfTestHost host)
     [Theory]
     [InlineData(4, false)]
     [InlineData(16, false)]
+    [InlineData(25, false)]
     [InlineData(4, true)]
     [InlineData(16, true)]
     public Task MainWindowViewportContainsEveryTileAndStatusBar(int count, bool playback) => host.RunAsync(async () =>
@@ -25,6 +26,7 @@ public sealed class MainWindowLayoutTests(WpfTestHost host)
         var api = new FakeApi();
         await using var ptz = new PtzService(api);
         var workspace = new WorkspaceViewModel(api, new FakePlayerFactory(), ptz, new InlineDispatcher(), new FakeDialogs()) { IsPlayback = playback };
+        await workspace.SetAccessAsync(Fixtures.User("live.view", "playback.view", "live.split25"));
         await workspace.SetLayoutCommand.ExecuteAsync(count.ToString());
         var window = LoadLayout(workspace, playback);
         try
@@ -52,8 +54,8 @@ public sealed class MainWindowLayoutTests(WpfTestHost host)
                 Assert.InRange(Math.Abs(layout.ActualHeight - scroll.ViewportHeight), 0, 0.5);
                 var viewport = new Rect(0, 0, scroll.ViewportWidth, scroll.ViewportHeight);
                 AssertContained(status, scroll, viewport);
-                var grid = Assert.Single(Descendants<System.Windows.Controls.Primitives.UniformGrid>(scroll),
-                    panel => panel.Children.OfType<ContentPresenter>().Any(child => child.Content is VideoTileViewModel));
+                // 视频墙由 VideoWallPanel 排布：等分档位与 1+5/1+7 聚焦档位共用同一实现。
+                var grid = Assert.Single(Descendants<VideoWallPanel>(scroll));
                 foreach (var tile in tiles)
                 {
                     AssertContained(tile, scroll, viewport);
@@ -62,8 +64,9 @@ public sealed class MainWindowLayoutTests(WpfTestHost host)
                     AssertContained(playerHost, tile, new Rect(tile.RenderSize));
                     Assert.True(playerHost.ActualWidth > 0 && playerHost.ActualHeight > 0, "原生播放器宿主必须有有限且非空的画面区域。");
                     Assert.True(tile.ActualHeight > 40 && tile.ActualWidth > 40, "分屏必须有可用画面区域。");
-                    Assert.InRange(Math.Abs(tile.ActualHeight - tiles[0].ActualHeight), 0, 1);
                 }
+                // 等分档位下所有格子必须等高；聚焦档位允许首格更大。
+                Assert.Single(tiles.Select(tile => Math.Round(tile.ActualHeight)).Distinct());
                 Assert.All(probes, probe => Assert.True(double.IsFinite(probe.Constraint.Width) && double.IsFinite(probe.Constraint.Height), "视频必须在有限空间中测量。"));
             }
 

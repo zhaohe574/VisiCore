@@ -41,6 +41,31 @@ public static class AuthEndpoints
             await db.ExecuteAsync("update users set display_name=@displayName,phone=@phone,updated_at=now() where id=@id", new { request.DisplayName, request.Phone, id = actor.UserId }, context.RequestAborted);
             return Results.Ok(await access.UserAsync(actor.UserId));
         }).RequireAuthorization().Produces<UserDto>().WithName("UpdateProfile");
+        group.MapGet("/preferences", async (HttpContext context, Database db) =>
+        {
+            var actor = ApiSupport.Actor(context);
+            return Results.Ok(await ReadPreferencesAsync(db, actor.UserId, context.RequestAborted));
+        }).RequireAuthorization().Produces<UserPreferencesDto>().WithName("GetPreferences");
+        group.MapPut("/preferences", async (UserPreferencesDto request, HttpContext context, Database db) =>
+        {
+            // 越界值直接拒绝而不是静默夹紧：客户端应显示真实错误，避免“保存成功但行为不同”。
+            Rules.Require(request.Theme is "light" or "dark", "主题只能是 light 或 dark");
+            Rules.Require(request.NetworkCachingMs is >= 200 and <= 5000, "网络缓存必须在 200～5000 毫秒之间");
+            var actor = ApiSupport.Actor(context);
+            await db.ExecuteAsync("""
+                insert into user_preferences(user_id,theme,prefer_sub_stream_in_grid,hardware_decoding,network_caching_ms,show_diagnostics,updated_at)
+                values(@userId,@theme,@preferSubStream,@hardwareDecoding,@networkCachingMs,@showDiagnostics,now())
+                on conflict(user_id) do update set
+                    theme=excluded.theme,
+                    prefer_sub_stream_in_grid=excluded.prefer_sub_stream_in_grid,
+                    hardware_decoding=excluded.hardware_decoding,
+                    network_caching_ms=excluded.network_caching_ms,
+                    show_diagnostics=excluded.show_diagnostics,
+                    updated_at=now()
+                """, new { userId = actor.UserId, theme = request.Theme, preferSubStream = request.PreferSubStreamInGrid,
+                    hardwareDecoding = request.HardwareDecoding, request.NetworkCachingMs, request.ShowDiagnostics }, context.RequestAborted);
+            return Results.Ok(await ReadPreferencesAsync(db, actor.UserId, context.RequestAborted));
+        }).RequireAuthorization().Produces<UserPreferencesDto>().WithName("UpdatePreferences");
         group.MapPut("/password", async (PasswordRequest request, HttpContext context, Database db, MediaService media, AuditStore audit) =>
         {
             Rules.Password(request.NewPassword);
@@ -58,5 +83,14 @@ public static class AuthEndpoints
             context.Response.Cookies.Delete(ApiSupport.CookieName, new CookieOptions { Secure = true, Path = "/" });
             return Results.NoContent();
         }).RequireAuthorization().WithName("ChangePassword");
+    }
+
+    /// <summary>读取账号偏好；尚无记录时返回默认值（与桌面端本机兜底一致），不写库。</summary>
+    private static async Task<UserPreferencesDto> ReadPreferencesAsync(Database db, long userId, CancellationToken ct)
+    {
+        var row = await db.OneAsync("select theme,prefer_sub_stream_in_grid,hardware_decoding,network_caching_ms,show_diagnostics from user_preferences where user_id=@userId", new { userId }, ct);
+        if (row is null) return new UserPreferencesDto();
+        return new UserPreferencesDto(row.Text("theme"), row.Flag("preferSubStreamInGrid"), row.Flag("hardwareDecoding"),
+            (int)row.Id("networkCachingMs"), row.Flag("showDiagnostics"));
     }
 }

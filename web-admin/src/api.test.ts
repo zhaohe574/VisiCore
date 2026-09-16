@@ -6,7 +6,7 @@ beforeEach(() => { vi.resetModules(); calls = []; const events = new EventTarget
 afterEach(() => vi.unstubAllGlobals())
 function mockFetch(handler: (path: string, init: RequestInit) => Response | Promise<Response>) { vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit = {}) => { calls.push({ path, init }); return handler(path, init) })) }
 describe('Cookie 与 CSRF 契约', () => {
-  it('登录前获取令牌，身份变化后重新获取，不发送Authorization', async () => { let identity = 'anonymous'; mockFetch((path) => { if (path.endsWith('/auth/csrf')) return json({ token: identity }); if (path.endsWith('/auth/login')) { identity = 'signed-in'; return json({ user: { id: 1 }, expiresAt: '2030-01-01' }) }; if (path.endsWith('/auth/logout')) { identity = 'signed-out'; return new Response(null, { status: 204 }) }; return json({}) }); const { authApi, api } = await import('./api'); await authApi.login('admin', 'test-secret'); await api('/devices', { method: 'POST', body: '{}' }); await authApi.logout(); await authApi.login('admin', 'test-secret'); const writes = calls.filter(call => call.init.method === 'POST'); expect(new Headers(writes[0].init.headers).get('X-CSRF-Token')).toBe('anonymous'); expect(new Headers(writes[1].init.headers).get('X-CSRF-Token')).toBe('signed-in'); expect(new Headers(writes[3].init.headers).get('X-CSRF-Token')).toBe('signed-out'); for (const call of calls) { expect(call.init.credentials).toBe('include'); expect(new Headers(call.init.headers).has('Authorization')).toBe(false) }; const body = JSON.parse(writes[0].init.body as string); expect(body.clientType).toBe('web'); expect(body.clientVersion).toBe('2.0.0') })
+  it('登录前获取令牌，身份变化后重新获取，不发送Authorization', async () => { let identity = 'anonymous'; mockFetch((path) => { if (path.endsWith('/auth/csrf')) return json({ token: identity }); if (path.endsWith('/auth/login')) { identity = 'signed-in'; return json({ user: { id: 1 }, expiresAt: '2030-01-01' }) }; if (path.endsWith('/auth/logout')) { identity = 'signed-out'; return new Response(null, { status: 204 }) }; return json({}) }); const { authApi, api } = await import('./api'); await authApi.login('admin', 'test-secret'); await api('/devices', { method: 'POST', body: '{}' }); await authApi.logout(); await authApi.login('admin', 'test-secret'); const writes = calls.filter(call => call.init.method === 'POST'); expect(new Headers(writes[0].init.headers).get('X-CSRF-Token')).toBe('anonymous'); expect(new Headers(writes[1].init.headers).get('X-CSRF-Token')).toBe('signed-in'); expect(new Headers(writes[3].init.headers).get('X-CSRF-Token')).toBe('signed-out'); for (const call of calls) { expect(call.init.credentials).toBe('include'); expect(new Headers(call.init.headers).has('Authorization')).toBe(false) }; const body = JSON.parse(writes[0].init.body as string); expect(body.clientType).toBe('web'); expect(body.clientVersion).toBe('2.1.0') })
   it('明确CSRF失败重取令牌并只重试一次', async () => { let tokens = 0, writes = 0; mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: `csrf-${++tokens}` }) : ++writes === 1 ? json({ code: 'auth.csrf', message: '校验过期' }, 400) : json({ id: 1 })); const { api } = await import('./api'); expect(await api('/devices', { method: 'POST', body: '{}' })).toEqual({ id: 1 }); expect(tokens).toBe(2); expect(writes).toBe(2) })
   it('业务403不触发重试', async () => { mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: 'csrf' }) : json({ code: 'access.denied', message: '无权限', traceId: 'trace-1' }, 403)); const { api } = await import('./api'); await expect(api('/devices', { method: 'DELETE' })).rejects.toMatchObject({ status: 403, traceId: 'trace-1' }); expect(calls.filter(call => call.path.endsWith('/devices'))).toHaveLength(1) })
   it('并发401合并续期，原请求成功重放', async () => { let authorized = false; mockFetch(async path => { if (path.endsWith('/auth/csrf')) return json({ token: 'csrf' }); if (path.endsWith('/auth/refresh')) { await new Promise(resolve => setTimeout(resolve, 10)); authorized = true; return json({ user: { id: 1 }, expiresAt: '2030-01-01' }) }; return authorized ? json({ ok: true }) : json({ code: 'auth.expired', message: '会话过期' }, 401) }); const { api } = await import('./api'); const values = await Promise.all([api('/devices'), api('/channels')]); expect(values).toEqual([{ ok: true }, { ok: true }]); expect(calls.filter(call => call.path.endsWith('/auth/refresh'))).toHaveLength(1) })
@@ -96,6 +96,105 @@ describe('版本发布管理与更新日志 API 契约', () => {
     expect(publishVersionCall.path.endsWith('/releases/version/2.0.4/publish')).toBe(true)
     expect(publishVersionCall.init.method).toBe('POST')
     expect(JSON.parse(publishVersionCall.init.body as string)).toEqual({ minimumVersion: '2.0.0', forceUpdate: false })
+  })
+})
+describe('SSL 与域名管控 API 契约', () => {
+  it('支持总览、域名管理 CRUD 与设为主域名', async () => {
+    mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: 'csrf-token' }) : json({ ok: true }))
+    const { sslApi } = await import('./api')
+
+    // 总览
+    await sslApi.overview()
+    expect(calls.at(-1)!.path.endsWith('/ssl/overview')).toBe(true)
+
+    // 域名列表
+    await sslApi.domains({ search: 'example' })
+    expect(calls.at(-1)!.path.includes('/ssl/domains?search=example')).toBe(true)
+
+    // 添加域名
+    await sslApi.saveDomain(null, {
+      domain: 'video.example.com',
+      port: 443,
+      protocol: 'https',
+      description: '主入口',
+      isPrimary: true,
+      forceHttps: true,
+      hstsEnabled: true,
+      enabled: true
+    })
+    const saveCall = calls.at(-1)!
+    expect(saveCall.path.endsWith('/ssl/domains')).toBe(true)
+    expect(saveCall.init.method).toBe('POST')
+    expect(JSON.parse(saveCall.init.body as string).domain).toBe('video.example.com')
+
+    // 更新域名
+    await sslApi.saveDomain(1, {
+      domain: 'video.example.com',
+      port: 8443,
+      protocol: 'https',
+      description: '主入口修改',
+      isPrimary: true,
+      forceHttps: true,
+      hstsEnabled: true,
+      enabled: true
+    })
+    const updateCall = calls.at(-1)!
+    expect(updateCall.path.endsWith('/ssl/domains/1')).toBe(true)
+    expect(updateCall.init.method).toBe('PUT')
+
+    // 设为主域名
+    await sslApi.setPrimaryDomain(1)
+    const primaryCall = calls.at(-1)!
+    expect(primaryCall.path.endsWith('/ssl/domains/1/primary')).toBe(true)
+    expect(primaryCall.init.method).toBe('PUT')
+
+    // 删除域名
+    await sslApi.deleteDomain(1)
+    const deleteCall = calls.at(-1)!
+    expect(deleteCall.path.endsWith('/ssl/domains/1')).toBe(true)
+    expect(deleteCall.init.method).toBe('DELETE')
+  })
+
+  it('支持证书列表、上传、详情、设为生效与 Nginx 配置获取', async () => {
+    mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: 'csrf-token' }) : json({ ok: true }))
+    const { sslApi } = await import('./api')
+
+    // 证书列表
+    await sslApi.certificates()
+    expect(calls.at(-1)!.path.endsWith('/ssl/certificates')).toBe(true)
+
+    // 证书详情
+    await sslApi.certificate(2)
+    expect(calls.at(-1)!.path.endsWith('/ssl/certificates/2')).toBe(true)
+
+    // 上传证书
+    await sslApi.uploadCertificate({
+      name: '测试证书',
+      certPem: '-----BEGIN CERTIFICATE-----\nFAKE\n-----END CERTIFICATE-----',
+      keyPem: '-----BEGIN PRIVATE KEY-----\nFAKE\n-----END PRIVATE KEY-----'
+    })
+    const uploadCall = calls.at(-1)!
+    expect(uploadCall.path.endsWith('/ssl/certificates')).toBe(true)
+    expect(uploadCall.init.method).toBe('POST')
+
+    // 设为当前生效
+    await sslApi.setActiveCertificate(2)
+    const activeCall = calls.at(-1)!
+    expect(activeCall.path.endsWith('/ssl/certificates/2/active')).toBe(true)
+    expect(activeCall.init.method).toBe('PUT')
+
+    // 删除证书
+    await sslApi.deleteCertificate(3)
+    const delCall = calls.at(-1)!
+    expect(delCall.path.endsWith('/ssl/certificates/3')).toBe(true)
+    expect(delCall.init.method).toBe('DELETE')
+
+    // 下载链接
+    expect(sslApi.downloadCertUrl(2)).toContain('/api/v2/ssl/certificates/2/download')
+
+    // 获取 Nginx 配置
+    await sslApi.nginxConfig()
+    expect(calls.at(-1)!.path.endsWith('/ssl/nginx-config')).toBe(true)
   })
 })
 

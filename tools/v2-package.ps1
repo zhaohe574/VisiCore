@@ -64,8 +64,8 @@ function Test-FinalPayloads {
     # 管理解包不会注册或安装正式产品，比较的是最终 MSI 内嵌 CAB 的实际文件。
     $extract = Join-Path $Evidence 'msi-extracted'
     $log = Join-Path $Evidence 'msi-extract.log'
-    $arguments = '/a "' + $MsiPath + '" /qn /norestart TARGETDIR="' + $extract + '" /L*v "' + $log + '"'
-    $process = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32/msiexec.exe') -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
+    $argumentString = "/a `"$MsiPath`" /qn TARGETDIR=`"$extract`" /L*v `"$log`""
+    $process = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32/msiexec.exe') -ArgumentList $argumentString -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "最终 MSI 解包失败，退出码 $($process.ExitCode)，日志：$log。" }
     $msiHashes = @{}
     foreach ($name in $payloadNames) {
@@ -107,7 +107,9 @@ VisiCore（视枢）$version，Windows x64。
 "@
 $readme | Set-Content -LiteralPath (Join-Path $publish '使用说明.txt') -Encoding utf8
 # ZIP 和安装包都从同一个自包含发布目录生成。
-if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip }
+if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+if (Test-Path -LiteralPath $msi) { Remove-Item -LiteralPath $msi -Force }
+if (Test-Path -LiteralPath ($msi.Replace('.msi', '.wixpdb'))) { Remove-Item -LiteralPath ($msi.Replace('.msi', '.wixpdb')) -Force }
 [IO.Compression.ZipFile]::CreateFromDirectory($publish, $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
 $cabcache = Join-Path $output ('cabcache-' + [Guid]::NewGuid().ToString('N'))
 # 每轮缓存使用新目录，禁止将相同文件版本号的旧 DLL 从历史 CAB 带入新包。

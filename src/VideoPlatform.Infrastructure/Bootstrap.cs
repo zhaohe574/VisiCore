@@ -32,6 +32,7 @@ public static class Bootstrap
         services.AddSingleton<DeviceService>();
         services.AddSingleton<MediaService>();
         services.AddSingleton<AdministrationService>();
+        services.AddSingleton<SslService>();
         return services;
     }
 
@@ -39,6 +40,7 @@ public static class Bootstrap
     {
         var db = provider.GetRequiredService<Database>();
         var options = provider.GetRequiredService<PlatformOptions>();
+        var sslService = provider.GetRequiredService<SslService>();
         await db.MigrateAsync(ct);
         await db.TransactionAsync(async tx =>
         {
@@ -48,21 +50,38 @@ public static class Bootstrap
             foreach (var (code, role) in Rules.DefaultRoles)
             {
                 var inserted = await tx.OneAsync("insert into roles(name,code,all_channels) values(@name,@code,@all) on conflict(code) do nothing returning id", new { name = role.Name, code, all = code == "admin" }, ct);
-                if (inserted is null) continue;
-                foreach (var permission in code == "admin" ? Rules.Permissions.Keys : role.Codes)
-                    await tx.ExecuteAsync("insert into role_permissions(role_id,permission_code) values(@id,@permission) on conflict do nothing", new { id = inserted.Id(), permission }, ct);
+                if (inserted is not null)
+                    foreach (var permission in role.Codes)
+                        await tx.ExecuteAsync("insert into role_permissions(role_id,permission_code) values(@id,@permission) on conflict do nothing", new { id = inserted.Id(), permission }, ct);
             }
             await tx.ExecuteAsync("insert into role_permissions(role_id,permission_code) select r.id, p.code from roles r cross join permissions p where r.code = 'admin' on conflict do nothing", ct: ct);
-            var count = await tx.OneAsync("select count(*) as count from users", ct: ct);
-            if (count.Id("count") == 0)
+            var adminCount = await tx.OneAsync("select count(*) as count from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id where r.code='admin'", ct: ct);
+            if (adminCount.Id("count") == 0)
             {
+                Rules.Require(!string.IsNullOrWhiteSpace(options.BootstrapPassword), "未配置初始管理员密码：PLATFORM_ADMIN_PASSWORD");
                 Rules.Password(options.BootstrapPassword);
                 var user = await tx.OneAsync("insert into users(username,password_hash,display_name) values(@username,@hash,'平台管理员') returning id", new { username = options.BootstrapUser, hash = Passwords.Hash(options.BootstrapPassword!) }, ct);
                 await tx.ExecuteAsync("insert into user_roles(user_id,role_id) select @id,id from roles where code='admin'", new { id = user.Id() }, ct);
             }
             await tx.ExecuteAsync("insert into settings(id,value) values(1,cast(@value as jsonb)) on conflict do nothing", new { value = JsonSerializer.Serialize(new PlatformSettings(), JsonDefaults.Options) }, ct);
+            var domainCount = await tx.OneAsync("select count(*) as count from ssl_domains", ct: ct);
+            if (domainCount.Id("count") == 0)
+            {
+                var defaultHost = "localhost";
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(options.PublicBase))
+                    {
+                        var uri = new Uri(options.PublicBase);
+                        defaultHost = uri.Host;
+                    }
+                }
+                catch { }
+                await tx.ExecuteAsync("insert into ssl_domains(domain,port,protocol,description,is_primary,force_https,hsts_enabled,enabled) values(@domain,443,'https','系统默认访问地址',true,true,true,true) on conflict do nothing", new { domain = defaultHost }, ct);
+            }
             return true;
         }, ct);
+        await sslService.RefreshPlatformOptionsAsync(ct);
     }
 }
 

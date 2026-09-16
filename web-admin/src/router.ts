@@ -20,6 +20,7 @@ export const router = createRouter({
       { path: 'sessions', component: () => import('./pages/SessionsPage.vue'), meta: { title: '在线会话', permission: 'session.manage' } },
       { path: 'audit', component: () => import('./pages/AuditPage.vue'), meta: { title: '操作审计', permission: 'audit.read' } },
       { path: 'releases', component: () => import('./pages/ReleasesPage.vue'), meta: { title: '版本发布', permission: 'desktop.release.manage' } },
+      { path: 'ssl', component: () => import('./pages/SslPage.vue'), meta: { title: 'SSL管控', permission: 'ssl.read' } },
       { path: 'settings', component: () => import('./pages/SettingsPage.vue'), meta: { title: '系统设置', permission: 'settings.manage' } },
       { path: 'profile', component: () => import('./pages/ProfilePage.vue'), meta: { title: '个人账号' } },
       { path: 'forbidden', component: () => import('./pages/ForbiddenPage.vue'), meta: { title: '访问受限' } },

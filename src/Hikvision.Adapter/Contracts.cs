@@ -6,10 +6,13 @@ internal sealed record RecordingSearchRequest(int Channel, DateTimeOffset Start,
 internal sealed record RecordingSummary(string FileName, DateTimeOffset Start, DateTimeOffset End, long FileSize, int FileType, int StreamType, uint FileIndex);
 internal sealed record PlaybackSegment(DateTimeOffset Start, DateTimeOffset End, string FileName, long FileSize, int FileType, int StreamType, uint FileIndex);
 internal sealed record LiveStartRequest(Guid SessionId, int Channel, int StreamType = 2, string Profile = "native");
-internal sealed record LiveSummary(string Stream, int StreamType, string Codec, bool Transcoded);
-internal sealed record PlaybackStartRequest(Guid SessionId, long UserId, int Channel, DateTimeOffset Start, DateTimeOffset End, string Profile = "native");
+internal sealed record LiveSummary(string Stream, int StreamType, string Codec, bool Transcoded, int? Width = null, int? Height = null, int? BitrateKbps = null);
+/// <summary>单路码流能力探测结果。<c>Available=false</c> 表示设备确认没有该档位，客户端可据此跳过试错。</summary>
+internal sealed record StreamProbeRequest(int Channel, int StreamType);
+internal sealed record StreamCapability(bool Available, string? Codec = null, int? Width = null, int? Height = null, int? BitrateKbps = null, string? Error = null);
+internal sealed record PlaybackStartRequest(Guid SessionId, long UserId, int Channel, DateTimeOffset Start, DateTimeOffset End, string Profile = "native", int StreamType = 1);
 internal sealed record PlaybackControlRequest(string Action, DateTimeOffset? Position = null, double? Speed = null);
-internal sealed record PlaybackSummary(Guid Id, string Stream, string State, DateTimeOffset Start, DateTimeOffset End, DateTimeOffset CurrentTime, int Progress, double Speed, IReadOnlyList<PlaybackSegment> Segments, string Codec, bool Transcoded, string? Error = null);
+internal sealed record PlaybackSummary(Guid Id, string Stream, string State, DateTimeOffset Start, DateTimeOffset End, DateTimeOffset CurrentTime, int Progress, double Speed, IReadOnlyList<PlaybackSegment> Segments, string Codec, bool Transcoded, string? Error = null, int? Width = null, int? Height = null, int? BitrateKbps = null);
 internal sealed record PtzRequest(int Channel, string Command, uint Speed = 4, bool Stop = false);
 internal sealed record PresetRequest(int Channel, uint Preset);
 internal sealed record ExportRequest(Guid JobId, int Channel, DateTimeOffset Start, DateTimeOffset End, string OutputDirectory);

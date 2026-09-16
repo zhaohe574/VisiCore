@@ -27,9 +27,10 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
         var id = Guid.NewGuid();
         var token = Passwords.Token();
         var deviceId = channel.Id("deviceId");
+        var hasSplit25 = kind == "live" && (await access.IsAdministratorAsync(actor.UserId, ct) || await access.HasPermissionAsync(actor.UserId, "live.split25", ct));
+        var liveLimit = hasSplit25 ? Math.Max(settings.LivePerUser, 25) : Math.Min(settings.LivePerUser, 16);
         await db.TransactionAsync(async tx =>
         {
-            // 以数据库事务串行预留配额，多个 API 进程也不会同时越过上限。
             await tx.ExecuteAsync("select pg_advisory_xact_lock(72002002)", ct: ct);
             if (kind == "live")
             {
@@ -48,7 +49,7 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
                 where m.closed_at is null and m.expires_at>now()
                   and s.revoked_at is null and s.expires_at>now()
                 """, new { actor.UserId, deviceId, kind }, ct);
-            Rules.Require(counts.Id("own") < (kind == "live" ? settings.LivePerUser : settings.PlaybackPerUser), "已达到个人播放窗口上限", "media.userQuota", 429);
+            Rules.Require(counts.Id("own") < (kind == "live" ? liveLimit : settings.PlaybackPerUser), "已达到个人播放窗口上限", "media.userQuota", 429);
             if (kind == "playback") Rules.Require(counts.Id("device") < settings.PlaybackPerDevice && counts.Id("playback") < settings.PlaybackGlobal, "已达到回放并发上限", "media.playbackQuota", 429);
             await tx.ExecuteAsync("insert into media_sessions(id,user_id,auth_session_id,device_id,channel_id,kind,stream_type,profile,token_hash,token_cipher,start_at,end_at,expires_at) values(@id,@userId,@authSession,@deviceId,@channelId,@kind,@streamType,@profile,@hash,@cipher,@start,@end,now()+interval '3 minutes')", new { id, actor.UserId, authSession = actor.SessionId, deviceId, channelId, kind, streamType, profile, hash = Passwords.TokenHash(token), cipher = secrets.Protect(token), start, end }, ct);
             return true;
@@ -57,7 +58,7 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
         {
             var payload = kind == "live"
                 ? (object)new { sessionId = id, channel = (int)channel.Id("deviceChannel"), streamType, profile }
-                : new { sessionId = id, userId = actor.UserId, channel = (int)channel.Id("deviceChannel"), start, end, profile };
+                : new { sessionId = id, userId = actor.UserId, channel = (int)channel.Id("deviceChannel"), start, end, profile, streamType };
             var state = await adapter.SendAsync(HttpMethod.Post, $"/internal/devices/{deviceId}/{kind}", payload, ct) as JsonObject ?? new JsonObject();
             Rules.Require(!string.IsNullOrWhiteSpace(state.Text("stream")), "设备未提供媒体流", "media.stream", 502);
             await db.TransactionAsync(async tx =>
@@ -162,6 +163,11 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
         result["expiresAt"] = row["expiresAt"]?.DeepClone();
         result["state"] ??= row["state"]?.DeepClone();
         result["codec"] ??= row.Flag("transcoded") ? "h264" : row.Text("codec", "unknown");
+        // 适配器探测到的真实媒体参数（分辨率／码率）。老版本适配器不返回这些字段时保持缺失，
+        // 客户端必须按“未知”处理，不得用估计值顶替。
+        result["width"] = state?["width"]?.DeepClone();
+        result["height"] = state?["height"]?.DeepClone();
+        result["bitrateKbps"] = state?["bitrateKbps"]?.DeepClone();
         // 回放在创建响应之后才完成编码探测，优先返回适配器的当前状态。
         result["transcoded"] ??= row.Flag("transcoded");
         result["rtspUrl"] = $"{options.RtspsBase}/{path}?token={token}";

@@ -16,7 +16,7 @@ public static class MediaEndpoints
     {
         var group = app.MapGroup("/api/v2").RequireAuthorization().WithTags("视频与云台");
         group.MapPost("/live-sessions", async (LiveRequest request, HttpContext context, MediaService media) => Results.Ok(await media.StartAsync(ApiSupport.Actor(context), request.ChannelId, "live", request.StreamType, request.Profile, ct: context.RequestAborted))).WithName("StartLive");
-        group.MapPost("/playback-sessions", async (PlaybackRequest request, HttpContext context, MediaService media) => Results.Ok(await media.StartAsync(ApiSupport.Actor(context), request.ChannelId, "playback", 1, request.Profile, request.Start, request.End, context.RequestAborted))).WithName("StartPlayback");
+        group.MapPost("/playback-sessions", async (PlaybackRequest request, HttpContext context, MediaService media) => Results.Ok(await media.StartAsync(ApiSupport.Actor(context), request.ChannelId, "playback", request.StreamType, request.Profile, request.Start, request.End, context.RequestAborted))).WithName("StartPlayback");
         foreach (var kind in new[] { "live", "playback" })
         {
             group.MapGet($"/{kind}-sessions/{{id:guid}}", async (Guid id, HttpContext context, MediaService media) => Results.Ok(await media.GetAsync(ApiSupport.Actor(context), id, ct: context.RequestAborted))).WithName($"Get{kind}Session");

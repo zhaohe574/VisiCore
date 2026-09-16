@@ -421,6 +421,10 @@ internal sealed class AdministrationTests(IServiceProvider services, HttpClient 
             Assert(system.MemoryTotalBytes is > 0 && system.MemoryUsedBytes > 0 && system.MemoryUsedBytes <= system.MemoryTotalBytes, "宿主内存未真实采集");
             Assert(system.DiskTotalBytes is > 0 && system.DiskFreeBytes >= 0 && system.DiskFreeBytes <= system.DiskTotalBytes, "宿主磁盘未真实采集");
             Assert(system.CpuPercent is >= 0 and <= 100, "宿主 CPU 未真实采集");
+            Assert(system.Network != null && system.Network.RxBytesPerSecond >= 0 && system.Network.TxBytesPerSecond >= 0, "宿主网络未真实采集");
+            Assert(system.Performance != null && system.Performance.CpuCores > 0 && system.Performance.ProcessWorkingSetBytes > 0, "宿主性能未真实采集");
+            Assert(system.Disks != null && system.Disks.Count > 0, "宿主磁盘列表未真实采集");
+            Assert(system.Host != null && !string.IsNullOrEmpty(system.Host.OsDescription) && !string.IsNullOrEmpty(system.Host.MachineName), "宿主系统信息未真实采集");
             Assert(system.Services.Single(s => s.Name == "后台任务").Status == "online", "后台心跳状态错误");
             await db.ExecuteAsync("update service_heartbeats set details=cast(@details as jsonb) where name='worker'", new { details = "{\"jobs\":{\"exports\":{\"state\":\"degraded\"}}}" });
             Assert((await admin.SystemAsync(actor)).Services.Single(s => s.Name == "后台任务").Status == "degraded", "降级的后台任务被错误标成正常");

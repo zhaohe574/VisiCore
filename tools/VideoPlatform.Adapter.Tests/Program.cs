@@ -18,6 +18,39 @@ var checks = new List<(string Name, Func<Task> Run)>
         return Task.CompletedTask;
     }),
     ("录像片段裁剪、重叠与缺口", () => { PlaybackTimeline.SelfTest(); return Task.CompletedTask; }),
+    ("码流能力探测按档位返回且不伪造未知参数", () => ProbeChannelStreamAsync()),
+    ("ffprobe 分辨率与码率解析及缺失字段容错", () =>
+    {
+        // 平台需要向客户端回传真实媒体参数；没有真实摄像机时用固定样本回归解析。
+        var full = """
+            {"streams":[
+              {"codec_type":"video","codec_name":"h264","width":2560,"height":1440,"bit_rate":"4194304"},
+              {"codec_type":"audio","codec_name":"aac"}
+            ]}
+            """;
+        var parsed = MediaTools.ParseProbeJson(full);
+        Check.Equal("h264", parsed.Video);
+        Check.Equal("aac", parsed.Audio);
+        Check.Equal(2560, parsed.Width);
+        Check.Equal(1440, parsed.Height);
+        Check.Equal(4194, parsed.BitrateKbps);
+        Check.Equal("2560×1440", new MediaCodecs(parsed.Video!, parsed.Audio, parsed.Width, parsed.Height, parsed.BitrateKbps).ResolutionLabel);
+
+        // 数值型 bit_rate 与缺失字段都必须安全降级，不得抛出或伪造数值。
+        var sparse = """{"streams":[{"codec_type":"video","codec_name":"hevc","bit_rate":2097152},{"codec_type":"video","codec_name":"h264","width":640,"height":360}]}""";
+        var fallback = MediaTools.ParseProbeJson(sparse);
+        Check.Equal("hevc", fallback.Video);
+        Check.Equal(640, fallback.Width);
+        Check.Equal(360, fallback.Height);
+        Check.Equal(2097, fallback.BitrateKbps);
+        Check.True(fallback.Audio is null);
+
+        Check.True(MediaTools.ParseProbeJson(null).Video is null);
+        Check.True(MediaTools.ParseProbeJson("not json").Width is null);
+        Check.True(MediaTools.ParseProbeJson("""{"streams":[]}""").Height is null);
+        Check.True(new MediaCodecs("h264", null).ResolutionLabel is null);
+        return Task.CompletedTask;
+    }),
     ("媒体错误输出有界且隐藏设备密码和令牌", async () =>
     {
         using var input = new StreamReader(new MemoryStream(System.Text.Encoding.UTF8.GetBytes(new string('x', 65536))));
@@ -56,6 +89,26 @@ var checks = new List<(string Name, Func<Task> Run)>
     ("下载期间磁盘不足主动终止任务", ExportDiskFailure),
     ("HTTP 内部密钥与全部契约端点", HttpContract)
 };
+
+static async Task ProbeChannelStreamAsync()
+{
+    // B1：平台据此在通道上标注“无子码流”，客户端无需再靠试错发现。
+    using var device = new SimulatedDevice(1, new DeviceOptions("127.0.0.1", 8000, "u", "p"), new AlarmJournal(1, Path.GetTempPath()));
+    var probe = new StreamCapabilityProbe(device);
+    var main = await probe.ProbeAsync(1, 1, default);
+    Check.True(main.Available);
+    Check.Equal("H265", main.Codec);
+    Check.Equal(2560, main.Width);
+    Check.Equal(1440, main.Height);
+    var sub = await probe.ProbeAsync(1, 2, default);
+    Check.True(sub.Available);
+    Check.Equal("H264", sub.Codec);
+    Check.Equal(640, sub.Width);
+    Check.True(sub.BitrateKbps is > 0);
+    // 非法档位与非法通道必须被拒绝，不能静默返回结果。
+    await Check.ThrowsAsync<ArgumentException>(() => probe.ProbeAsync(1, 3, default));
+    await Check.ThrowsAsync<ArgumentException>(() => probe.ProbeAsync(0, 2, default));
+}
 if (args.Contains("--media")) checks.Add(("真实 FFmpeg 视频原编码封装与分段 ZIP 导出", ExportMedia));
 var failures = 0;
 foreach (var test in checks)
@@ -446,3 +499,8 @@ internal sealed class TestServer : IAsyncDisposable
         MediaTools.Kill(_process); await _process.WaitForExitAsync(); await _drains; _process.Dispose(); Client.Dispose(); _directory.Dispose();
     }
 }
+
+
+
+
+

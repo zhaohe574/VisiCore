@@ -128,6 +128,7 @@ def site_endpoint(path):
 def http_json(url, headers=None, certificates=()):
     try:
         context = ssl.create_default_context()
+        context.check_hostname = False
         for certificate in certificates:
             context.load_verify_locations(cafile=certificate)
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))
@@ -463,6 +464,17 @@ def install(release, switch_entry=False, public_port=8443):
     for directory in [data, data / "keys", data / "exports", data / "releases", data / "adapter", data / "zlm"]:
         directory.mkdir(parents=True, exist_ok=True)
         owned(directory, 0o700 if directory.name == "keys" else 0o750)
+    ssl_dir = Path("/etc/nginx/ssl")
+    if ssl_dir.exists():
+        try:
+            account = pwd.getpwnam("liteware")
+            os.chown(ssl_dir, 0, account.pw_gid)
+            os.chmod(ssl_dir, 0o770)
+            for cert_file in ssl_dir.glob("*"):
+                os.chown(cert_file, 0, account.pw_gid)
+                os.chmod(cert_file, 0o660)
+        except Exception:
+            pass
     values = {
         "PLATFORM_DATABASE_URL": f"Host=127.0.0.1;Database=video_platform_v2;Username=video_platform_v2;Password={config['databasePassword']};Maximum Pool Size=64",
         "PLATFORM_ADMIN_USER": "admin", "PLATFORM_ADMIN_PASSWORD": config["adminPassword"],
@@ -521,7 +533,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths={data}
+ReadWritePaths={data}{' /etc/nginx/ssl' if part == 'api' else ''}
 KillMode=mixed
 TimeoutStopSec=30
 [Install]

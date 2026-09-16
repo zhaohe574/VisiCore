@@ -5,6 +5,12 @@ namespace VideoPlatform.Contracts;
 // 以下契约对应当前实际响应；接口仍返回 JsonObject 时可直接用于 Produces 元数据。
 public sealed record PagedResponse<T>(IReadOnlyList<T> Items, long Total, int Page, int PageSize);
 public sealed record CsrfTokenResponse(string Token);
+/// <summary>
+/// 桌面端显示与性能偏好。默认值必须与本机兜底文件、桌面端 ClientSettings 的默认值保持一致，
+/// 否则同一账号在不同机器上会出现“看似已同步、实际行为不同”的偏差。
+/// </summary>
+public sealed record UserPreferencesDto(string Theme = "light", bool PreferSubStreamInGrid = true,
+    bool HardwareDecoding = true, int NetworkCachingMs = 800, bool ShowDiagnostics = false);
 public sealed record ResourceCreatedResponse(long Id);
 public sealed record DeviceSyncResponse(bool Success, int Channels);
 public sealed record RecordingDto(string FileName, DateTimeOffset Start, DateTimeOffset End, long FileSize, int FileType, int StreamType, uint FileIndex);
@@ -12,6 +18,12 @@ public sealed record RecordingSegmentDto(DateTimeOffset Start, DateTimeOffset En
 public record LiveSessionDto(Guid Id, long ChannelId, int StreamType, string State, DateTimeOffset ExpiresAt, string RtspUrl, string HttpFlvUrl, string HlsUrl, string Codec, bool Transcoded)
 {
     public string? HttpTsUrl { get; init; }
+    /// <summary>真实视频宽度（像素）。来自适配器 ffprobe 探测；探测不到或旧版适配器为 null。</summary>
+    public int? Width { get; init; }
+    /// <summary>真实视频高度（像素）；未知为 null。</summary>
+    public int? Height { get; init; }
+    /// <summary>视频码率（千比特每秒）；未知为 null。客户端不得用估计值顶替。</summary>
+    public int? BitrateKbps { get; init; }
 }
 public sealed record PlaybackSessionDto(Guid Id, long ChannelId, int StreamType, string State, DateTimeOffset ExpiresAt, string RtspUrl, string HttpFlvUrl, string HlsUrl, string Codec, bool Transcoded,
     DateTimeOffset Start, DateTimeOffset End, DateTimeOffset CurrentTime, int Progress, double Speed, IReadOnlyList<RecordingSegmentDto> Segments, string? Error = null)

@@ -261,6 +261,66 @@ public sealed class WorkspaceBehaviorTests
         Assert.Equal(16, api.Calls.Count(c => c.Body is LiveRequest));
         await vm.ClearAsync();
     }
+
+    [Fact]
+    public void ProfileAndChangePasswordDialogCommandsInvokeDialogServiceWhenAuthenticated()
+    {
+        using var http = new HttpClient(new StubHandler(_ => Task.FromResult(StubHandler.Ok(Fixtures.Login()))));
+        var session = new SessionService(http, new MemoryCredentials());
+        var api = new FakeApi();
+        var workspace = Create(api);
+        var alarms = new AlarmsViewModel(api);
+        var exports = new ExportsViewModel(api, new FakeDialogs());
+        var dialogs = new FakeDialogs();
+        var shell = new ShellViewModel(session, api, new EventService(session), new UpdateService(api),
+            workspace, alarms, exports, new InlineDispatcher(), dialogs);
+
+        // 未登录状态下不弹出
+        shell.IsAuthenticated = false;
+        shell.OpenProfileCommand.Execute(null);
+        Assert.False(dialogs.ProfileOpened);
+        shell.OpenChangePasswordCommand.Execute(null);
+        Assert.False(dialogs.ChangePasswordOpened);
+
+        // 登录状态下弹出
+        shell.IsAuthenticated = true;
+        shell.OpenProfileCommand.Execute(null);
+        Assert.True(dialogs.ProfileOpened);
+        shell.OpenChangePasswordCommand.Execute(null);
+        Assert.True(dialogs.ChangePasswordOpened);
+    }
+
+    [Fact]
+    public void SettingsTabSwitchingAndStorageBrowsingWork()
+    {
+        using var http = new HttpClient(new StubHandler(_ => Task.FromResult(StubHandler.Ok(Fixtures.Login()))));
+        var session = new SessionService(http, new MemoryCredentials());
+        var api = new FakeApi();
+        var workspace = Create(api);
+        var alarms = new AlarmsViewModel(api);
+        var exports = new ExportsViewModel(api, new FakeDialogs());
+        var dialogs = new FakeDialogs();
+        var shell = new ShellViewModel(session, api, new EventService(session), new UpdateService(api),
+            workspace, alarms, exports, new InlineDispatcher(), dialogs);
+
+        Assert.Equal("general", shell.SettingsTab);
+        shell.SetSettingsTabCommand.Execute("media");
+        Assert.Equal("media", shell.SettingsTab);
+        shell.SetSettingsTabCommand.Execute("storage");
+        Assert.Equal("storage", shell.SettingsTab);
+        shell.SetSettingsTabCommand.Execute("about");
+        Assert.Equal("about", shell.SettingsTab);
+        shell.SetSettingsTabCommand.Execute("invalid_tab");
+        Assert.Equal("about", shell.SettingsTab);
+
+        dialogs.SelectedFolder = @"D:\Captured\Test";
+        shell.BrowseSnapshotPathCommand.Execute(null);
+        Assert.Equal(@"D:\Captured\Test", shell.SnapshotPath);
+
+        dialogs.SelectedFolder = @"D:\Exported\Test";
+        shell.BrowseExportPathCommand.Execute(null);
+        Assert.Equal(@"D:\Exported\Test", shell.ExportPath);
+    }
 }
 
 

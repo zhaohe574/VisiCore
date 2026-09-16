@@ -45,14 +45,63 @@ export type OnlineSession = SchemaDto<'AdministrationSessionDto'>
 export type Audit = SchemaDto<'AdministrationAuditDto'>
 export type Settings = SchemaDto<'PlatformSettings'>
 export type Dashboard = SchemaDto<'DashboardDto'>
-export type SystemStatus = SchemaDto<'SystemStatisticsDto'>
+export interface NetworkInterfaceInfo {
+  name: string
+  description?: string
+  type: string
+  status: string
+  speed: number
+  bytesReceived: number
+  bytesSent: number
+  ipAddress?: string
+}
+export interface NetworkMetrics {
+  rxBytesPerSecond: number
+  txBytesPerSecond: number
+  totalBytesReceived: number
+  totalBytesSent: number
+  interfaces: NetworkInterfaceInfo[]
+}
+export interface ServerPerformance {
+  cpuCores: number
+  processCpuPercent?: number
+  processThreads: number
+  processWorkingSetBytes: number
+  processPrivateMemoryBytes: number
+  gcHeapBytes?: number
+  swapTotalBytes?: number
+  swapUsedBytes?: number
+}
+export interface DiskInfo {
+  name: string
+  label?: string
+  totalBytes?: number
+  freeBytes?: number
+  usedBytes?: number
+  usedPercent?: number
+  isDataPath: boolean
+}
+export interface HostInfo {
+  osDescription: string
+  osArchitecture: string
+  framework: string
+  machineName: string
+  systemUptimeSeconds: number
+  serverTime: string
+}
+export type SystemStatus = SchemaDto<'SystemStatisticsDto'> & {
+  network?: NetworkMetrics
+  performance?: ServerPerformance
+  disks?: DiskInfo[]
+  host?: HostInfo
+}
 export type LiveSession = SchemaDto<'LiveSessionDto'>
 export type Recording = SchemaDto<'RecordingListResponse'>[number]
 export type TimeSegment = SchemaDto<'RecordingSegmentDto'>
 export type PlaybackSession = SchemaDto<'PlaybackSessionDto'>
-export type PlaybackControl = Omit<SchemaDto<'PlaybackControlRequest'>, 'action'> & { action: 'pause' | 'resume' | 'seek' | 'speed' }
+export type PlaybackControl = Omit<SchemaDto<'PlaybackControlRequest'>, 'action'> & { action: 'pause' | 'resume' | 'seek' | 'speed' | 'step' }
 export type PtzCommand = 'up' | 'down' | 'left' | 'right' | 'auto' | 'zoomIn' | 'zoomOut' | 'focusNear' | 'focusFar' | 'irisOpen' | 'irisClose'
-export type Layout = Omit<SchemaDto<'AdministrationLayoutDto'>, 'kind' | 'layout'> & { kind: 'layout' | 'patrol'; layout: 1 | 4 | 9 | 16 }
+export type Layout = Omit<SchemaDto<'AdministrationLayoutDto'>, 'kind' | 'layout'> & { kind: 'layout' | 'patrol'; layout: 1 | 4 | 6 | 8 | 9 | 10 | 16 | 25 }
 export type Alarm = SchemaDto<'AlarmDto'>
 export type AlarmDetail = SchemaDto<'AlarmDetailDto'>
 export type ExportJob = SchemaDto<'ExportDto'>
@@ -60,3 +109,78 @@ export type Release = SchemaDto<'ReleaseDto'>
 export type PublicRelease = Omit<SchemaDto<'LatestReleaseDto'>, 'packages'> & { packages?: Release[] }
 export type EventKind = 'alarm.changed' | 'device.changed' | 'media.changed' | 'export.changed' | 'access.changed'
 export interface ResourceEvent { id: string | number; version: number; kind: string }
+
+export interface SslCertificate {
+  id: number
+  name: string
+  commonName: string
+  dnsNames: string[]
+  issuerDn: string
+  subjectDn: string
+  serialNumber: string
+  thumbprint: string
+  validFrom: string
+  validTo: string
+  daysRemaining: number
+  status: 'valid' | 'expiring_soon' | 'expired'
+  isActive: boolean
+  boundDomainCount: number
+  createdAt: string
+  certPem?: string | null
+}
+
+export interface SslCertificateUploadInput {
+  name: string
+  certPem: string
+  keyPem: string
+}
+
+export interface SslDomain {
+  id: number
+  domain: string
+  port: number
+  protocol: 'https' | 'http'
+  description: string
+  isPrimary: boolean
+  forceHttps: boolean
+  hstsEnabled: boolean
+  certificateId?: number | null
+  certificateName?: string | null
+  certificateCommonName?: string | null
+  certificateValidTo?: string | null
+  certMatchStatus: 'matched' | 'mismatched' | 'no_cert'
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SslDomainInput {
+  domain: string
+  port: number
+  protocol: 'https' | 'http'
+  description: string
+  isPrimary: boolean
+  forceHttps: boolean
+  hstsEnabled: boolean
+  certificateId?: number | null
+  enabled: boolean
+}
+
+export interface SslOverview {
+  activeCertificate?: SslCertificate | null
+  totalCertificates: number
+  expiringCertificates: number
+  totalDomains: number
+  primaryDomain?: SslDomain | null
+  httpsEnforced: boolean
+  certFilePath: string
+  keyFilePath: string
+  fileSynced: boolean
+}
+
+export interface NginxConfig {
+  content: string
+  configPath: string
+  reloadCommand: string
+}
+

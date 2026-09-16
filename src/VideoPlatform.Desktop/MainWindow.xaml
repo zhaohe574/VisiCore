@@ -4,12 +4,13 @@
         xmlns:views="clr-namespace:VideoPlatform.Desktop.Views"
         Title="VisiCore（视枢）- 工业视频综合管理系统"
         Width="1440" Height="900" MinWidth="640" MinHeight="340"
-        Background="{StaticResource PageBrush}" Foreground="{StaticResource TextBrush}"
+        Background="{DynamicResource PageBrush}" Foreground="{DynamicResource TextBrush}"
         WindowStartupLocation="CenterScreen" UseLayoutRounding="True"
+        TextOptions.TextFormattingMode="Display"
         Loaded="LoadedWindow" Closing="ClosingWindow" Deactivated="DeactivatedWindow"
         PreviewMouseLeftButtonUp="ReleasedPointer" PreviewKeyDown="KeyPressed">
     <WindowChrome.WindowChrome>
-        <WindowChrome CaptionHeight="42" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+        <WindowChrome CaptionHeight="44" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
     </WindowChrome.WindowChrome>
     <ScrollViewer x:Name="ShellViewport">
         <ScrollViewer.Style>
@@ -45,8 +46,17 @@
                 <RowDefinition x:Name="StatusBarRow" Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <!-- Row 0: 顶部品牌、导航与窗口控制一体化标题栏（消除冗余原生白边标题栏，海康威视 iVMS-4200 风格） -->
-            <Border x:Name="TopTitleBar" Grid.Row="0" Height="42" Background="#16181B" BorderBrush="#282C33" BorderThickness="0,0,0,1" Padding="14,0,0,0">
+            <!-- Row 0：iVMS-4200 风格顶部工具条（品牌 / 模块选项卡 / 连接状态 / 用户 / 窗口控制） -->
+            <Border x:Name="TopTitleBar" Grid.Row="0" Height="44" Background="{DynamicResource HeaderBrush}"
+                    BorderBrush="{DynamicResource HeaderDividerBrush}" BorderThickness="0,0,0,1" Padding="12,0,0,0"
+                    TextElement.Foreground="{DynamicResource HeaderTextBrush}">
+                <Border.Resources>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="VerticalAlignment" Value="Center"/>
+                        <Setter Property="Foreground" Value="{DynamicResource HeaderTextBrush}"/>
+                        <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+                    </Style>
+                </Border.Resources>
                 <Border.Style>
                     <Style TargetType="Border">
                         <Setter Property="Visibility" Value="Visible"/>
@@ -58,84 +68,121 @@
                     </Style>
                 </Border.Style>
                 <DockPanel LastChildFill="False">
-                    <!-- 左侧：Logo、品牌名以及未登录时的系统标识 -->
+                    <!-- 左侧：Logo 与品牌名 -->
                     <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
                         <Image Source="Assets/Brand.png" Width="22" Height="22" Margin="0,0,8,0"/>
-                        <TextBlock Text="VisiCore · 视枢" FontSize="14" FontWeight="Bold" Foreground="#FFFFFF"/>
-                        <Border Background="#242830" CornerRadius="2" Padding="6,1" Margin="10,0,0,0" VerticalAlignment="Center"
+                        <TextBlock Text="VisiCore · 视枢" FontSize="14" FontWeight="Bold" Foreground="{DynamicResource HeaderTextBrush}"/>
+                        <Border Background="{DynamicResource HeaderHoverBrush}" CornerRadius="2" Padding="6,1" Margin="10,0,0,0" VerticalAlignment="Center"
                                 Visibility="{Binding IsAuthenticated, Converter={StaticResource InverseVisibility}}">
-                            <TextBlock Text="工业视频综合管理系统" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                            <TextBlock Text="工业视频综合管理系统" FontSize="11" Foreground="{DynamicResource HeaderMutedBrush}"/>
                         </Border>
                     </StackPanel>
 
-                    <!-- 中间：已登录时的模块导航选项卡（主预览、远程回放、报警中心、导出任务） -->
-                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" Margin="24,0,0,0"
+                    <!-- 中间：一级模块选项卡（主预览、远程回放、报警中心、导出任务） -->
+                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" Margin="20,0,0,0"
                                 Visibility="{Binding IsAuthenticated, Converter={StaticResource BoolVisibility}}"
                                 WindowChrome.IsHitTestVisibleInChrome="True">
-                        <RadioButton GroupName="Module" Style="{StaticResource TabButton}" Height="42"
+                        <StackPanel.Resources>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                                <Setter Property="Foreground" Value="{Binding Path=Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/>
+                                <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
+                            </Style>
+                        </StackPanel.Resources>
+                        <RadioButton GroupName="Module" Style="{StaticResource TabButton}"
                                      IsChecked="{Binding Module, Converter={StaticResource Match}, ConverterParameter=live, Mode=OneWay}"
                                      Command="{Binding SwitchModuleCommand}" CommandParameter="live">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                <TextBlock Text="主预览" VerticalAlignment="Center"/>
+                                <TextBlock Text="&#xE714;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/>
+                                <TextBlock Text="主预览" VerticalAlignment="Center"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/>
                             </StackPanel>
                         </RadioButton>
-                        <RadioButton GroupName="Module" Style="{StaticResource TabButton}" Height="42"
+                        <RadioButton GroupName="Module" Style="{StaticResource TabButton}"
                                      IsChecked="{Binding Module, Converter={StaticResource Match}, ConverterParameter=playback, Mode=OneWay}"
                                      Command="{Binding SwitchModuleCommand}" CommandParameter="playback">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                <TextBlock Text="远程回放" VerticalAlignment="Center"/>
+                                <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/>
+                                <TextBlock Text="远程回放" VerticalAlignment="Center"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/>
                             </StackPanel>
                         </RadioButton>
-                        <RadioButton GroupName="Module" Style="{StaticResource TabButton}" Height="42"
+                        <RadioButton GroupName="Module" Style="{StaticResource TabButton}"
                                      IsChecked="{Binding Module, Converter={StaticResource Match}, ConverterParameter=alarms, Mode=OneWay}"
                                      Command="{Binding SwitchModuleCommand}" CommandParameter="alarms">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xEA8F;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                <TextBlock Text="报警中心" VerticalAlignment="Center"/>
+                                <TextBlock Text="&#xEA8F;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/>
+                                <TextBlock Text="报警中心" VerticalAlignment="Center"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/>
                             </StackPanel>
                         </RadioButton>
-                        <RadioButton GroupName="Module" Style="{StaticResource TabButton}" Height="42"
+                        <RadioButton GroupName="Module" Style="{StaticResource TabButton}"
                                      IsChecked="{Binding Module, Converter={StaticResource Match}, ConverterParameter=exports, Mode=OneWay}"
                                      Command="{Binding SwitchModuleCommand}" CommandParameter="exports">
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xEDE1;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                <TextBlock Text="导出任务" VerticalAlignment="Center"/>
+                                <TextBlock Text="&#xEDE1;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/>
+                                <TextBlock Text="导出任务" VerticalAlignment="Center"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/>
+                            </StackPanel>
+                        </RadioButton>
+                        <RadioButton GroupName="Module" Style="{StaticResource TabButton}"
+                                     IsChecked="{Binding Module, Converter={StaticResource Match}, ConverterParameter=settings, Mode=OneWay}"
+                                     Command="{Binding SwitchModuleCommand}" CommandParameter="settings">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="12" Margin="0,0,6,0" VerticalAlignment="Center"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/>
+                                <TextBlock Text="设置" VerticalAlignment="Center"
+                                           Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=RadioButton}}"/>
                             </StackPanel>
                         </RadioButton>
                     </StackPanel>
 
-                    <!-- 最右侧：窗口控制按钮组（最小化、最大化/向下还原、关闭） -->
+                    <!-- 最右侧：窗口控制按钮组 -->
                     <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" WindowChrome.IsHitTestVisibleInChrome="True">
-                        <Button x:Name="MinimizeButton" Style="{StaticResource WindowControlButton}" Content="&#xE921;" ToolTip="最小化"/>
-                        <Button x:Name="MaximizeButton" Style="{StaticResource WindowControlButton}" Content="&#xE922;" ToolTip="最大化"/>
-                        <Button x:Name="CloseButton" Style="{StaticResource WindowCloseButton}" Content="&#xE8BB;" ToolTip="关闭"/>
+                        <Button x:Name="MinimizeButton" Style="{StaticResource WindowControlButton}" ToolTip="最小化">
+                            <TextBlock Text="&#xE921;" FontFamily="Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                        </Button>
+                        <Button x:Name="MaximizeButton" Style="{StaticResource WindowControlButton}" ToolTip="最大化">
+                            <TextBlock x:Name="MaximizeGlyph" Text="&#xE922;" FontFamily="Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                        </Button>
+                        <Button x:Name="CloseButton" Style="{StaticResource WindowCloseButton}" ToolTip="关闭">
+                            <TextBlock Text="&#xE8BB;" FontFamily="Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                        </Button>
                     </StackPanel>
 
-                    <!-- 右侧操作区：状态指示、设置齿轮按钮与用户中心下拉 -->
-                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,6,0" WindowChrome.IsHitTestVisibleInChrome="True">
-                        <Border Background="#1E2228" CornerRadius="3" Padding="8,3" Margin="0,0,8,0">
+                    <!-- 右侧操作区：刷新、连接状态、用户中心（设置已并入模块选项卡） -->
+                    <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,8,0" WindowChrome.IsHitTestVisibleInChrome="True">
+                        <Button Style="{StaticResource HeaderIconButton}" ToolTip="刷新平台数据"
+                                Command="{Binding RefreshAllCommand}" Margin="0,0,4,0">
+                            <TextBlock Text="&#xE72C;" FontFamily="Segoe MDL2 Assets" FontSize="12" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                       Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                        </Button>
+                        <Border Background="{DynamicResource HeaderHoverBrush}" CornerRadius="3" Padding="8,3" Margin="4,0,8,0" VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal">
-                                <Ellipse Width="6" Height="6" Fill="{StaticResource OnlineBrush}" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                                <TextBlock Text="{Binding ConnectionState}" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
+                                <Ellipse Width="6" Height="6" Fill="{DynamicResource OnlineBrush}" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding ConnectionState}" FontSize="11" Foreground="{DynamicResource HeaderMutedBrush}"/>
                             </StackPanel>
                         </Border>
-                        <Button Content="&#xE713;" Style="{StaticResource IconButton}" ToolTip="设置与更新"
-                                Command="{Binding SwitchModuleCommand}" CommandParameter="settings" Margin="0,0,4,0"/>
                         <Button x:Name="UserMenuButton" Visibility="{Binding IsAuthenticated, Converter={StaticResource BoolVisibility}}"
                                 Background="Transparent" BorderThickness="0" Padding="6,3" ToolTip="用户中心">
                             <StackPanel Orientation="Horizontal">
-                                <Border Background="#242832" CornerRadius="10" Width="20" Height="20" Margin="0,0,6,0" VerticalAlignment="Center">
-                                    <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <Border Background="{DynamicResource HeaderPressBrush}" CornerRadius="10" Width="20" Height="20" Margin="0,0,6,0" VerticalAlignment="Center">
+                                    <TextBlock Text="&#xE77B;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="{DynamicResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                 </Border>
-                                <TextBlock Text="{Binding UserLabel}" FontSize="11" FontWeight="SemiBold" Foreground="#FFFFFF" MaxWidth="120" TextTrimming="CharacterEllipsis"/>
-                                <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="8" Foreground="{StaticResource MutedBrush}" Margin="5,0,0,0"/>
+                                <TextBlock Text="{Binding UserLabel}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource HeaderTextBrush}" MaxWidth="120" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Text="&#xE70D;" FontFamily="Segoe MDL2 Assets" FontSize="8" Foreground="{DynamicResource HeaderMutedBrush}" Margin="5,0,0,0"/>
                             </StackPanel>
                             <Button.ContextMenu>
                                 <ContextMenu Placement="Bottom">
-                                    <MenuItem Header="个人资料" Command="{Binding SwitchModuleCommand}" CommandParameter="settings"/>
-                                    <MenuItem Header="修改密码" Command="{Binding SwitchModuleCommand}" CommandParameter="settings"/>
+                                    <MenuItem Header="个人资料" Command="{Binding OpenProfileCommand}"/>
+                                    <MenuItem Header="修改密码" Command="{Binding OpenChangePasswordCommand}"/>
                                     <MenuItem Header="检查更新" Command="{Binding CheckUpdateCommand}"/>
                                     <Separator/>
                                     <MenuItem Header="退出登录" Command="{Binding LogoutCommand}"/>
@@ -149,27 +196,30 @@
             <!-- Row 1: 保留 0 高度行以保持 Grid 行索引与布局测试严格兼容 -->
             <Border Grid.Row="1" Height="0" Visibility="Collapsed"/>
 
-            <!-- Row 2: 中间主视图容器 -->
+            <!-- Row 2: 主视图容器（* 行，保证视频墙拿到有限测量高度）。
+                 导航统一放在顶栏选项卡，此处不再重复功能竖栏。 -->
             <Grid Grid.Row="2">
                 <Grid Visibility="{Binding CanUseWorkspace, Converter={StaticResource BoolVisibility}}">
                     <views:WorkspaceView DataContext="{Binding Workspace}" Visibility="{Binding DataContext.Module, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource ModuleVisibility}, ConverterParameter=media}"/>
                     <views:AlarmsView DataContext="{Binding Alarms}" Visibility="{Binding DataContext.Module, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource ModuleVisibility}, ConverterParameter=alarms}"/>
                     <views:ExportsView DataContext="{Binding Exports}" Visibility="{Binding DataContext.Module, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource ModuleVisibility}, ConverterParameter=exports}"/>
                 </Grid>
+
                 <views:LoginView Visibility="{Binding IsAuthenticated, Converter={StaticResource InverseVisibility}}"/>
                 <views:SettingsView Visibility="{Binding Module, Converter={StaticResource ModuleVisibility}, ConverterParameter=settings}"/>
-                <Border Background="{StaticResource PageBrush}" Visibility="{Binding UpdateRequired, Converter={StaticResource BoolVisibility}}">
+                <Border Background="{DynamicResource PageBrush}" Visibility="{Binding UpdateRequired, Converter={StaticResource BoolVisibility}}">
                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Width="400">
-                        <TextBlock Text="客户端需要更新" FontSize="24" FontWeight="SemiBold"/>
-                        <TextBlock Text="{Binding UpdateStatus}" TextWrapping="Wrap" Margin="0,16" Foreground="{StaticResource MutedBrush}"/>
-                        <Button Content="安装更新" Command="{Binding InstallUpdateCommand}"/>
+                        <TextBlock Text="客户端需要更新" FontSize="22" FontWeight="SemiBold" Foreground="{DynamicResource TextStrongBrush}"/>
+                        <TextBlock Text="{Binding UpdateStatus}" TextWrapping="Wrap" Margin="0,16" Foreground="{DynamicResource MutedBrush}"/>
+                        <Button Content="安装更新" Style="{StaticResource PrimaryButton}" Command="{Binding InstallUpdateCommand}"/>
                         <Button Content="重新检查" Command="{Binding CheckUpdateCommand}" Margin="0,8"/>
                     </StackPanel>
                 </Border>
             </Grid>
 
-            <!-- Row 3: 底部状态条 (DockPanel) -->
-            <DockPanel Grid.Row="3" Height="26" Background="#16181B" LastChildFill="True">
+            <!-- Row 3: 底部状态条 —— 连接状态 / 模块 / 状态文本 / 诊断 / 版本 / 时钟（直接作为 Grid 行子元素，保持布局契约） -->
+            <DockPanel Grid.Row="3" Height="28" Background="{DynamicResource HeaderBrush}"
+                       TextElement.Foreground="{DynamicResource HeaderMutedBrush}" LastChildFill="True">
                 <DockPanel.Style>
                     <Style TargetType="DockPanel">
                         <Setter Property="Visibility" Value="Visible"/>
@@ -180,10 +230,26 @@
                         </Style.Triggers>
                     </Style>
                 </DockPanel.Style>
-                <TextBlock Text="{Binding Clock}" DockPanel.Dock="Right" Margin="14,0" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
-                <TextBlock Text="{Binding VersionLabel}" DockPanel.Dock="Right" Margin="14,0" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
-                <TextBlock Text="{Binding ConnectionState}" DockPanel.Dock="Right" Margin="12,0" FontSize="11" Foreground="{StaticResource MutedBrush}"/>
-                <TextBlock Text="{Binding Status}" Margin="14,0" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}" Foreground="{StaticResource MutedBrush}"/>
+                <TextBlock Text="{Binding Clock}" DockPanel.Dock="Right" Margin="14,0" FontSize="11" Foreground="{DynamicResource HeaderMutedBrush}"/>
+                <TextBlock Text="{Binding VersionLabel}" DockPanel.Dock="Right" Margin="14,0" FontSize="11" Foreground="{DynamicResource HeaderMutedBrush}"/>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="12,0" VerticalAlignment="Center"
+                            WindowChrome.IsHitTestVisibleInChrome="True">
+                    <Button x:Name="DiagnosticsButton" Style="{StaticResource HeaderIconButton}" Width="20" Height="20"
+                            ToolTip="切换性能诊断显示" Command="{Binding ToggleDiagnosticsCommand}">
+                        <TextBlock Text="&#xE9D9;" FontFamily="Segoe MDL2 Assets" FontSize="10" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                   Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+                    </Button>
+                    <TextBlock Text="{Binding DiagnosticsLabel}" FontSize="11" Foreground="{DynamicResource HeaderMutedBrush}" Margin="4,0,0,0"
+                               Visibility="{Binding ShowDiagnostics, Converter={StaticResource BoolVisibility}}"/>
+                </StackPanel>
+                <Border DockPanel.Dock="Right" Background="{DynamicResource HeaderHoverBrush}" CornerRadius="2" Padding="6,1" Margin="10,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding ModuleLabel}" FontSize="11" Foreground="{DynamicResource HeaderTextBrush}"/>
+                </Border>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="10,0,0,0" VerticalAlignment="Center">
+                    <Ellipse Width="6" Height="6" Fill="{DynamicResource OnlineBrush}" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding ConnectionState}" FontSize="11" Foreground="{DynamicResource HeaderMutedBrush}"/>
+                </StackPanel>
+                <TextBlock Text="{Binding Status}" Margin="14,0" FontSize="11" TextTrimming="CharacterEllipsis" ToolTip="{Binding Status}" Foreground="{DynamicResource HeaderMutedBrush}"/>
             </DockPanel>
         </Grid>
     </ScrollViewer>

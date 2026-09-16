@@ -1,11 +1,10 @@
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Threading;
 using VideoPlatform.Desktop.Models;
+using VideoPlatform.Desktop.Services;
 using VideoPlatform.Desktop.ViewModels;
 
 namespace VideoPlatform.Desktop.Views;
@@ -14,18 +13,16 @@ public partial class WorkspaceView : UserControl
 {
     private Point _dragOrigin;
     private bool _ptzPressed;
-    private DispatcherTimer? _bottomBarTimer;
     private WorkspaceViewModel? _subscribedVm;
+
+    private System.Windows.Threading.DispatcherTimer? _fullscreenToolbarTimer;
 
     public WorkspaceView()
     {
         InitializeComponent();
-        FloatingToolbarPopup.CustomPopupPlacementCallback = PlaceFloatingToolbar;
-        FloatingExitFullscreenPopup.CustomPopupPlacementCallback = PlaceFloatingExitButton;
-        VideoMatrixHost.SizeChanged += (_, _) => UpdateFloatingPopups();
-        SetupBottomBarAutoFade();
+        InitFullscreenPopups();
         Timeline.SeekRequested += async time => { if (DataContext is WorkspaceViewModel vm) await vm.SeekAsync(time); };
-        PreviewMouseLeftButtonDown += WorkspacePreviewMouseDown;
+        Timeline.RangeSelected += (start, end) => { if (DataContext is WorkspaceViewModel vm) vm.SetTimelineClip(start, end); };
         PreviewMouseLeftButtonUp += PtzReleased;
         Loaded += WindowLoaded;
         DataContextChanged += (_, _) =>
@@ -33,23 +30,21 @@ public partial class WorkspaceView : UserControl
             if (_subscribedVm is not null) _subscribedVm.PropertyChanged -= WorkspacePropertyChanged;
             _subscribedVm = DataContext as WorkspaceViewModel;
             if (_subscribedVm is not null) _subscribedVm.PropertyChanged += WorkspacePropertyChanged;
+            if (_subscribedVm?.IsFullscreen != true) HideFullscreenControls();
         };
         IsVisibleChanged += (_, _) =>
         {
             if (DataContext is WorkspaceViewModel)
             {
                 MainWindow.SyncAllVideoOverlays(IsVisible);
+                _ = ApplyLayoutTiersAsync();
             }
+            if (!IsVisible) HideFullscreenControls();
         };
         Unloaded += async (_, _) =>
         {
-            _bottomBarTimer?.Stop();
-            FloatingToolbarPopup.IsOpen = false;
-            FloatingExitFullscreenPopup.IsOpen = false;
             if (Window.GetWindow(this) is Window win)
             {
-                win.LocationChanged -= WindowLocationOrSizeChanged;
-                win.SizeChanged -= WindowLocationOrSizeChanged;
                 win.Deactivated -= WindowDeactivated;
                 win.StateChanged -= WindowStateChanged;
             }
@@ -58,6 +53,9 @@ public partial class WorkspaceView : UserControl
                 _subscribedVm.PropertyChanged -= WorkspacePropertyChanged;
                 _subscribedVm = null;
             }
+            VideoPlatform.Desktop.Services.VideoMouseHook.IsOverFullscreenToolbar = null;
+            VideoPlatform.Desktop.Services.VideoMouseHook.MouseMoved -= OnGlobalMouseMoved;
+            HideFullscreenControls();
             MainWindow.SyncAllVideoOverlays(false);
             if (DataContext is WorkspaceViewModel vm) await vm.StopPtzAsync();
         };
@@ -65,209 +63,192 @@ public partial class WorkspaceView : UserControl
 
     private void WindowLoaded(object sender, RoutedEventArgs e)
     {
+        VideoPlatform.Desktop.Services.VideoMouseHook.IsOverFullscreenToolbar = IsOverFullscreenToolbar;
+        VideoPlatform.Desktop.Services.VideoMouseHook.MouseMoved -= OnGlobalMouseMoved;
+        VideoPlatform.Desktop.Services.VideoMouseHook.MouseMoved += OnGlobalMouseMoved;
         if (Window.GetWindow(this) is Window win)
         {
-            win.LocationChanged += WindowLocationOrSizeChanged;
-            win.SizeChanged += WindowLocationOrSizeChanged;
             win.Deactivated += WindowDeactivated;
             win.StateChanged += WindowStateChanged;
         }
     }
 
-    private void WindowLocationOrSizeChanged(object? sender, EventArgs e) => UpdateFloatingPopups();
+    private void WindowDeactivated(object? sender, EventArgs e) => HideFullscreenControls();
 
-    private void WindowDeactivated(object? sender, EventArgs e)
-    {
-        if (FloatingToolbarPopup.IsOpen) FloatingToolbarPopup.IsOpen = false;
-    }
+    private void WindowStateChanged(object? sender, EventArgs e) { }
 
-    private void WindowStateChanged(object? sender, EventArgs e)
+    private void InitFullscreenPopups()
     {
-        if (Window.GetWindow(this) is Window win && win.WindowState == WindowState.Minimized)
+        FullscreenBottomPopup.CustomPopupPlacementCallback = (popupSize, targetSize, offset) =>
         {
-            if (FloatingToolbarPopup.IsOpen) FloatingToolbarPopup.IsOpen = false;
-        }
-    }
+            var y = Math.Max(0, targetSize.Height - popupSize.Height);
+            return [new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(0, y), System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal)];
+        };
 
-    private CustomPopupPlacement[] PlaceFloatingToolbar(Size popupSize, Size targetSize, Point offset)
-    {
-        var y = Math.Max(0, targetSize.Height - 38);
-        return new[] { new CustomPopupPlacement(new Point(0, y), PopupPrimaryAxis.Horizontal) };
-    }
-
-    private CustomPopupPlacement[] PlaceFloatingExitButton(Size popupSize, Size targetSize, Point offset)
-    {
-        var x = Math.Max(0, targetSize.Width - popupSize.Width - 16);
-        return new[] { new CustomPopupPlacement(new Point(x, 12), PopupPrimaryAxis.Horizontal) };
-    }
-
-    private void UpdateFloatingPopups()
-    {
-        if (FloatingToolbarPopup.IsOpen)
+        FullscreenExitPopup.CustomPopupPlacementCallback = (popupSize, targetSize, offset) =>
         {
-            var offset = FloatingToolbarPopup.HorizontalOffset;
-            FloatingToolbarPopup.HorizontalOffset = offset + 0.001;
-            FloatingToolbarPopup.HorizontalOffset = offset;
-        }
-        if (FloatingExitFullscreenPopup.IsOpen)
+            var x = Math.Max(0, targetSize.Width - popupSize.Width - 16);
+            return [new System.Windows.Controls.Primitives.CustomPopupPlacement(new Point(x, 12), System.Windows.Controls.Primitives.PopupPrimaryAxis.Horizontal)];
+        };
+
+        _fullscreenToolbarTimer = new System.Windows.Threading.DispatcherTimer
         {
-            var offset = FloatingExitFullscreenPopup.HorizontalOffset;
-            FloatingExitFullscreenPopup.HorizontalOffset = offset + 0.001;
-            FloatingExitFullscreenPopup.HorizontalOffset = offset;
-        }
+            Interval = TimeSpan.FromSeconds(2.5)
+        };
+        _fullscreenToolbarTimer.Tick += (_, _) =>
+        {
+            _fullscreenToolbarTimer.Stop();
+            HideFullscreenControls();
+        };
     }
 
-    private bool IsMouseOverBottomToolbar =>
-        (FloatingToolbarPopup.IsOpen && (FloatingToolbarContent.IsMouseOver || FloatingToolbarContent.IsKeyboardFocusWithin)) ||
-        (BottomToolbar.IsVisible && BottomToolbar.IsMouseOver);
-
-    private void SetupBottomBarAutoFade()
+    public bool IsOverFullscreenToolbar(Point screenPt)
     {
-        _bottomBarTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000) };
-        _bottomBarTimer.Tick += (_, _) =>
+        if (DataContext is not WorkspaceViewModel vm || !vm.IsFullscreen) return false;
+
+        if (FullscreenBottomPopup.IsOpen)
         {
-            if (DataContext is not WorkspaceViewModel vm) return;
-            if (vm.IsFullscreen && !IsMouseOverBottomToolbar)
+            try
             {
-                vm.IsBottomBarHovered = false;
-                FloatingToolbarPopup.IsOpen = false;
-                _bottomBarTimer?.Stop();
+                var pt = FullscreenBottomBar.PointFromScreen(screenPt);
+                if (pt.X >= 0 && pt.X < FullscreenBottomBar.ActualWidth && pt.Y >= 0 && pt.Y < FullscreenBottomBar.ActualHeight)
+                    return true;
             }
-        };
-
-        BottomToolbar.MouseEnter += (_, _) =>
-        {
-            _bottomBarTimer?.Stop();
-            if (DataContext is WorkspaceViewModel vm) vm.IsBottomBarHovered = true;
-        };
-
-        BottomToolbar.MouseLeave += (_, _) =>
-        {
-            if (DataContext is WorkspaceViewModel vm && vm.IsFullscreen)
-            {
-                _bottomBarTimer?.Stop();
-                _bottomBarTimer?.Start();
-            }
-        };
-    }
-
-    private void FloatingToolbarMouseEnter(object sender, MouseEventArgs e)
-    {
-        _bottomBarTimer?.Stop();
-        if (DataContext is WorkspaceViewModel vm) vm.IsBottomBarHovered = true;
-    }
-
-    private void FloatingToolbarMouseLeave(object sender, MouseEventArgs e)
-    {
-        if (DataContext is WorkspaceViewModel vm && vm.IsFullscreen)
-        {
-            _bottomBarTimer?.Stop();
-            _bottomBarTimer?.Start();
+            catch { }
         }
+
+        if (FullscreenExitPopup.IsOpen)
+        {
+            try
+            {
+                var pt = FullscreenExitBar.PointFromScreen(screenPt);
+                if (pt.X >= 0 && pt.X < FullscreenExitBar.ActualWidth && pt.Y >= 0 && pt.Y < FullscreenExitBar.ActualHeight)
+                    return true;
+            }
+            catch { }
+        }
+
+        return false;
+    }
+
+    private void OnGlobalMouseMoved(Point screenPt)
+    {
+        if (DataContext is not WorkspaceViewModel vm || !vm.IsFullscreen)
+        {
+            if (FullscreenBottomPopup.IsOpen || FullscreenExitPopup.IsOpen)
+            {
+                HideFullscreenControls();
+            }
+            return;
+        }
+
+        Point localPt;
+        try
+        {
+            localPt = VideoMatrixHost.PointFromScreen(screenPt);
+        }
+        catch
+        {
+            return;
+        }
+
+        var hostWidth = VideoMatrixHost.ActualWidth;
+        var hostHeight = VideoMatrixHost.ActualHeight;
+        if (hostWidth <= 0 || hostHeight <= 0) return;
+
+        var isInsideHost = localPt.X >= 0 && localPt.X < hostWidth && localPt.Y >= 0 && localPt.Y < hostHeight;
+        if (!isInsideHost)
+        {
+            HideFullscreenControls();
+            return;
+        }
+
+        // 鼠标落在底端 80px 范围（或悬停在已展开的底部条上）唤出底部控制条
+        var isNearBottom = localPt.Y >= hostHeight - 80 || (FullscreenBottomPopup.IsOpen && localPt.Y >= hostHeight - FullscreenBottomBar.ActualHeight);
+        var isNearTopRight = localPt.Y <= 80 && localPt.X >= hostWidth - 220;
+
+        if (isNearBottom || isNearTopRight)
+        {
+            ShowFullscreenControls(isNearBottom, isNearTopRight || isNearBottom);
+        }
+        else
+        {
+            HideFullscreenControls();
+        }
+    }
+
+    private void ShowFullscreenControls(bool showBottom, bool showExit)
+    {
+        if (DataContext is not WorkspaceViewModel vm || !vm.IsFullscreen) return;
+
+        FullscreenBottomPopup.DataContext = vm;
+        FullscreenExitPopup.DataContext = vm;
+
+        var width = VideoMatrixHost.ActualWidth;
+        if (width > 0)
+        {
+            FullscreenBottomPopup.Width = width;
+            FullscreenBottomBar.Width = width;
+        }
+
+        if (showBottom)
+        {
+            if (!FullscreenBottomPopup.IsOpen) FullscreenBottomPopup.IsOpen = true;
+        }
+        else
+        {
+            FullscreenBottomPopup.IsOpen = false;
+        }
+
+        if (showExit || showBottom)
+        {
+            if (!FullscreenExitPopup.IsOpen) FullscreenExitPopup.IsOpen = true;
+        }
+        else
+        {
+            FullscreenExitPopup.IsOpen = false;
+        }
+
+        _fullscreenToolbarTimer?.Stop();
+        _fullscreenToolbarTimer?.Start();
+    }
+
+    private void HideFullscreenControls()
+    {
+        _fullscreenToolbarTimer?.Stop();
+        if (FullscreenBottomPopup.IsOpen) FullscreenBottomPopup.IsOpen = false;
+        if (FullscreenExitPopup.IsOpen) FullscreenExitPopup.IsOpen = false;
+    }
+
+    /// <summary>布局/放大/全屏变化后统一套用显示档位（格子子码流、聚焦主码流）。</summary>
+    private async Task ApplyLayoutTiersAsync()
+    {
+        if (DataContext is not WorkspaceViewModel vm) return;
+        try { await vm.ApplyLayoutTiersAsync(); }
+        catch (Exception ex) { ClientFiles.Log($"套用显示档位失败：{ex.Message}"); }
     }
 
     private void WorkspacePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (DataContext is not WorkspaceViewModel vm) return;
         if (e.PropertyName == nameof(WorkspaceViewModel.IsFullscreen))
         {
-            _bottomBarTimer?.Stop();
-            if (DataContext is WorkspaceViewModel vm)
-            {
-                if (!vm.IsFullscreen)
-                {
-                    vm.IsBottomBarHovered = false;
-                    FloatingToolbarPopup.IsOpen = false;
-                }
-            }
-            UpdateFloatingPopups();
+            if (!vm.IsFullscreen) HideFullscreenControls();
+        }
+        // 分屏格数和布局模板切换时套用显示档位；单窗放大与全屏仅做视口几何缩放，不重新拉流
+        if (e.PropertyName is nameof(WorkspaceViewModel.LayoutCount) or nameof(WorkspaceViewModel.SelectedLayoutPreset))
+        {
+            _ = ApplyLayoutTiersAsync();
         }
     }
 
-    public void NotifyScreenMouseMove(Point screenPoint)
-    {
-        if (DataContext is not WorkspaceViewModel vm || !vm.IsFullscreen) return;
-        try
-        {
-            var hostPt = VideoMatrixHost.PointFromScreen(screenPoint);
-            if (hostPt.Y >= VideoMatrixHost.ActualHeight - 55 && hostPt.Y <= VideoMatrixHost.ActualHeight + 10)
-            {
-                _bottomBarTimer?.Stop();
-                vm.IsBottomBarHovered = true;
-                if (!FloatingToolbarPopup.IsOpen)
-                {
-                    FloatingToolbarPopup.IsOpen = true;
-                    UpdateFloatingPopups();
-                }
-            }
-            else if (vm.IsBottomBarHovered && !IsMouseOverBottomToolbar)
-            {
-                if (_bottomBarTimer is not null && !_bottomBarTimer.IsEnabled)
-                {
-                    _bottomBarTimer.Start();
-                }
-            }
-        }
-        catch { }
-    }
-
-    private void VideoMatrixHostMouseMove(object sender, MouseEventArgs e)
-    {
-        if (DataContext is not WorkspaceViewModel vm || !vm.IsFullscreen) return;
-        var pos = e.GetPosition(VideoMatrixHost);
-        if (pos.Y >= VideoMatrixHost.ActualHeight - 55)
-        {
-            _bottomBarTimer?.Stop();
-            vm.IsBottomBarHovered = true;
-            if (!FloatingToolbarPopup.IsOpen)
-            {
-                FloatingToolbarPopup.IsOpen = true;
-                UpdateFloatingPopups();
-            }
-        }
-        else if (vm.IsBottomBarHovered && !IsMouseOverBottomToolbar)
-        {
-            if (_bottomBarTimer is not null && !_bottomBarTimer.IsEnabled)
-            {
-                _bottomBarTimer.Start();
-            }
-        }
-    }
-
-    private void VideoMatrixHostMouseLeave(object sender, MouseEventArgs e)
-    {
-        if (DataContext is not WorkspaceViewModel vm || !vm.IsFullscreen) return;
-        if (vm.IsBottomBarHovered && !IsMouseOverBottomToolbar)
-        {
-            if (_bottomBarTimer is not null && !_bottomBarTimer.IsEnabled)
-            {
-                _bottomBarTimer.Start();
-            }
-        }
-    }
-
-    private void WorkspacePreviewMouseDown(object sender, MouseButtonEventArgs e)
+    private async void MatrixBlankClicked(object sender, MouseButtonEventArgs e)
     {
         if (DataContext is not WorkspaceViewModel vm) return;
-        if (e.OriginalSource is not DependencyObject source) return;
-
-        // 判断点击是否落在视频画面窗格内，或者点击了需要维持焦点的操作控件（PTZ、工具栏按钮、滑块、下拉框等）
-        DependencyObject? curr = source;
-        bool isInsideTile = false;
-        bool isActionControl = false;
-
-        while (curr is not null && !ReferenceEquals(curr, this))
-        {
-            if (curr is VideoTileView) { isInsideTile = true; break; }
-            if (curr is Button || curr is Slider || curr is ComboBox || curr is TextBox || curr is ContextMenu || curr is MenuItem) { isActionControl = true; break; }
-            curr = VisualTreeHelper.GetParent(curr);
-        }
-
-        // 点击画面之外的空白处（如视频墙空白底板、分屏网格间隙、左侧资源树空白区域等），选中的高亮框立即消失
-        if (!isInsideTile && !isActionControl)
-        {
-            vm.SelectedTile = null;
-        }
+        vm.SelectedTile = null;
+        await vm.StopPtzAsync();
     }
+
     private void ResourceSelected(object sender, RoutedPropertyChangedEventArgs<object> e) { if (DataContext is WorkspaceViewModel vm) vm.SelectedResource = e.NewValue as ResourceNode; }
     /// <summary>点击主预览视图标签即切换分屏方案（iVMS-4200 视图切换逻辑）；程序化恢复选中不触发。</summary>
     private async void ViewTabClicked(object sender, MouseButtonEventArgs e)
@@ -276,8 +257,17 @@ public partial class WorkspaceView : UserControl
         if (e.OriginalSource is not DependencyObject source) return;
         // 仅当鼠标落在某个标签项上才算用户点击；刷新后的选中恢复不会经过这里。
         DependencyObject? node = source;
-        while (node is not null && node is not ListBoxItem && !ReferenceEquals(node, ViewTabs)) node = VisualTreeHelper.GetParent(node);
-        if (node is ListBoxItem && vm.SelectedLayout is not null) await vm.ApplyLayoutCommand.ExecuteAsync(null);
+        while (node is not null && node is not ListBoxItem && !ReferenceEquals(node, ViewTabs))
+        {
+            node = node is Visual or System.Windows.Media.Media3D.Visual3D
+                ? VisualTreeHelper.GetParent(node)
+                : LogicalTreeHelper.GetParent(node);
+        }
+        if (node is ListBoxItem item && item.DataContext is LayoutDto layout)
+        {
+            vm.SelectedLayout = layout;
+            await vm.ApplyLayoutCommand.ExecuteAsync(null);
+        }
     }
     private async void ResourceDoubleClicked(object sender, MouseButtonEventArgs e)
     {
@@ -288,25 +278,77 @@ public partial class WorkspaceView : UserControl
                 if (vm.IsPlayback) await vm.SearchRecordingsCommand.ExecuteAsync(null);
                 else
                 {
-                    var targetTile = vm.SelectedTile;
-                    if (targetTile?.SessionId is not null)
-                    {
-                        var emptyTile = vm.VisibleTiles.FirstOrDefault(t => t.SessionId is null);
-                        if (emptyTile is not null) targetTile = emptyTile;
-                    }
+                    var targetTile = NextFreeTile(vm);
                     await vm.OpenChannelAsync(channel, targetTile);
                 }
             }
             else if (!vm.IsPlayback)
             {
                 var channels = selected.Flatten().Where(n => n.IsChannel && n.Channel is { Online: true }).Select(n => n.Channel!).Take(vm.LayoutCount).ToArray();
-                if (channels.Length > 0)
-                {
-                    await vm.OpenChannelsBatchAsync(channels);
-                }
+                if (channels.Length > 0) await vm.OpenChannelsBatchAsync(channels);
             }
         }
     }
+
+    private static VideoTileViewModel? NextFreeTile(WorkspaceViewModel vm)
+    {
+        var target = vm.SelectedTile;
+        if (target?.SessionId is not null) target = vm.VisibleTiles.FirstOrDefault(tile => tile.SessionId is null) ?? target;
+        return target;
+    }
+
+    private ResourceNode? SelectedNode() => ResourceTree.SelectedItem as ResourceNode;
+
+    private async void TreePreviewClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not WorkspaceViewModel vm || SelectedNode() is not { } node) return;
+        try
+        {
+            if (vm.IsPlayback) await vm.SetModeAsync(false);
+            if (node.Channel is { } channel) await vm.OpenChannelAsync(channel, NextFreeTile(vm));
+        }
+        catch (Exception ex) { vm.Status = $"打开通道失败：{ex.Message}"; }
+    }
+
+    private async void TreePlaybackClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not WorkspaceViewModel vm || SelectedNode() is not { } node) return;
+        try
+        {
+            if (!vm.IsPlayback) await vm.SetModeAsync(true);
+            if (node.Channel is not null) await vm.SearchRecordingsCommand.ExecuteAsync(null);
+        }
+        catch (Exception ex) { vm.Status = $"切换回放失败：{ex.Message}"; }
+    }
+
+    private async void TreeBatchPreviewClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not WorkspaceViewModel vm || SelectedNode() is not { } node) return;
+        var channels = node.Flatten().Where(n => n.IsChannel && n.Channel is { Online: true }).Select(n => n.Channel!).Take(vm.LayoutCount).ToArray();
+        if (channels.Length == 0) { vm.Status = "所选分组下没有在线通道。"; return; }
+        try
+        {
+            if (vm.IsPlayback) await vm.SetModeAsync(false);
+            await vm.OpenChannelsBatchAsync(channels);
+        }
+        catch (Exception ex) { vm.Status = $"批量预览失败：{ex.Message}"; }
+    }
+
+    private void TreePtzClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not WorkspaceViewModel vm || SelectedNode() is not { } node) return;
+        vm.SelectedResource = node;
+        vm.IsPtzCollapsed = false;
+        if (node.Channel is { PtzCapable: false }) vm.Status = "该通道不支持云台控制。";
+    }
+
+    private void TreeExportClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not WorkspaceViewModel vm || SelectedNode() is not { } node) return;
+        vm.SelectedResource = node;
+        vm.Status = "请在右侧检索面板选择时间段后提交导出。";
+    }
+
     private void DragStarted(object sender, MouseButtonEventArgs e) => _dragOrigin = e.GetPosition(ResourceTree);
     private void DragMoved(object sender, MouseEventArgs e)
     {

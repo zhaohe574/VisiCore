@@ -385,6 +385,54 @@ public sealed class GeneratedClientIntegrationTests
         Assert.Equal(9007199254740993, Assert.Single(recordings).FileSize); Assert.Equal(7u, recordings[0].FileIndex);
     }
 
+    [Fact]
+    public async Task PreferencesRoundTripThroughGeneratedRoutes()
+    {
+        // 显示偏好按账号保存到平台（B6）：读取默认值、写入修改后的值，字段一一对应。
+        Preferences? written = null;
+        using var context = await Context.CreateAsync(async (request, ct) =>
+        {
+            Assert.Equal("/api/v2/auth/preferences", request.RequestUri!.AbsolutePath);
+            if (request.Method == HttpMethod.Get) return StubHandler.Ok(new Preferences());
+            written = await request.Content!.ReadFromJsonAsync<Preferences>(ct);
+            return StubHandler.Ok(written);
+        });
+
+        var defaults = await context.Api.GetAsync<Preferences>("auth/preferences");
+        Assert.Equal("light", defaults!.Theme);
+        Assert.True(defaults.PreferSubStreamInGrid);
+        Assert.True(defaults.HardwareDecoding);
+        Assert.Equal(800, defaults.NetworkCachingMs);
+        Assert.False(defaults.ShowDiagnostics);
+
+        var changed = new Preferences("dark", false, false, 2000, true);
+        await context.Api.SendAsync(HttpMethod.Put, "auth/preferences", changed);
+        Assert.NotNull(written);
+        Assert.Equal("dark", written!.Theme);
+        Assert.False(written.PreferSubStreamInGrid);
+        Assert.False(written.HardwareDecoding);
+        Assert.Equal(2000, written.NetworkCachingMs);
+        Assert.True(written.ShowDiagnostics);
+    }
+
+    [Fact]
+    public void ClientSettingsAndPreferencesStayInSync()
+    {
+        // 本机兜底文件与平台偏好必须能无损互转，否则会出现“看似已同步、实际行为不同”。
+        var settings = new ClientSettings(Theme: "dark", PreferSubStreamInGrid: false, HardwareDecoding: false,
+            NetworkCachingMs: 2500, ShowDiagnostics: true);
+        var preferences = settings.ToPreferences();
+        Assert.Equal(new Preferences("dark", false, false, 2500, true), preferences);
+        var restored = new ClientSettings().With(preferences);
+        Assert.Equal(preferences.Theme, restored.Theme);
+        Assert.Equal(preferences.PreferSubStreamInGrid, restored.PreferSubStreamInGrid);
+        Assert.Equal(preferences.HardwareDecoding, restored.HardwareDecoding);
+        Assert.Equal(preferences.NetworkCachingMs, restored.NetworkCachingMs);
+        Assert.Equal(preferences.ShowDiagnostics, restored.ShowDiagnostics);
+        // 默认值必须与平台契约一致。
+        Assert.Equal(new Preferences(), new ClientSettings().ToPreferences());
+    }
+
     [Theory]
     [InlineData("profile")]
     [InlineData("password")]
@@ -481,3 +529,4 @@ public sealed class GeneratedClientIntegrationTests
         public void Dispose() => http.Dispose();
     }
 }
+

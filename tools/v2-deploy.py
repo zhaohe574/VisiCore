@@ -16,7 +16,7 @@ def main():
     parser.add_argument("--release")
     parser.add_argument("--config-only", action="store_true")
     args = parser.parse_args()
-    release = args.release or ("2.0.0-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
+    release = args.release or ("2.1.1-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
     if any(c not in "0123456789.-" for c in release): raise RuntimeError("版本目录名无效")
     client=paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())

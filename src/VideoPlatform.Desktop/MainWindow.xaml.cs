@@ -115,16 +115,30 @@ public partial class MainWindow : Window
     protected override void OnStateChanged(EventArgs e)
     {
         base.OnStateChanged(e);
+        VideoPlatform.Desktop.Services.VideoMouseHook.ClearHoveredTile();
         bool isMax = WindowState == WindowState.Maximized;
         if (MaximizeButton != null)
         {
-            MaximizeButton.Content = isMax ? "\uE923" : "\uE922";
+            if (MaximizeGlyph != null) MaximizeGlyph.Text = isMax ? "\uE923" : "\uE922";
+            else MaximizeButton.Content = isMax ? "\uE923" : "\uE922";
             MaximizeButton.ToolTip = isMax ? "向下还原" : "最大化";
         }
         if (ShellViewport != null)
         {
             ShellViewport.Margin = (isMax && !_viewModel.Workspace.IsFullscreen) ? new Thickness(7) : new Thickness(0);
         }
+    }
+
+    protected override void OnLocationChanged(EventArgs e)
+    {
+        base.OnLocationChanged(e);
+        VideoPlatform.Desktop.Services.VideoMouseHook.ClearHoveredTile();
+    }
+
+    protected override void OnRenderSizeChanged(SizeChangedInfo sizeInfo)
+    {
+        base.OnRenderSizeChanged(sizeInfo);
+        VideoPlatform.Desktop.Services.VideoMouseHook.ClearHoveredTile();
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -138,21 +152,53 @@ public partial class MainWindow : Window
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        // 彻底消除 Win32 static 原生窗口及底层对话框在重绘或首帧渲染前的白色背景（Windows 默认返回 COLOR_WINDOW 白色画刷）
-        if (msg == WM_CTLCOLORSTATIC || msg == WM_CTLCOLORDLG)
+        if (msg == WM_ERASEBKGND)
+        {
+            handled = true;
+            return (IntPtr)1;
+        }
+        if (msg is WM_CTLCOLORSTATIC or WM_CTLCOLORDLG)
         {
             handled = true;
             return BlackBrush;
         }
         return IntPtr.Zero;
     }
-    private async void LoadedWindow(object sender, RoutedEventArgs e) => await _viewModel.InitializeAsync();
+
+    private async void LoadedWindow(object sender, RoutedEventArgs e)
+    {
+        _previousState = WindowState;
+        if (PresentationSource.FromVisual(this) is HwndSource source)
+        {
+            EnsureChildWindowsBlack(source.Handle);
+        }
+        VideoPlatform.Desktop.Services.VideoMouseHook.Install();
+        await _viewModel.InitializeAsync();
+    }
+
+    private async void DeactivatedWindow(object? sender, EventArgs e)
+    {
+        VideoPlatform.Desktop.Services.VideoMouseHook.ClearHoveredTile();
+        if (WindowState == WindowState.Minimized) SyncAllVideoOverlays(false);
+        await _viewModel.Workspace.StopPtzAsync();
+    }
+
+    private async void ReleasedPointer(object sender, MouseButtonEventArgs e)
+    {
+        if (WindowState != WindowState.Minimized && _viewModel.Module is "live" or "playback")
+        {
+            SyncAllVideoOverlays(true);
+        }
+        await _viewModel.Workspace.StopPtzAsync();
+    }
+
     private async void ClosingWindow(object? sender, CancelEventArgs e)
     {
         if (_closed) return;
         e.Cancel = true;
         if (_closing) return;
         _closing = true;
+        VideoPlatform.Desktop.Services.VideoMouseHook.Uninstall();
         ShowInTaskbar = false;
         Hide();
         SyncAllVideoOverlays(false);
@@ -160,8 +206,7 @@ public partial class MainWindow : Window
         catch { }
         finally { _closed = true; Close(); Application.Current?.Shutdown(); }
     }
-    private async void DeactivatedWindow(object? sender, EventArgs e) => await _viewModel.Workspace.StopPtzAsync();
-    private async void ReleasedPointer(object sender, MouseButtonEventArgs e) => await _viewModel.Workspace.StopPtzAsync();
+
     private void KeyPressed(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.F11 || (e.Key == Key.Escape && _viewModel.Workspace.IsFullscreen))
@@ -174,9 +219,15 @@ public partial class MainWindow : Window
             _viewModel.CloseSettingsCommand.Execute(null);
             e.Handled = true;
         }
+        else if (e.Key == Key.S && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+        {
+            if (_viewModel.Workspace.SelectedTile is { } tile)
+            {
+                _viewModel.Workspace.QuickCaptureCommand.Execute(tile);
+                e.Handled = true;
+            }
+        }
     }
-    private WindowChrome? _savedChrome;
-    private ResizeMode _previousResizeMode = ResizeMode.CanResize;
     private void UpdateFullscreenRows(bool isFullscreen)
     {
         if (isFullscreen)
@@ -197,35 +248,40 @@ public partial class MainWindow : Window
         }
     }
 
+    private WindowStyle _savedWindowStyle;
+    private ResizeMode _savedResizeMode;
+    private WindowChrome? _savedChrome;
+
     private void ToggleFullscreen()
     {
         if (!_viewModel.Workspace.IsFullscreen)
         {
             Topmost = false;
-            WindowStyle = WindowStyle.SingleBorderWindow;
-            ResizeMode = _previousResizeMode;
+            UpdateFullscreenRows(false);
+            WindowStyle = _savedWindowStyle;
+            ResizeMode = _savedResizeMode;
             if (_savedChrome is not null)
             {
                 WindowChrome.SetWindowChrome(this, _savedChrome);
             }
-            UpdateFullscreenRows(false);
-            WindowState = WindowState.Normal;
-            if (_previousState == WindowState.Maximized)
-            {
-                WindowState = WindowState.Maximized;
-            }
+            WindowState = _previousState == WindowState.Maximized ? WindowState.Maximized : WindowState.Normal;
         }
         else
         {
-            _savedChrome ??= WindowChrome.GetWindowChrome(this);
             _previousState = WindowState == WindowState.Minimized ? WindowState.Normal : WindowState;
-            _previousResizeMode = ResizeMode;
-            WindowChrome.SetWindowChrome(this, null);
+            _savedWindowStyle = WindowStyle;
+            _savedResizeMode = ResizeMode;
+            _savedChrome = WindowChrome.GetWindowChrome(this);
+
             UpdateFullscreenRows(true);
-            WindowState = WindowState.Normal;
+            WindowChrome.SetWindowChrome(this, null);
             WindowStyle = WindowStyle.None;
             ResizeMode = ResizeMode.NoResize;
             Topmost = true;
+            if (WindowState == WindowState.Maximized)
+            {
+                WindowState = WindowState.Normal;
+            }
             WindowState = WindowState.Maximized;
         }
     }

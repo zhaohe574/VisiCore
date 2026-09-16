@@ -5,6 +5,7 @@ using System.Net.Http.Json;
 using LibVLCSharp.Shared;
 using VideoPlatform.Desktop.Models;
 using VideoPlatform.Desktop.Services;
+using VideoPlatform.Desktop.ViewModels;
 
 namespace VideoPlatform.Desktop.Tests;
 
@@ -27,6 +28,12 @@ internal sealed class FakeDialogs : IUserInteraction
     public string? SaveFile(string suggestedName, string filter) => null;
     public bool Confirm(string message) => true;
     public void Shutdown() { }
+    public bool ShowProfileDialog(ShellViewModel shell) { ProfileOpened = true; return true; }
+    public bool ShowChangePasswordDialog(ShellViewModel shell) { ChangePasswordOpened = true; return true; }
+    public string? SelectFolder(string description) => SelectedFolder;
+    public bool ProfileOpened { get; set; }
+    public bool ChangePasswordOpened { get; set; }
+    public string? SelectedFolder { get; set; }
 }
 internal sealed class FakePlayerFactory : IPlayerFactory
 {

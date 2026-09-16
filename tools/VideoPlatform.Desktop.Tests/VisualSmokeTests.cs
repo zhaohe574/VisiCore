@@ -46,8 +46,12 @@ public sealed class VisualSmokeTests(WpfTestHost host)
                 foreach (var (width, height, scale) in new[] { (1366, 768, 1d), (1366, 768, 1.5), (1366, 768, 2d), (1920, 1080, 1d), (1920, 1080, 1.5), (1920, 1080, 2d) })
                 {
                     var logicalWidth = width / scale; var logicalHeight = height / scale;
+                    // 主预览按四等分渲染；同时覆盖 1+7 聚焦档位，确保大屏 + 小屏网格在不同 DPI 下不越界。
                     workspace.IsPlayback = false;
                     Render(new WorkspaceView { DataContext = workspace }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"live-{width}-{scale:0.0}.png"));
+                    await workspace.SetLayoutCommand.ExecuteAsync("1+7");
+                    Render(new WorkspaceView { DataContext = workspace }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"focus-{width}-{scale:0.0}.png"));
+                    await workspace.SetLayoutCommand.ExecuteAsync("4");
                     workspace.IsPlayback = true;
                     Render(new WorkspaceView { DataContext = workspace }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"playback-{width}-{scale:0.0}.png"));
                     Render(new AlarmsView { DataContext = alarms }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"alarms-{width}-{scale:0.0}.png"));

@@ -32,7 +32,10 @@ async function attach() {
     const { default: mpegts } = await import('mpegts.js')
     if (disposed || current !== playerGeneration || !video.value) return
     if (!mpegts.isSupported() || !source.httpFlvUrl) throw new Error('当前浏览器不支持此视频格式，请使用支持媒体扩展的浏览器或桌面客户端')
-    player = mpegts.createPlayer({ type: 'flv', isLive: props.mode === 'live', url: source.httpFlvUrl, withCredentials: true }, { enableWorker: true, enableStashBuffer: props.mode === 'playback', stashInitialSize: 128 * 1024, autoCleanupSourceBuffer: true, autoCleanupMaxBackwardDuration: 30, autoCleanupMinBackwardDuration: 10, liveBufferLatencyChasing: props.mode === 'live' })
+    const streamUrl = source.httpFlvUrl.startsWith('http')
+      ? `${window.location.origin}${new URL(source.httpFlvUrl).pathname}${new URL(source.httpFlvUrl).search}`
+      : source.httpFlvUrl
+    player = mpegts.createPlayer({ type: 'flv', isLive: props.mode === 'live', url: streamUrl, withCredentials: true }, { enableWorker: true, enableStashBuffer: props.mode === 'playback', stashInitialSize: 128 * 1024, autoCleanupSourceBuffer: true, autoCleanupMaxBackwardDuration: 30, autoCleanupMinBackwardDuration: 10, liveBufferLatencyChasing: props.mode === 'live' })
     player.on(mpegts.Events.ERROR, (_type: string, _detail: string, info: unknown) => {
       if (current !== playerGeneration || disposed) return
       error.value = '视频连接中断，正在尝试恢复'; ready.value = false
@@ -105,6 +108,15 @@ async function refresh() {
 }
 async function control(command: PlaybackControl) {
   if (!session.value || props.mode !== 'playback') return
+  if (command.action === 'step') {
+    if (video.value) {
+      if (!video.value.paused) {
+        await control({ action: 'pause' })
+      }
+      video.value.currentTime += 0.04
+    }
+    return
+  }
   busy.value = true
   try {
     await lease.control(command)
@@ -122,9 +134,11 @@ async function control(command: PlaybackControl) {
       // 主动等待后端 pipeline 重建完成（状态回到 playing），然后重新 attach
       destroyPlayer()
       let waited = 0
-      while (waited < 10000) {
-        await new Promise(resolve => setTimeout(resolve, 500))
-        waited += 500
+      const interval = 120
+      const maxWait = 3600
+      while (waited < maxWait) {
+        await new Promise(resolve => setTimeout(resolve, interval))
+        waited += interval
         await lease.refresh(false)
         const s = (session.value as PlaybackSession | null)
         if (!s || disposed) break
