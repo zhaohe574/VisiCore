@@ -449,7 +449,7 @@ public sealed class AdministrationService(Database db, AccessService access, Med
     public async Task<IReadOnlyList<ChannelDto>> FavoritesAsync(Actor actor, CancellationToken ct = default)
     {
         await access.DemandAsync(actor, "channel.read", ct);
-        var rows = await db.QueryAsync($"select {AccessService.ChannelColumns} from favorites f join channels c on c.id=f.channel_id join devices d on d.id=c.device_id left join units un on un.id=c.unit_id left join areas ar on ar.id=un.parent_id where f.user_id=@userId and d.enabled and c.status<>'disabled' and ({AccessService.ChannelPredicate}) order by f.sort_order,c.id", new { userId = actor.UserId }, ct);
+        var rows = await db.QueryAsync($"select {AccessService.ChannelColumns} from favorites f join channels c on c.id=f.channel_id join devices d on d.id=c.device_id left join device_plugins dp on dp.id=d.plugin_id left join units un on un.id=c.unit_id left join areas ar on ar.id=un.parent_id where f.user_id=@userId and d.enabled and c.status<>'disabled' and ({AccessService.ChannelPredicate}) order by f.sort_order,c.id", new { userId = actor.UserId }, ct);
         return rows.Select(ToChannel).ToArray();
     }
 

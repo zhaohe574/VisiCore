@@ -173,7 +173,9 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
                 channels.AddRange(result.Items);
                 if (channels.Count >= result.Total) break;
             }
-            var favorites = await _api.GetAsync<Channel[]>("favorites") ?? [];
+            Channel[] favorites = [];
+            try { favorites = await _api.GetAsync<Channel[]>("favorites") ?? []; }
+            catch (Exception ex) { ClientFiles.Log($"读取收藏夹列表失败，降级为空：{ex.Message}"); }
             var layouts = await _api.GetAsync<LayoutDto[]>("layouts") ?? [];
             Organization? organization = null;
             try { organization = await _api.GetAsync<Organization>("organization"); }
