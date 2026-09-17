@@ -35,7 +35,20 @@ export interface PluginCreateInput {
   capabilities?: string[]
   configSchema?: Record<string, unknown> | null
 }
-export type Channel = SchemaDto<'ChannelDto'> & { alias?: string | null }
+export type Channel = SchemaDto<'ChannelDto'> & {
+  alias?: string | null
+  ip?: string | null
+  username?: string | null
+  password?: string | null
+  remark?: string | null
+  deviceModel?: string | null
+  deviceHost?: string | null
+  devicePort?: number | null
+  deviceSerial?: string | null
+  pluginId?: string | null
+  pluginName?: string | null
+  firmwareVersion?: string | null
+}
 export type OrganizationNode = SchemaDto<'OrganizationNodeDto'>
 export type Organization = SchemaDto<'OrganizationTreeDto'>
 export type OrganizationKind = keyof Organization

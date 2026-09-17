@@ -3,16 +3,21 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   CircleCheck,
+  CopyDocument,
   Delete,
   Edit,
   Folder,
+  Hide,
+  InfoFilled,
   Plus,
   Refresh,
   Search,
   VideoCamera,
   VideoPlay,
+  View,
   Warning
 } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import {
   allPages,
   managementApi,
@@ -55,9 +60,19 @@ const assignmentOpen = ref(false)
 const nodeDialog = ref(false)
 const editing = ref<number | null>(null)
 
-const aliasDialog = ref(false)
-const aliasTarget = ref<Channel | null>(null)
-const channelAlias = ref('')
+const detailDrawer = ref(false)
+const currentChannel = ref<Channel | null>(null)
+const showPassword = ref(false)
+
+const editDialog = ref(false)
+const editTarget = ref<Channel | null>(null)
+const editForm = reactive({
+  alias: '',
+  ip: '',
+  username: '',
+  password: '',
+  remark: ''
+})
 
 const kind = ref<OrganizationKind>('workshops')
 const orgTab = ref<OrganizationKind>('workshops')
@@ -152,24 +167,78 @@ async function assign() {
   }
 }
 
-function editAlias(channel: Channel) {
-  aliasTarget.value = channel
-  channelAlias.value = channel.alias || ''
-  aliasDialog.value = true
+function showDetail(channel: Channel) {
+  currentChannel.value = channel
+  showPassword.value = false
+  detailDrawer.value = true
 }
 
-async function saveAlias() {
-  if (!aliasTarget.value) return
+function openEdit(channel: Channel) {
+  editTarget.value = channel
+  editForm.alias = channel.alias || ''
+  editForm.ip = channel.ip || ''
+  editForm.username = channel.username || ''
+  editForm.password = channel.password || ''
+  editForm.remark = channel.remark || ''
+  editDialog.value = true
+}
+
+async function saveChannel() {
+  if (!editTarget.value) return
   if (
     await run(async () => {
-      await managementApi.updateChannel(aliasTarget.value!.id, {
-        alias: channelAlias.value.trim() || null
+      const updated = await managementApi.updateChannel(editTarget.value!.id, {
+        alias: editForm.alias.trim() || null,
+        ip: editForm.ip.trim() || null,
+        username: editForm.username.trim() || null,
+        password: editForm.password || null,
+        remark: editForm.remark.trim() || null
       })
+      if (currentChannel.value && currentChannel.value.id === editTarget.value!.id) {
+        Object.assign(currentChannel.value, updated)
+      }
       await load()
-    }, '通道别名已保存')
+    }, '通道配置已成功保存')
   ) {
-    aliasDialog.value = false
+    editDialog.value = false
   }
+}
+
+async function copyText(text?: string | null, label = '内容') {
+  if (!text) {
+    ElMessage.warning(`暂无${label}`)
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success(`${label}已复制到剪贴板`)
+  } catch {
+    ElMessage.error('复制失败，请手动复制')
+  }
+}
+
+function getUnitHierarchy(unitId?: number | null): string {
+  if (!unitId) return '未划拨单元'
+  const unit = organization.value.units.find(u => u.id === unitId)
+  if (!unit) return `单元 ${unitId}`
+  const area = organization.value.areas.find(a => a.id === unit.parentId)
+  if (!area) return unit.name
+  const workshop = organization.value.workshops.find(w => w.id === area.parentId)
+  if (!workshop) return `${area.name} / ${unit.name}`
+  return `${workshop.name} / ${area.name} / ${unit.name}`
+}
+
+function getDevice(channel?: Channel | Record<string, any> | null): Device | undefined {
+  if (!channel) return undefined
+  return devices.value.find(d => d.id === channel.deviceId)
+}
+
+function getChannelIp(channel?: Channel | Record<string, any> | null): string {
+  if (!channel) return '—'
+  if (channel.ip) return String(channel.ip)
+  if (channel.deviceHost) return String(channel.deviceHost)
+  const d = getDevice(channel)
+  return d?.host || '—'
 }
 
 function parentName(node: OrganizationNode) {
@@ -357,7 +426,7 @@ onMounted(loadOptions)
           >
             <el-table-column v-if="auth.can('channel.assign')" type="selection" width="44" />
 
-            <el-table-column prop="alias" label="通道别名" min-width="150" show-overflow-tooltip>
+            <el-table-column prop="alias" label="通道别名" min-width="140" show-overflow-tooltip>
               <template #default="{ row }">
                 <span v-if="row.alias" style="font-weight: 600; color: var(--primary);">
                   {{ row.alias }}
@@ -366,13 +435,21 @@ onMounted(loadOptions)
               </template>
             </el-table-column>
 
-            <el-table-column prop="name" label="设备原始名称" min-width="150" show-overflow-tooltip />
+            <el-table-column prop="name" label="设备原始名称" min-width="140" show-overflow-tooltip />
 
-            <el-table-column prop="deviceName" label="归属设备" min-width="140" show-overflow-tooltip />
+            <el-table-column label="IP 地址" min-width="135" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="monospace" style="font-size: 12.5px; font-weight: 500;">
+                  {{ getChannelIp(row) }}
+                </span>
+              </template>
+            </el-table-column>
 
-            <el-table-column prop="deviceChannel" label="通道号" width="75" />
+            <el-table-column prop="deviceName" label="归属设备" min-width="130" show-overflow-tooltip />
 
-            <el-table-column label="在线状态" width="95">
+            <el-table-column prop="deviceChannel" label="通道号" width="75" align="center" />
+
+            <el-table-column label="在线状态" width="95" align="center">
               <template #default="{ row }">
                 <StatusBadge :value="row.status" />
               </template>
@@ -387,16 +464,19 @@ onMounted(loadOptions)
               </template>
             </el-table-column>
 
-            <el-table-column prop="codec" label="编码" width="75" />
+            <el-table-column prop="codec" label="编码" width="75" align="center" />
 
-            <el-table-column label="操作" width="130" fixed="right">
+            <el-table-column label="操作" width="200" fixed="right">
               <template #default="{ row }">
                 <div class="table-tools">
                   <router-link :to="{ path: '/app/live', query: { channelId: row.id } }">
                     <el-button link type="primary" :icon="VideoPlay">预览</el-button>
                   </router-link>
-                  <el-button v-if="auth.can('channel.assign')" link type="primary" :icon="Edit" @click="editAlias(row as Channel)">
-                    别名
+                  <el-button link type="primary" :icon="InfoFilled" @click="showDetail(row as Channel)">
+                    详细信息
+                  </el-button>
+                  <el-button v-if="auth.can('channel.assign')" link type="primary" :icon="Edit" @click="openEdit(row as Channel)">
+                    编辑
                   </el-button>
                 </div>
               </template>
@@ -451,27 +531,72 @@ onMounted(loadOptions)
       </template>
     </el-dialog>
 
-    <!-- 通道别名编辑弹窗 -->
-    <el-dialog v-model="aliasDialog" title="设置通道业务别名" width="440px" destroy-on-close>
+    <!-- 通道编辑与凭据弹窗 -->
+    <el-dialog v-model="editDialog" title="编辑通道信息与备注" width="520px" destroy-on-close>
       <el-form label-position="top">
-        <el-form-item label="通道原名">
-          <el-input :model-value="aliasTarget?.name" disabled />
-        </el-form-item>
-        <el-form-item label="所属设备">
-          <el-input :model-value="aliasTarget?.deviceName" disabled />
-        </el-form-item>
-        <el-form-item label="业务别名">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <el-form-item label="通道原名">
+            <el-input :model-value="editTarget?.name" disabled />
+          </el-form-item>
+          <el-form-item label="归属设备">
+            <el-input :model-value="editTarget?.deviceName" disabled />
+          </el-form-item>
+        </div>
+
+        <el-form-item label="通道业务别名">
           <el-input
-            v-model="channelAlias"
+            v-model="editForm.alias"
             maxlength="100"
             clearable
-            placeholder="留空则恢复默认原名（如：东门入口高清）"
+            placeholder="如：东门入口高清（留空恢复原名）"
+          />
+        </el-form-item>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+          <el-form-item label="通道独立 IP">
+            <el-input
+              v-model="editForm.ip"
+              maxlength="253"
+              clearable
+              placeholder="留空则继承设备 IP"
+            />
+          </el-form-item>
+
+          <el-form-item label="访问账号">
+            <el-input
+              v-model="editForm.username"
+              maxlength="128"
+              clearable
+              placeholder="留空则使用设备账号"
+            />
+          </el-form-item>
+        </div>
+
+        <el-form-item label="访问密码">
+          <el-input
+            v-model="editForm.password"
+            type="password"
+            show-password
+            maxlength="256"
+            clearable
+            placeholder="留空则使用设备密码"
+          />
+        </el-form-item>
+
+        <el-form-item label="备注说明">
+          <el-input
+            v-model="editForm.remark"
+            type="textarea"
+            :rows="3"
+            maxlength="500"
+            show-word-limit
+            placeholder="可填写点位物理位置、用途说明、维护信息等..."
           />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="aliasDialog = false">取消</el-button>
-        <el-button type="primary" :loading="busy" @click="saveAlias">保存别名</el-button>
+        <el-button @click="editDialog = false">取消</el-button>
+        <el-button type="primary" :loading="busy" @click="saveChannel">保存通道信息</el-button>
       </template>
     </el-dialog>
 
@@ -492,5 +617,189 @@ onMounted(loadOptions)
         <el-button type="primary" :loading="busy" @click="assign">确认划拨</el-button>
       </template>
     </el-dialog>
+
+    <!-- 通道详细信息抽屉 -->
+    <el-drawer
+      v-model="detailDrawer"
+      title="通道详细信息"
+      size="560px"
+      destroy-on-close
+    >
+      <div v-if="currentChannel">
+        <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border);">
+          <div>
+            <h3 style="margin: 0 0 6px; font-size: 16px; color: var(--text-primary);">
+              {{ currentChannel.alias || currentChannel.name }}
+            </h3>
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 12px;" class="muted">
+              <span>原始名称: {{ currentChannel.name }}</span>
+              <span>·</span>
+              <span>通道号: #{{ currentChannel.deviceChannel }}</span>
+            </div>
+          </div>
+          <StatusBadge :value="currentChannel.status" />
+        </div>
+
+        <!-- 组织与归属 -->
+        <div style="margin-bottom: 24px;">
+          <h4 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+            <el-icon><Folder /></el-icon> 组织与归属
+          </h4>
+          <dl class="data-list">
+            <div>
+              <dt>归属设备</dt>
+              <dd>{{ currentChannel.deviceName || '—' }} (ID: {{ currentChannel.deviceId }})</dd>
+            </div>
+            <div>
+              <dt>所属业务组织</dt>
+              <dd>{{ getUnitHierarchy(currentChannel.unitId) }}</dd>
+            </div>
+            <div>
+              <dt>视频编码</dt>
+              <dd>{{ currentChannel.codec || 'H.264' }}</dd>
+            </div>
+            <div>
+              <dt>云台能力</dt>
+              <dd>
+                <el-tag size="small" :type="currentChannel.ptzCapable ? 'success' : 'info'">
+                  {{ currentChannel.ptzCapable ? '支持云台 PTZ' : '定焦 / 不支持' }}
+                </el-tag>
+              </dd>
+            </div>
+          </dl>
+        </div>
+
+        <!-- 网络与访问凭据 -->
+        <div style="margin-bottom: 24px;">
+          <h4 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+            <el-icon><VideoCamera /></el-icon> 网络与访问凭据
+          </h4>
+          <dl class="data-list">
+            <div>
+              <dt>通道 IP 地址</dt>
+              <dd style="display: flex; align-items: center; gap: 8px; justify-content: flex-end;">
+                <span class="monospace" style="font-weight: 600;">
+                  {{ getChannelIp(currentChannel) }}
+                </span>
+                <el-button
+                  v-if="getChannelIp(currentChannel) !== '—'"
+                  link
+                  type="primary"
+                  :icon="CopyDocument"
+                  size="small"
+                  @click="copyText(getChannelIp(currentChannel), 'IP地址')"
+                >
+                  复制
+                </el-button>
+              </dd>
+            </div>
+            <div>
+              <dt>设备服务端口</dt>
+              <dd class="monospace">{{ currentChannel.devicePort ?? getDevice(currentChannel)?.port ?? '—' }}</dd>
+            </div>
+            <div>
+              <dt>访问账号</dt>
+              <dd style="display: flex; align-items: center; gap: 8px; justify-content: flex-end;">
+                <span class="monospace">{{ currentChannel.username || getDevice(currentChannel)?.username || '—' }}</span>
+                <el-button
+                  v-if="currentChannel.username || getDevice(currentChannel)?.username"
+                  link
+                  type="primary"
+                  :icon="CopyDocument"
+                  size="small"
+                  @click="copyText(currentChannel.username || getDevice(currentChannel)?.username, '账号')"
+                >
+                  复制
+                </el-button>
+              </dd>
+            </div>
+            <div>
+              <dt>访问密码</dt>
+              <dd style="display: flex; align-items: center; gap: 8px; justify-content: flex-end;">
+                <template v-if="currentChannel.password">
+                  <span class="monospace">
+                    {{ showPassword ? currentChannel.password : '••••••••••••' }}
+                  </span>
+                  <el-button
+                    link
+                    type="primary"
+                    :icon="showPassword ? Hide : View"
+                    size="small"
+                    @click="showPassword = !showPassword"
+                  >
+                    {{ showPassword ? '隐藏' : '显示' }}
+                  </el-button>
+                  <el-button
+                    link
+                    type="primary"
+                    :icon="CopyDocument"
+                    size="small"
+                    @click="copyText(currentChannel.password, '密码')"
+                  >
+                    复制
+                  </el-button>
+                </template>
+                <span v-else class="muted">未设置独立密码（继承设备密码）</span>
+              </dd>
+            </div>
+            <div>
+              <dt>备注说明</dt>
+              <dd style="white-space: pre-wrap; word-break: break-all; max-width: 320px;">
+                {{ currentChannel.remark || '暂无备注' }}
+              </dd>
+            </div>
+          </dl>
+        </div>
+
+        <!-- 设备型号与版本信息 -->
+        <div style="margin-bottom: 24px;">
+          <h4 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+            <el-icon><InfoFilled /></el-icon> 设备型号与固件版本
+          </h4>
+          <dl class="data-list">
+            <div>
+              <dt>设备型号</dt>
+              <dd>
+                <el-tag v-if="currentChannel.deviceModel || currentChannel.model || getDevice(currentChannel)?.model" size="small" type="primary">
+                  {{ currentChannel.deviceModel || currentChannel.model || getDevice(currentChannel)?.model }}
+                </el-tag>
+                <span v-else class="muted">—</span>
+              </dd>
+            </div>
+            <div>
+              <dt>固件版本</dt>
+              <dd class="monospace">
+                <el-tag v-if="currentChannel.firmwareVersion" size="small" type="info">
+                  {{ currentChannel.firmwareVersion }}
+                </el-tag>
+                <span v-else class="muted">—</span>
+              </dd>
+            </div>
+            <div>
+              <dt>设备序列号</dt>
+              <dd class="monospace">{{ currentChannel.deviceSerial || getDevice(currentChannel)?.serialNumber || '—' }}</dd>
+            </div>
+            <div>
+              <dt>协议驱动插件</dt>
+              <dd>{{ currentChannel.pluginName || getDevice(currentChannel)?.pluginName || '内置默认驱动' }}</dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+
+      <template #footer>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <router-link v-if="currentChannel" :to="{ path: '/app/live', query: { channelId: currentChannel.id } }">
+            <el-button type="success" plain :icon="VideoPlay">打开实时监控</el-button>
+          </router-link>
+          <div style="display: flex; gap: 8px;">
+            <el-button v-if="auth.can('channel.assign') && currentChannel" type="primary" :icon="Edit" @click="openEdit(currentChannel)">
+              编辑备注与凭据
+            </el-button>
+            <el-button @click="detailDrawer = false">关闭</el-button>
+          </div>
+        </div>
+      </template>
+    </el-drawer>
   </div>
 </template>

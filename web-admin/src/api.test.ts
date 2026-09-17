@@ -197,4 +197,31 @@ describe('SSL 与域名管控 API 契约', () => {
     expect(calls.at(-1)!.path.endsWith('/ssl/nginx-config')).toBe(true)
   })
 })
+describe('通道管理与元数据 API 契约', () => {
+  it('支持修改通道别名、独立IP、访问账号密码与备注信息', async () => {
+    mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: 'csrf-token' }) : json({ id: 101, name: '通道1', alias: '东门高清', ip: '192.168.1.100', username: 'admin', remark: '测试备注' }))
+    const { managementApi } = await import('./api')
+
+    const result = await managementApi.updateChannel(101, {
+      alias: '东门高清',
+      ip: '192.168.1.100',
+      username: 'admin',
+      password: 'password123',
+      remark: '测试备注'
+    })
+
+    const updateCall = calls.at(-1)!
+    expect(updateCall.path.endsWith('/channels/101')).toBe(true)
+    expect(updateCall.init.method).toBe('PUT')
+    const body = JSON.parse(updateCall.init.body as string)
+    expect(body).toEqual({
+      alias: '东门高清',
+      ip: '192.168.1.100',
+      username: 'admin',
+      password: 'password123',
+      remark: '测试备注'
+    })
+    expect(result.id).toBe(101)
+  })
+})
 

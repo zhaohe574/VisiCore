@@ -175,6 +175,9 @@ public sealed class AdministrationService(Database db, AccessService access, Med
     public async Task<ChannelDto> UpdateChannelAsync(Actor actor, long id, ChannelUpdateRequest request, string? ip, CancellationToken ct = default)
     {
         Rules.Require(request.Alias is null || request.Alias.Length <= 256, "别名长度超出限制");
+        Rules.Require(request.Ip is null || request.Ip.Length <= 253, "IP地址长度超出限制");
+        Rules.Require(request.Username is null || request.Username.Length <= 128, "账号长度超出限制");
+        Rules.Require(request.Password is null || request.Password.Length <= 256, "密码长度超出限制");
         Rules.Require(request.UnitId is null or > 0, "目标单元无效");
         return await WriteAsync(actor, "channel.assign", async tx =>
         {
@@ -187,10 +190,14 @@ public sealed class AdministrationService(Database db, AccessService access, Med
             }
             var before = await RequiredAsync(tx, "channels", id, ct);
             var alias = string.IsNullOrWhiteSpace(request.Alias) ? null : request.Alias.Trim();
+            var channelIp = string.IsNullOrWhiteSpace(request.Ip) ? null : request.Ip.Trim();
+            var username = string.IsNullOrWhiteSpace(request.Username) ? null : request.Username.Trim();
+            var password = string.IsNullOrWhiteSpace(request.Password) ? null : request.Password.Trim();
+            var remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
             if (request.UnitId.HasValue)
-                await tx.ExecuteAsync("update channels set alias=@alias,unit_id=@unitId,updated_at=now() where id=@id", new { id, alias, unitId = request.UnitId.Value }, ct);
+                await tx.ExecuteAsync("update channels set alias=@alias,unit_id=@unitId,ip=@channelIp,username=@username,password=@password,remark=@remark,updated_at=now() where id=@id", new { id, alias, unitId = request.UnitId.Value, channelIp, username, password, remark }, ct);
             else
-                await tx.ExecuteAsync("update channels set alias=@alias,updated_at=now() where id=@id", new { id, alias }, ct);
+                await tx.ExecuteAsync("update channels set alias=@alias,ip=@channelIp,username=@username,password=@password,remark=@remark,updated_at=now() where id=@id", new { id, alias, channelIp, username, password, remark }, ct);
             await AuditAsync(tx, actor, "channel.update", $"channels/{id}", $"别名：{before["alias"]?.ToString() ?? "无"} → {alias ?? "无"}", ip, ct);
             var row = await tx.OneAsync($"select {AccessService.ChannelColumns} from {AccessService.ChannelFrom} where c.id=@id", new { id }, ct);
             return ToChannel(row!);
@@ -792,7 +799,29 @@ public sealed class AdministrationService(Database db, AccessService access, Med
     private static OrganizationNodeDto ToNode(JsonObject row) => new(row.Id(), row.Text("name"), row.Text("code"), row.Text("status"), NullableId(row, "parentId"));
     private static UserDto ToUser(JsonObject row) => new(row.Id(), row.Text("username"), row["displayName"]?.ToString(), row["phone"]?.ToString(), row.Text("status"), Array<string>(row, "permissions"), Array<long>(row, "roleIds"));
     private static AdministrationRoleDto ToRole(JsonObject row) => new(row.Id(), row.Text("name"), row.Text("code"), row.Text("status"), Array<string>(row, "permissionCodes"), row.Id("userCount"));
-    private static ChannelDto ToChannel(JsonObject row) => new(row.Id(), row.Id("deviceId"), row.Text("deviceName"), (int)row.Id("deviceChannel"), row.Text("name"), row["alias"]?.ToString(), row["model"]?.ToString(), row.Text("status"), NullableId(row, "unitId"), row.Flag("ptzCapable"), row["codec"]?.ToString());
+    private static ChannelDto ToChannel(JsonObject row) => new(
+        row.Id(),
+        row.Id("deviceId"),
+        row.Text("deviceName"),
+        (int)row.Id("deviceChannel"),
+        row.Text("name"),
+        row["alias"]?.ToString(),
+        row["model"]?.ToString(),
+        row.Text("status"),
+        NullableId(row, "unitId"),
+        row.Flag("ptzCapable"),
+        row["codec"]?.ToString(),
+        row["ip"]?.ToString(),
+        row["username"]?.ToString(),
+        row["password"]?.ToString(),
+        row["remark"]?.ToString(),
+        row["deviceModel"]?.ToString(),
+        row["deviceHost"]?.ToString(),
+        NullableId(row, "devicePort") is { } p ? (int)p : null,
+        row["deviceSerial"]?.ToString(),
+        row["pluginId"]?.ToString(),
+        row["pluginName"]?.ToString(),
+        row["firmwareVersion"]?.ToString());
     private static AdministrationLayoutDto ToLayout(JsonObject row) => new(row.Id(), row.Text("name"), row.Text("kind"), row.Flag("shared"), (int)row.Id("layout"), (int)row.Id("intervalSeconds"), Array<long?>(row, "channelIds"));
 }
 

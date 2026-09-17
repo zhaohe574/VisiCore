@@ -51,8 +51,8 @@ public sealed class AccessService(Database db) : IAccessService
           or exists(select 1 from role_scopes s join user_roles ur on ur.role_id=s.role_id join roles r on r.id=s.role_id where ur.user_id=au.id and r.status='active' and ((s.type='channel' and s.scope_id=c.id) or(s.type='unit' and s.scope_id=c.unit_id) or(s.type='area' and s.scope_id=un.parent_id) or(s.type='workshop' and s.scope_id=ar.parent_id)))
         ))
         """;
-    public const string ChannelFrom = "channels c join devices d on d.id=c.device_id left join units un on un.id=c.unit_id left join areas ar on ar.id=un.parent_id";
-    public const string ChannelColumns = "c.id,c.device_id,d.name as device_name,c.device_channel,c.name,c.alias,c.model,c.status,c.unit_id,c.ptz_capable,c.codec";
+    public const string ChannelFrom = "channels c join devices d on d.id=c.device_id left join device_plugins dp on dp.id=d.plugin_id left join units un on un.id=c.unit_id left join areas ar on ar.id=un.parent_id";
+    public const string ChannelColumns = "c.id,c.device_id,d.name as device_name,c.device_channel,c.name,c.alias,c.model,c.status,c.unit_id,c.ptz_capable,c.codec,coalesce(c.ip, d.host) as ip,coalesce(c.username, d.username) as username,coalesce(c.password, '') as password,coalesce(c.remark, '') as remark,d.model as device_model,d.host as device_host,d.port as device_port,d.serial_number as device_serial,d.plugin_id,coalesce(dp.name, d.plugin_id) as plugin_name,coalesce(dp.version, '2.1.0') as firmware_version";
 
     public async Task<bool> HasPermissionAsync(long userId, string permission, CancellationToken ct = default)
         => (await db.OneAsync("select exists(select 1 from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id join role_permissions p on p.role_id=r.id where u.id=@userId and u.status='active' and r.status='active' and p.permission_code=@permission) as allowed", new { userId, permission }, ct)).Flag("allowed");
