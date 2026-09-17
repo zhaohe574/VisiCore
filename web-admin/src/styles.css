@@ -971,6 +971,8 @@ svg {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
+  flex-wrap: nowrap;
 }
 
 .table-tools .el-button.is-link {

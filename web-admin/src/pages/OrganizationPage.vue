@@ -234,11 +234,8 @@ function getDevice(channel?: Channel | Record<string, any> | null): Device | und
 }
 
 function getChannelIp(channel?: Channel | Record<string, any> | null): string {
-  if (!channel) return '—'
-  if (channel.ip) return String(channel.ip)
-  if (channel.deviceHost) return String(channel.deviceHost)
-  const d = getDevice(channel)
-  return d?.host || '—'
+  if (!channel || !channel.ip) return '—'
+  return String(channel.ip)
 }
 
 function parentName(node: OrganizationNode) {
@@ -466,7 +463,7 @@ onMounted(loadOptions)
 
             <el-table-column prop="codec" label="编码" width="75" align="center" />
 
-            <el-table-column label="操作" width="200" fixed="right">
+            <el-table-column label="操作" width="240" fixed="right">
               <template #default="{ row }">
                 <div class="table-tools">
                   <router-link :to="{ path: '/app/live', query: { channelId: row.id } }">
@@ -558,7 +555,7 @@ onMounted(loadOptions)
               v-model="editForm.ip"
               maxlength="253"
               clearable
-              placeholder="留空则继承设备 IP"
+              placeholder="未单独配置则保持滞空"
             />
           </el-form-item>
 
@@ -567,7 +564,7 @@ onMounted(loadOptions)
               v-model="editForm.username"
               maxlength="128"
               clearable
-              placeholder="留空则使用设备账号"
+              placeholder="未单独配置则保持滞空"
             />
           </el-form-item>
         </div>
@@ -579,7 +576,7 @@ onMounted(loadOptions)
             show-password
             maxlength="256"
             clearable
-            placeholder="留空则使用设备密码"
+            placeholder="未单独配置则保持滞空"
           />
         </el-form-item>
 
@@ -640,57 +637,69 @@ onMounted(loadOptions)
           <StatusBadge :value="currentChannel.status" />
         </div>
 
-        <!-- 组织与归属 -->
+        <!-- 摄像头探知规格 -->
         <div style="margin-bottom: 24px;">
           <h4 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-            <el-icon><Folder /></el-icon> 组织与归属
+            <el-icon><VideoCamera /></el-icon> 摄像头探知规格
           </h4>
           <dl class="data-list">
             <div>
-              <dt>归属设备</dt>
-              <dd>{{ currentChannel.deviceName || '—' }} (ID: {{ currentChannel.deviceId }})</dd>
+              <dt>摄像头型号</dt>
+              <dd>
+                <el-tag v-if="currentChannel.model" size="small" type="primary">
+                  {{ currentChannel.model }}
+                </el-tag>
+                <span v-else class="muted">—</span>
+              </dd>
+            </div>
+            <div>
+              <dt>摄像头原名</dt>
+              <dd>{{ currentChannel.name || '—' }}</dd>
+            </div>
+            <div>
+              <dt>业务别名</dt>
+              <dd>{{ currentChannel.alias || '—' }}</dd>
+            </div>
+            <div>
+              <dt>探测通道号</dt>
+              <dd class="monospace">#{{ currentChannel.deviceChannel }}</dd>
+            </div>
+            <div>
+              <dt>视频编码</dt>
+              <dd class="monospace">{{ currentChannel.codec || 'H.264' }}</dd>
+            </div>
+            <div>
+              <dt>形态与云台能力</dt>
+              <dd>
+                <el-tag size="small" :type="currentChannel.ptzCapable ? 'success' : 'info'">
+                  {{ currentChannel.ptzCapable ? '球机 / 云台摄像机 (PTZ)' : '定焦 / 枪机 / 半球' }}
+                </el-tag>
+              </dd>
             </div>
             <div>
               <dt>所属业务组织</dt>
               <dd>{{ getUnitHierarchy(currentChannel.unitId) }}</dd>
             </div>
-            <div>
-              <dt>视频编码</dt>
-              <dd>{{ currentChannel.codec || 'H.264' }}</dd>
-            </div>
-            <div>
-              <dt>云台能力</dt>
-              <dd>
-                <el-tag size="small" :type="currentChannel.ptzCapable ? 'success' : 'info'">
-                  {{ currentChannel.ptzCapable ? '支持云台 PTZ' : '定焦 / 不支持' }}
-                </el-tag>
-              </dd>
-            </div>
           </dl>
         </div>
 
-        <!-- 网络与访问凭据 -->
+        <!-- 归属录像机与主机 -->
         <div style="margin-bottom: 24px;">
           <h4 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-            <el-icon><VideoCamera /></el-icon> 网络与访问凭据
+            <el-icon><Folder /></el-icon> 归属录像机 / 存储设备
           </h4>
           <dl class="data-list">
             <div>
-              <dt>通道 IP 地址</dt>
-              <dd style="display: flex; align-items: center; gap: 8px; justify-content: flex-end;">
-                <span class="monospace" style="font-weight: 600;">
-                  {{ getChannelIp(currentChannel) }}
-                </span>
-                <el-button
-                  v-if="getChannelIp(currentChannel) !== '—'"
-                  link
-                  type="primary"
-                  :icon="CopyDocument"
-                  size="small"
-                  @click="copyText(getChannelIp(currentChannel), 'IP地址')"
-                >
-                  复制
-                </el-button>
+              <dt>录像机名称</dt>
+              <dd>{{ currentChannel.deviceName || getDevice(currentChannel)?.name || '—' }} (ID: {{ currentChannel.deviceId }})</dd>
+            </div>
+            <div>
+              <dt>录像机型号</dt>
+              <dd>
+                <el-tag v-if="currentChannel.deviceModel || getDevice(currentChannel)?.model" size="small" type="info">
+                  {{ currentChannel.deviceModel || getDevice(currentChannel)?.model }}
+                </el-tag>
+                <span v-else class="muted">—</span>
               </dd>
             </div>
             <div>
@@ -698,23 +707,62 @@ onMounted(loadOptions)
               <dd class="monospace">{{ currentChannel.devicePort ?? getDevice(currentChannel)?.port ?? '—' }}</dd>
             </div>
             <div>
-              <dt>访问账号</dt>
+              <dt>设备序列号</dt>
+              <dd class="monospace">{{ currentChannel.deviceSerial || getDevice(currentChannel)?.serialNumber || '—' }}</dd>
+            </div>
+            <div>
+              <dt>协议驱动插件</dt>
+              <dd>{{ currentChannel.pluginName || getDevice(currentChannel)?.pluginName || '内置海康驱动' }}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <!-- 网络与访问凭据 -->
+        <div style="margin-bottom: 24px;">
+          <h4 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+            <el-icon><InfoFilled /></el-icon> 网络与访问凭据 (独立备注)
+          </h4>
+          <dl class="data-list">
+            <div>
+              <dt>通道独立 IP</dt>
               <dd style="display: flex; align-items: center; gap: 8px; justify-content: flex-end;">
-                <span class="monospace">{{ currentChannel.username || getDevice(currentChannel)?.username || '—' }}</span>
-                <el-button
-                  v-if="currentChannel.username || getDevice(currentChannel)?.username"
-                  link
-                  type="primary"
-                  :icon="CopyDocument"
-                  size="small"
-                  @click="copyText(currentChannel.username || getDevice(currentChannel)?.username, '账号')"
-                >
-                  复制
-                </el-button>
+                <template v-if="currentChannel.ip">
+                  <span class="monospace" style="font-weight: 600;">
+                    {{ currentChannel.ip }}
+                  </span>
+                  <el-button
+                    link
+                    type="primary"
+                    :icon="CopyDocument"
+                    size="small"
+                    @click="copyText(currentChannel.ip, 'IP地址')"
+                  >
+                    复制
+                  </el-button>
+                </template>
+                <span v-else class="muted">—</span>
               </dd>
             </div>
             <div>
-              <dt>访问密码</dt>
+              <dt>独立访问账号</dt>
+              <dd style="display: flex; align-items: center; gap: 8px; justify-content: flex-end;">
+                <template v-if="currentChannel.username">
+                  <span class="monospace">{{ currentChannel.username }}</span>
+                  <el-button
+                    link
+                    type="primary"
+                    :icon="CopyDocument"
+                    size="small"
+                    @click="copyText(currentChannel.username, '账号')"
+                  >
+                    复制
+                  </el-button>
+                </template>
+                <span v-else class="muted">—</span>
+              </dd>
+            </div>
+            <div>
+              <dt>独立访问密码</dt>
               <dd style="display: flex; align-items: center; gap: 8px; justify-content: flex-end;">
                 <template v-if="currentChannel.password">
                   <span class="monospace">
@@ -739,49 +787,14 @@ onMounted(loadOptions)
                     复制
                   </el-button>
                 </template>
-                <span v-else class="muted">未设置独立密码（继承设备密码）</span>
+                <span v-else class="muted">—</span>
               </dd>
             </div>
             <div>
-              <dt>备注说明</dt>
+              <dt>现场备注说明</dt>
               <dd style="white-space: pre-wrap; word-break: break-all; max-width: 320px;">
-                {{ currentChannel.remark || '暂无备注' }}
+                {{ currentChannel.remark || '—' }}
               </dd>
-            </div>
-          </dl>
-        </div>
-
-        <!-- 设备型号与版本信息 -->
-        <div style="margin-bottom: 24px;">
-          <h4 style="margin: 0 0 12px; font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
-            <el-icon><InfoFilled /></el-icon> 设备型号与固件版本
-          </h4>
-          <dl class="data-list">
-            <div>
-              <dt>设备型号</dt>
-              <dd>
-                <el-tag v-if="currentChannel.deviceModel || currentChannel.model || getDevice(currentChannel)?.model" size="small" type="primary">
-                  {{ currentChannel.deviceModel || currentChannel.model || getDevice(currentChannel)?.model }}
-                </el-tag>
-                <span v-else class="muted">—</span>
-              </dd>
-            </div>
-            <div>
-              <dt>固件版本</dt>
-              <dd class="monospace">
-                <el-tag v-if="currentChannel.firmwareVersion" size="small" type="info">
-                  {{ currentChannel.firmwareVersion }}
-                </el-tag>
-                <span v-else class="muted">—</span>
-              </dd>
-            </div>
-            <div>
-              <dt>设备序列号</dt>
-              <dd class="monospace">{{ currentChannel.deviceSerial || getDevice(currentChannel)?.serialNumber || '—' }}</dd>
-            </div>
-            <div>
-              <dt>协议驱动插件</dt>
-              <dd>{{ currentChannel.pluginName || getDevice(currentChannel)?.pluginName || '内置默认驱动' }}</dd>
             </div>
           </dl>
         </div>
