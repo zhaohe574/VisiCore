@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { Organization } from '../api'
-import { buildUnitCascaderOptions, getUnitHierarchy, getUnitParentPath } from './organization'
+import {
+  buildUnitCascaderOptions,
+  getUnitHierarchy,
+  getUnitParentPath,
+  getUnitArea,
+  getUnitWorkshop,
+  getUnitName,
+  groupUnitsByArea
+} from './organization'
 
 const mockOrg: Organization = {
   workshops: [
@@ -90,5 +98,51 @@ describe('组织级联与层级工具 (organization.ts)', () => {
     expect(getUnitParentPath(mockOrg, 201)).toBe('二车间 / 装配区')
     expect(getUnitParentPath(mockOrg, 999)).toBe('')
     expect(getUnitParentPath(mockOrg, null)).toBe('')
+  })
+
+  it('获取单元所属区域与车间节点 (getUnitArea, getUnitWorkshop)', () => {
+    const area101 = getUnitArea(mockOrg, 101)
+    expect(area101).toBeDefined()
+    expect(area101?.name).toBe('冲压区')
+
+    const ws101 = getUnitWorkshop(mockOrg, 101)
+    expect(ws101).toBeDefined()
+    expect(ws101?.name).toBe('一车间')
+
+    expect(getUnitArea(mockOrg, 999)).toBeUndefined()
+    expect(getUnitWorkshop(mockOrg, 999)).toBeUndefined()
+    expect(getUnitArea(mockOrg, null)).toBeUndefined()
+    expect(getUnitWorkshop(mockOrg, null)).toBeUndefined()
+  })
+
+  it('获取单元名称 (getUnitName)', () => {
+    expect(getUnitName(mockOrg, 101)).toBe('包装单元')
+    expect(getUnitName(mockOrg, 999)).toBe('单元 999')
+    expect(getUnitName(mockOrg, null)).toBe('未分配')
+    expect(getUnitName(mockOrg, undefined)).toBe('未分配')
+  })
+
+  it('按所属区域分组单元 (groupUnitsByArea)', () => {
+    const groups = groupUnitsByArea(mockOrg)
+    expect(groups).toHaveLength(3)
+
+    // 冲压区 (2 units)
+    const ar11Group = groups.find(g => g.areaId === 11)
+    expect(ar11Group).toBeDefined()
+    expect(ar11Group?.areaName).toBe('冲压区')
+    expect(ar11Group?.workshopName).toBe('一车间')
+    expect(ar11Group?.units).toHaveLength(2)
+    expect(ar11Group?.units.map(u => u.id)).toEqual([101, 102])
+
+    // 喷涂区 (0 units)
+    const ar12Group = groups.find(g => g.areaId === 12)
+    expect(ar12Group).toBeDefined()
+    expect(ar12Group?.units).toHaveLength(0)
+
+    // 装配区 (1 unit)
+    const ar21Group = groups.find(g => g.areaId === 21)
+    expect(ar21Group).toBeDefined()
+    expect(ar21Group?.units).toHaveLength(1)
+    expect(ar21Group?.units[0].id).toBe(201)
   })
 })

@@ -80,14 +80,14 @@ public static class DeviceEndpoints
                 var snapshot = await devices.SyncAsync(id, context.RequestAborted);
                 return Results.Ok(new { success = true, channels = (snapshot["channels"] as JsonArray)?.Count ?? 0 });
             }).WithName(action == "test" ? "TestDevice" : "SyncDevice");
-        group.MapGet("/channels", async (HttpContext context, Database db, AccessService access, long? deviceId, long? unitId, bool? online) =>
+        group.MapGet("/channels", async (HttpContext context, Database db, AccessService access, long? deviceId, long? unitId, long? areaId, long? workshopId, bool? online, bool? assigned) =>
         {
             var actor = ApiSupport.Actor(context);
             await access.DemandAsync(actor, "channel.read");
             var (_, size, offset) = ApiSupport.Pagination(context);
-            var where = $"c.status<>'disabled' and d.enabled and ({AccessService.ChannelPredicate}) and (@deviceId::bigint is null or c.device_id=@deviceId) and (@unitId::bigint is null or c.unit_id=@unitId) and (@online::boolean is null or (c.status='online')=@online) and (c.name ilike @search or coalesce(c.alias, '') ilike @search or coalesce(c.ip, '') ilike @search or coalesce(c.remark, '') ilike @search or d.name ilike @search or c.device_channel::text ilike @search)";
-            var args = new { actor.UserId, deviceId, unitId, online, search = $"%{ApiSupport.Search(context)}%", size, offset };
-            var rows = await db.QueryAsync($"select {AccessService.ChannelColumns} from {AccessService.ChannelFrom} where {where} order by d.id,c.device_channel limit @size offset @offset", args);
+            var where = $"c.status<>'disabled' and d.enabled and ({AccessService.ChannelPredicate}) and (@deviceId::bigint is null or c.device_id=@deviceId) and (@unitId::bigint is null or c.unit_id=@unitId) and (@areaId::bigint is null or un.parent_id=@areaId) and (@workshopId::bigint is null or ar.parent_id=@workshopId) and (@assigned::boolean is null or (@assigned = true and c.unit_id is not null) or (@assigned = false and c.unit_id is null)) and (@online::boolean is null or (c.status='online')=@online) and (c.name ilike @search or coalesce(c.alias, '') ilike @search or coalesce(c.ip, '') ilike @search or coalesce(c.remark, '') ilike @search or d.name ilike @search or c.device_channel::text ilike @search)";
+            var args = new { actor.UserId, deviceId, unitId, areaId, workshopId, online, assigned, search = $"%{ApiSupport.Search(context)}%", size, offset };
+            var rows = await db.QueryAsync($"select {AccessService.ChannelColumns} from {AccessService.ChannelFrom} where {where} order by coalesce(c.sort_order, 0), d.id, c.device_channel limit @size offset @offset", args);
             var count = await db.OneAsync($"select count(*) as count from {AccessService.ChannelFrom} where {where}", args);
             return Results.Ok(ApiSupport.Page(context, rows, count.Id("count")));
         }).WithName("ListChannels");

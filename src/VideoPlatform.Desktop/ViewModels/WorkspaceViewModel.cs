@@ -230,7 +230,8 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
         var areaNodes = new Dictionary<long, ResourceNode>();
         var unitNodes = new Dictionary<long, ResourceNode>();
 
-        foreach (var channel in assigned.OrderBy(c => c.DeviceChannel))
+        var unitOrder = organization?.Units.Select((u, i) => (u.Id, i)).ToDictionary(x => x.Id, x => x.i) ?? [];
+        foreach (var channel in assigned.OrderBy(c => unitOrder.GetValueOrDefault(c.UnitId!.Value)).ThenBy(c => c.SortOrder).ThenBy(c => c.DeviceChannel))
         {
             var unit = units[channel.UnitId!.Value];
             if (!unitNodes.TryGetValue(unit.Id, out var unitNode))
@@ -290,7 +291,7 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
     }
 
     private static ResourceNode CreateChannelNode(Channel channel, HashSet<long> checkedIds) =>
-        new($"{channel.DeviceChannel:00}  {channel.DisplayName}", channel) { IsChecked = checkedIds.Contains(channel.Id), IsExpanded = false };
+        new(channel.DisplayName, channel) { IsChecked = checkedIds.Contains(channel.Id), IsExpanded = false };
     public string OnlineStatsLabel => $"在线 {_channels.Values.Count(c => c.Online)}/{_channels.Count}";
     private IEnumerable<Channel> CheckedChannels() => Resources.SelectMany(n => n.Flatten()).Where(n => n.IsChecked && n.Channel is not null).Select(n => n.Channel!);
     partial void OnSearchChanged(string value) => Filter();
@@ -463,9 +464,18 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
     private bool _preferSubStreamInGrid = true;
     private TileDisplayTier WorkspaceTier(VideoTileViewModel tile) =>
         IsMaximized ? (ReferenceEquals(tile, SelectedTile) ? TileDisplayTier.Focused : TileDisplayTier.Hidden)
-        : LayoutCount == 1 ? (IsFullscreen ? TileDisplayTier.Fullscreen : TileDisplayTier.Focused)
         : TileDisplayTier.Grid;
-    [RelayCommand] private void ToggleMaximize() { VideoMouseHook.ClearHoveredTile(); IsMaximized = !IsMaximized; UpdateVisibleTiles(); }
+    [RelayCommand]
+    private void ToggleMaximize()
+    {
+        VideoMouseHook.ClearHoveredTile();
+        IsMaximized = !IsMaximized;
+        UpdateVisibleTiles();
+        if (SelectedTile is not null)
+        {
+            SelectedTile.ManualStreamOverride = null;
+        }
+    }
     [RelayCommand]
     private void Fullscreen()
     {
@@ -621,12 +631,13 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
             tile.StateLabel = "通道离线";
             throw new InvalidOperationException("通道离线，暂时无法播放。");
         }
+        tile.ResetStreamPreference();
         // 尽力而为地探测该通道的子码流能力（B1）：缓存就绪后，后续决策可省掉一次失败往返。
         if (!IsPlayback) tile.RequestCapabilityProbe(_api);
         var range = IsPlayback ? ReadRange() : (DateTimeOffset.Now, DateTimeOffset.Now);
-        // 首开即按显示档位选码流，避免先建主码流再切换造成的浪费与画面重建。
-        // 回放同样按档位选录像码流：小窗口取子码流录像，放大/全屏取主码流录像。
-        await tile.StartAsync(channel, IsPlayback, tile.DesiredStreamType, range.Item1, range.Item2);
+        // 打开摄像头时默认打开子码流（若设备不支持子码流则自动安全回退为主码流）；双击放大画面时自动切换为主码流
+        var streamType = IsPlayback ? tile.DesiredStreamType : tile.DefaultSubStreamType(channel);
+        await tile.StartAsync(channel, IsPlayback, streamType, range.Item1, range.Item2);
     }
 
     /// <summary>
@@ -733,7 +744,11 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
     public async Task StopAllCoreAsync()
     {
         ++_generation; StopPatrol();
-        foreach (var tile in Tiles) tile.Invalidate();
+        foreach (var tile in Tiles)
+        {
+            tile.Invalidate();
+            tile.ResetStreamPreference();
+        }
         await StopPtzAsync();
         await Task.WhenAll(Tiles.Select(t => t.StopAsync()));
         try { await _api.SendAsync(HttpMethod.Delete, IsPlayback ? "playback-sessions?all=true" : "live-sessions?all=true"); }

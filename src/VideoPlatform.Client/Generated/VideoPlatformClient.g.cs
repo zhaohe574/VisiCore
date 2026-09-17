@@ -14482,6 +14482,9 @@ namespace VideoPlatform.Client.Generated
         [System.Text.Json.Serialization.JsonPropertyName("codec")]
         public string? Codec { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("sortOrder")]
+        public int SortOrder { get; set; } = default!;
+
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
         [System.Text.Json.Serialization.JsonExtensionData]

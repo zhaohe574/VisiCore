@@ -235,8 +235,10 @@ public partial class WorkspaceView : UserControl
         {
             if (!vm.IsFullscreen) HideFullscreenControls();
         }
-        // 分屏格数和布局模板切换时套用显示档位；单窗放大与全屏仅做视口几何缩放，不重新拉流
-        if (e.PropertyName is nameof(WorkspaceViewModel.LayoutCount) or nameof(WorkspaceViewModel.SelectedLayoutPreset))
+        // 分屏格数、布局模板、单窗放大/还原切换时统一套用显示档位（双击放大为主码流，切回小画面为子码流）
+        if (e.PropertyName is nameof(WorkspaceViewModel.LayoutCount)
+            or nameof(WorkspaceViewModel.SelectedLayoutPreset)
+            or nameof(WorkspaceViewModel.IsMaximized))
         {
             _ = ApplyLayoutTiersAsync();
         }

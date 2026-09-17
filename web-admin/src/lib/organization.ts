@@ -1,10 +1,11 @@
-import type { Organization } from '../api'
+import type { Organization, OrganizationNode } from '../api'
 
 export interface UnitCascaderOption {
   value: number | string
   label: string
   disabled?: boolean
   children?: UnitCascaderOption[]
+  [key: string]: unknown
 }
 
 /**
@@ -121,4 +122,84 @@ export function getUnitParentPath(org: Organization, unitId?: number | null): st
   const workshop = org.workshops?.find(w => w.id === area.parentId)
   if (!workshop) return area.name
   return `${workshop.name} / ${area.name}`
+}
+
+export interface AreaUnitGroup {
+  areaId: number | null
+  areaName: string
+  workshopName?: string
+  areaNode?: OrganizationNode
+  units: OrganizationNode[]
+}
+
+/**
+ * 获取单元所属区域节点
+ */
+export function getUnitArea(org: Organization, unitId?: number | null): OrganizationNode | undefined {
+  if (!unitId) return undefined
+  const unit = org.units?.find(u => u.id === unitId)
+  if (!unit || !unit.parentId) return undefined
+  return org.areas?.find(a => a.id === unit.parentId)
+}
+
+/**
+ * 获取单元所属车间节点
+ */
+export function getUnitWorkshop(org: Organization, unitId?: number | null): OrganizationNode | undefined {
+  const area = getUnitArea(org, unitId)
+  if (!area || !area.parentId) return undefined
+  return org.workshops?.find(w => w.id === area.parentId)
+}
+
+/**
+ * 获取单元名称显示文本
+ */
+export function getUnitName(org: Organization, unitId?: number | null): string {
+  if (!unitId) return '未分配'
+  const unit = org.units?.find(u => u.id === unitId)
+  return unit ? unit.name : `单元 ${unitId}`
+}
+
+/**
+ * 将单元按所属区域进行结构化分组
+ */
+export function groupUnitsByArea(org: Organization): AreaUnitGroup[] {
+  const { workshops = [], areas = [], units = [] } = org
+  const groups: AreaUnitGroup[] = []
+  const areaMap = new Map<number, AreaUnitGroup>()
+
+  for (const area of areas) {
+    const workshop = workshops.find(w => w.id === area.parentId)
+    const grp: AreaUnitGroup = {
+      areaId: area.id,
+      areaName: area.name,
+      workshopName: workshop?.name,
+      areaNode: area,
+      units: []
+    }
+    areaMap.set(area.id, grp)
+  }
+
+  const unassignedUnits: OrganizationNode[] = []
+  for (const unit of units) {
+    if (unit.parentId && areaMap.has(unit.parentId)) {
+      areaMap.get(unit.parentId)!.units.push(unit)
+    } else {
+      unassignedUnits.push(unit)
+    }
+  }
+
+  for (const grp of areaMap.values()) {
+    groups.push(grp)
+  }
+
+  if (unassignedUnits.length > 0) {
+    groups.push({
+      areaId: null,
+      areaName: '未分配区域',
+      units: unassignedUnits
+    })
+  }
+
+  return groups
 }

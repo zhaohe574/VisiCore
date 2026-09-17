@@ -105,6 +105,18 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
     public bool PreferSubStreamInGrid { get; set; } = true;
     /// <summary>设备确认没有子码流后置位，避免反复尝试降档造成无谓的会话重建。</summary>
     private bool _subStreamUnavailable;
+
+    /// <summary>重置人工指定的码流覆盖与无子码流标记，使新打开的通道恢复默认子码流策略。</summary>
+    public void ResetStreamPreference()
+    {
+        _manualStreamOverride = null;
+        _pendingStreamOverride = null;
+        _subStreamUnavailable = false;
+    }
+
+    /// <summary>新开通道时默认采用的子码流档位（若设备已知不支持子码流则安全回退为主码流）。</summary>
+    public int DefaultSubStreamType(Channel channel) =>
+        !_subStreamUnavailable && !SubStreamKnownUnavailable(channel) && PlatformDidNotDenySubStream(channel) ? 2 : 1;
     partial void OnAspectRatioChanged(string? value)
     {
         if (value is not null && value != "fill" && value != "default" && value != "original" && _player is not null)
@@ -407,6 +419,7 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
         Segments = [];
         StateLabel = "空闲";
         IsPlaying = false;
+        ResetStreamPreference();
         await ReleasePlayerAsync();
         if (session is not null) await DeleteSessionAsync(path, session.Id);
     }

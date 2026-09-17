@@ -12,6 +12,9 @@ import {
   Plus,
   Refresh,
   Search,
+  Sort,
+  Top,
+  Bottom,
   VideoCamera,
   VideoPlay,
   View,
@@ -30,7 +33,11 @@ import {
 import {
   buildUnitCascaderOptions,
   getUnitHierarchy as formatUnitHierarchy,
-  getUnitParentPath
+  getUnitParentPath,
+  getUnitArea,
+  getUnitWorkshop,
+  getUnitName,
+  groupUnitsByArea
 } from '../lib/organization'
 import { usePaged } from '../composables/usePaged'
 import { useAction } from '../composables/useAction'
@@ -46,14 +53,31 @@ const organization = ref<Organization>({ workshops: [], areas: [], units: [] })
 const devices = ref<Device[]>([])
 
 const deviceId = ref<number | undefined>(Number(route.query.deviceId) || undefined)
-const unitId = ref<number>()
+const workshopId = ref<number | undefined>()
+const areaId = ref<number | undefined>()
+const unitId = ref<number | undefined>()
 const online = ref<string>('')
+const assignedFilter = ref<string>('')
+
+// 当前左侧点击选中的组织节点
+const selectedOrgNode = ref<{ kind: OrganizationKind; id: number; name: string } | null>(null)
+
+// 通道排序弹窗状态
+const sortDialog = ref(false)
+const sortUnitId = ref<number | null>(null)
+const sortUnitName = ref('')
+const sortChannelsList = ref<Channel[]>([])
+const sortLoading = ref(false)
+const sortSaving = ref(false)
 
 const { items, total, page, pageSize, search, loading, error, load } = usePaged(
   managementApi.channels,
   () => ({
     deviceId: deviceId.value,
     unitId: unitId.value ?? undefined,
+    areaId: areaId.value ?? undefined,
+    workshopId: workshopId.value ?? undefined,
+    assigned: assignedFilter.value === 'true' ? true : (assignedFilter.value === 'false' ? false : undefined),
     online: online.value
   }),
   ['device.changed', 'access.changed']
@@ -239,6 +263,36 @@ function getUnitParent(unitId?: number | null): string {
   return getUnitParentPath(organization.value, unitId)
 }
 
+function getUnitAreaNode(unitId?: number | null): OrganizationNode | undefined {
+  return getUnitArea(organization.value, unitId)
+}
+
+function getUnitWorkshopNode(unitId?: number | null): OrganizationNode | undefined {
+  return getUnitWorkshop(organization.value, unitId)
+}
+
+function getUnitLabel(unitId?: number | null): string {
+  return getUnitName(organization.value, unitId)
+}
+
+const unitsGroupedByArea = computed(() => groupUnitsByArea(organization.value))
+
+const filteredUnits = computed(() => {
+  if (!areaId.value) return organization.value.units
+  return organization.value.units.filter(u => u.parentId === areaId.value)
+})
+
+function getAreaOptionLabel(area: OrganizationNode): string {
+  const workshop = organization.value.workshops.find(w => w.id === area.parentId)
+  return workshop ? `${area.name} (${workshop.name})` : area.name
+}
+
+function getUnitOptionLabel(unit: OrganizationNode): string {
+  if (areaId.value) return unit.name
+  const area = organization.value.areas.find(a => a.id === unit.parentId)
+  return area ? `${unit.name} (${area.name})` : unit.name
+}
+
 function getDevice(channel?: Channel | Record<string, any> | null): Device | undefined {
   if (!channel) return undefined
   return devices.value.find(d => d.id === channel.deviceId)
@@ -258,9 +312,175 @@ function parentName(node: OrganizationNode) {
 function resetFilters() {
   search.value = ''
   deviceId.value = undefined
+  workshopId.value = undefined
+  areaId.value = undefined
   unitId.value = undefined
   online.value = ''
+  assignedFilter.value = ''
+  selectedOrgNode.value = null
   void load(true)
+}
+
+function selectOrgNode(node: OrganizationNode) {
+  if (selectedOrgNode.value?.kind === orgTab.value && selectedOrgNode.value?.id === node.id) {
+    clearOrgFilter()
+    return
+  }
+  selectedOrgNode.value = { kind: orgTab.value, id: node.id, name: node.name }
+  if (orgTab.value === 'workshops') {
+    workshopId.value = node.id
+    areaId.value = undefined
+    unitId.value = undefined
+  } else if (orgTab.value === 'areas') {
+    workshopId.value = undefined
+    areaId.value = node.id
+    unitId.value = undefined
+  } else if (orgTab.value === 'units') {
+    workshopId.value = undefined
+    areaId.value = node.parentId ?? undefined
+    unitId.value = node.id
+  }
+  void load(true)
+}
+
+function selectAreaNode(node: OrganizationNode) {
+  selectedOrgNode.value = { kind: 'areas', id: node.id, name: node.name }
+  workshopId.value = undefined
+  areaId.value = node.id
+  unitId.value = undefined
+  void load(true)
+}
+
+function clearOrgFilter() {
+  selectedOrgNode.value = null
+  workshopId.value = undefined
+  areaId.value = undefined
+  unitId.value = undefined
+  void load(true)
+}
+
+function onAreaSelectChange(val?: number) {
+  if (val) {
+    const area = organization.value.areas.find(a => a.id === val)
+    selectedOrgNode.value = area ? { kind: 'areas', id: area.id, name: area.name } : null
+    workshopId.value = undefined
+    if (unitId.value) {
+      const unit = organization.value.units.find(u => u.id === unitId.value)
+      if (unit && unit.parentId !== val) {
+        unitId.value = undefined
+      }
+    }
+  } else {
+    if (selectedOrgNode.value?.kind === 'areas') {
+      selectedOrgNode.value = null
+    }
+  }
+  void load(true)
+}
+
+function onUnitSelectChange(val?: number) {
+  if (val) {
+    const unit = organization.value.units.find(u => u.id === val)
+    selectedOrgNode.value = unit ? { kind: 'units', id: unit.id, name: unit.name } : null
+    workshopId.value = undefined
+    if (unit?.parentId && !areaId.value) {
+      areaId.value = unit.parentId
+    }
+  } else {
+    if (selectedOrgNode.value?.kind === 'units') {
+      selectedOrgNode.value = null
+    }
+  }
+  void load(true)
+}
+
+function onUnitCascaderChange(val?: any) {
+  const numericId = typeof val === 'number' ? val : (Array.isArray(val) ? Number(val[val.length - 1]) : Number(val))
+  if (numericId && !Number.isNaN(numericId)) {
+    const unit = organization.value.units.find(u => u.id === numericId)
+    selectedOrgNode.value = unit ? { kind: 'units', id: unit.id, name: unit.name } : null
+    workshopId.value = undefined
+    areaId.value = unit?.parentId ?? undefined
+    unitId.value = numericId
+  } else {
+    if (selectedOrgNode.value?.kind === 'units') {
+      selectedOrgNode.value = null
+    }
+  }
+  void load(true)
+}
+
+function filterByAssigned(status: string) {
+  assignedFilter.value = status
+  void load(true)
+}
+
+async function openSortDialog(targetUnit: OrganizationNode) {
+  sortUnitId.value = targetUnit.id
+  sortUnitName.value = targetUnit.name
+  sortDialog.value = true
+  await loadUnitChannelsForSort(targetUnit.id)
+}
+
+async function openSortDialogForActiveUnit() {
+  if (!unitId.value) return
+  const unit = organization.value.units.find(u => u.id === unitId.value)
+  sortUnitId.value = unitId.value
+  sortUnitName.value = unit?.name || `单元 ${unitId.value}`
+  sortDialog.value = true
+  await loadUnitChannelsForSort(unitId.value)
+}
+
+async function loadUnitChannelsForSort(uId: number) {
+  sortLoading.value = true
+  try {
+    const result = await managementApi.channels({ unitId: uId, pageSize: 500 })
+    sortChannelsList.value = result.items || []
+  } catch (err: any) {
+    ElMessage.error(err.message || '加载单元通道失败')
+  } finally {
+    sortLoading.value = false
+  }
+}
+
+function moveSortChannel(index: number, direction: 'up' | 'down' | 'top' | 'bottom') {
+  const list = [...sortChannelsList.value]
+  const target = list[index]
+  if (!target) return
+
+  if (direction === 'up' && index > 0) {
+    list[index] = list[index - 1]
+    list[index - 1] = target
+  } else if (direction === 'down' && index < list.length - 1) {
+    list[index] = list[index + 1]
+    list[index + 1] = target
+  } else if (direction === 'top' && index > 0) {
+    list.splice(index, 1)
+    list.unshift(target)
+  } else if (direction === 'bottom' && index < list.length - 1) {
+    list.splice(index, 1)
+    list.push(target)
+  }
+  sortChannelsList.value = list
+}
+
+async function saveSortOrder() {
+  if (!sortUnitId.value || sortChannelsList.value.length === 0) {
+    sortDialog.value = false
+    return
+  }
+  sortSaving.value = true
+  try {
+    const channelIds = sortChannelsList.value.map(c => c.id)
+    await managementApi.sortChannels(sortUnitId.value, channelIds)
+    ElMessage.success('单元通道排序已保存并同步')
+    sortDialog.value = false
+    await load(true)
+  } catch (err: any) {
+    ElMessage.error(err.message || '保存排序失败')
+  } finally {
+    sortSaving.value = false
+  }
 }
 
 onMounted(loadOptions)
@@ -301,7 +521,7 @@ onMounted(loadOptions)
         </div>
       </div>
 
-      <div class="kpi-card">
+      <div class="kpi-card" style="cursor: pointer;" title="点击筛选未划拨通道" @click="filterByAssigned('false')">
         <div class="kpi-icon-wrap amber"><el-icon><Folder /></el-icon></div>
         <div class="kpi-content">
           <div class="kpi-label">待分配通道</div>
@@ -326,33 +546,125 @@ onMounted(loadOptions)
           <el-tab-pane v-for="(name, key) in names" :key="key" :name="key" :label="name" />
         </el-tabs>
 
-        <div v-if="!organization[orgTab].length" class="muted" style="text-align: center; padding: 32px 0;">
-          暂无{{ names[orgTab] }}节点
+        <!-- 单元 Tab：按所属区域结构化分块展示 -->
+        <div v-if="orgTab === 'units'" style="max-height: 520px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 2px;">
+          <div v-if="!organization.units.length" class="muted" style="text-align: center; padding: 32px 0;">
+            暂无单元节点
+          </div>
+          <div
+            v-for="group in unitsGroupedByArea"
+            :key="group.areaId ?? 'unassigned'"
+            class="area-unit-group"
+            style="background: #ffffff; border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,0.03);"
+          >
+            <!-- 区域组头 -->
+            <div
+              style="display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; background: #f8fafc; border-bottom: 1px solid var(--border);"
+            >
+              <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+                <span style="font-size: 11px; font-weight: 600; color: #475569; background: #e2e8f0; border-radius: 3px; padding: 1px 5px;">
+                  区域
+                </span>
+                <strong style="font-size: 12.5px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  {{ group.areaName }}
+                </strong>
+                <span v-if="group.workshopName" class="muted" style="font-size: 11px;">
+                  ({{ group.workshopName }})
+                </span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 4px;">
+                <el-tag size="small" type="info" effect="plain" style="font-size: 11px; height: 18px; padding: 0 4px;">
+                  {{ group.units.length }} 单元
+                </el-tag>
+                <el-tooltip v-if="group.areaNode" content="筛选此区域所有通道">
+                  <el-button
+                    link
+                    type="primary"
+                    size="small"
+                    style="font-size: 11px; padding: 2px 4px;"
+                    @click.stop="selectAreaNode(group.areaNode)"
+                  >
+                    筛选区域
+                  </el-button>
+                </el-tooltip>
+              </div>
+            </div>
+
+            <!-- 区域下属各单元项 -->
+            <div style="padding: 6px; display: flex; flex-direction: column; gap: 6px;">
+              <div v-if="!group.units.length" class="muted" style="font-size: 11px; text-align: center; padding: 6px 0;">
+                该区域下暂无单元
+              </div>
+              <div
+                v-for="node in group.units"
+                :key="node.id"
+                class="channel-entry org-node-item"
+                :class="{ 'is-selected': selectedOrgNode?.kind === 'units' && selectedOrgNode?.id === node.id }"
+                style="padding: 8px 10px; background: #f8fafc; border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer;"
+                @click="selectOrgNode(node)"
+              >
+                <div style="flex: 1; min-width: 0;">
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <strong style="font-size: 12.5px; color: var(--text-primary); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                      {{ node.name }}
+                    </strong>
+                    <el-tag v-if="selectedOrgNode?.kind === 'units' && selectedOrgNode?.id === node.id" size="small" type="primary" effect="dark" style="height: 18px; padding: 0 4px; font-size: 10px;">
+                      已筛选
+                    </el-tag>
+                  </div>
+                  <small class="muted" style="font-size: 11px;">{{ node.code }}</small>
+                </div>
+
+                <div class="table-tools" @click.stop>
+                  <el-tooltip v-if="auth.can('channel.assign')" content="通道排序">
+                    <el-button link type="warning" :icon="Sort" aria-label="通道排序" @click.stop="openSortDialog(node)" />
+                  </el-tooltip>
+                  <el-tooltip v-if="auth.can('area.manage')" content="编辑组织">
+                    <el-button link type="primary" :icon="Edit" aria-label="编辑组织" @click.stop="editNode(node)" />
+                  </el-tooltip>
+                  <el-tooltip v-if="auth.can('area.manage')" content="删除组织">
+                    <el-button link type="danger" :icon="Delete" :disabled="busy" aria-label="删除组织" @click.stop="removeNode(node)" />
+                  </el-tooltip>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div style="max-height: 520px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
+        <!-- 车间、区域 Tab：常规列表展示 -->
+        <div v-else style="max-height: 520px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
+          <div v-if="!organization[orgTab].length" class="muted" style="text-align: center; padding: 32px 0;">
+            暂无{{ names[orgTab] }}节点
+          </div>
           <div
             v-for="node in organization[orgTab]"
             :key="node.id"
-            class="channel-entry"
-            style="padding: 10px 12px; background: #f8fafc; border: 1px solid var(--border); border-radius: var(--radius-md);"
+            class="channel-entry org-node-item"
+            :class="{ 'is-selected': selectedOrgNode?.kind === orgTab && selectedOrgNode?.id === node.id }"
+            style="padding: 10px 12px; background: #f8fafc; border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer;"
+            @click="selectOrgNode(node)"
           >
             <div style="flex: 1; min-width: 0;">
-              <strong style="font-size: 13px; color: var(--text-primary); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                {{ node.name }}
-              </strong>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <strong style="font-size: 13px; color: var(--text-primary); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  {{ node.name }}
+                </strong>
+                <el-tag v-if="selectedOrgNode?.kind === orgTab && selectedOrgNode?.id === node.id" size="small" type="primary" effect="dark" style="height: 18px; padding: 0 4px; font-size: 10px;">
+                  已筛选
+                </el-tag>
+              </div>
               <small class="muted" style="font-size: 11px;">
                 {{ node.code }}
                 <template v-if="node.parentId"> · 上级: {{ parentName(node) }}</template>
               </small>
             </div>
 
-            <div v-if="auth.can('area.manage')" class="table-tools">
-              <el-tooltip content="编辑组织">
-                <el-button link type="primary" :icon="Edit" aria-label="编辑组织" @click="editNode(node)" />
+            <div class="table-tools" @click.stop>
+              <el-tooltip v-if="auth.can('area.manage')" content="编辑组织">
+                <el-button link type="primary" :icon="Edit" aria-label="编辑组织" @click.stop="editNode(node)" />
               </el-tooltip>
-              <el-tooltip content="删除组织">
-                <el-button link type="danger" :icon="Delete" :disabled="busy" aria-label="删除组织" @click="removeNode(node)" />
+              <el-tooltip v-if="auth.can('area.manage')" content="删除组织">
+                <el-button link type="danger" :icon="Delete" :disabled="busy" aria-label="删除组织" @click.stop="removeNode(node)" />
               </el-tooltip>
             </div>
           </div>
@@ -363,6 +675,19 @@ onMounted(loadOptions)
       <section style="min-width: 0;">
         <!-- 筛选卡片 -->
         <div class="filter-card">
+          <!-- 组织架构筛选激活提示 -->
+          <div v-if="selectedOrgNode" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; margin-bottom: 12px; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: var(--radius-sm);">
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #1d4ed8;">
+              <span>当前组织架构筛选：</span>
+              <el-tag type="primary" effect="dark" size="small">
+                {{ names[selectedOrgNode.kind] }} · {{ selectedOrgNode.name }}
+              </el-tag>
+            </div>
+            <el-button link type="primary" size="small" @click="clearOrgFilter">
+              清除组织筛选
+            </el-button>
+          </div>
+
           <form class="filter-bar" @submit.prevent="load(true)">
             <el-input
               v-model="search"
@@ -370,7 +695,7 @@ onMounted(loadOptions)
               :prefix-icon="Search"
               placeholder="搜索通道名称或别名..."
               aria-label="搜索通道"
-              style="width: 220px;"
+              style="width: 200px;"
               @clear="load(true)"
             />
 
@@ -379,30 +704,65 @@ onMounted(loadOptions)
               v-model="deviceId"
               clearable
               placeholder="全部设备"
-              style="width: 170px;"
+              style="width: 150px;"
               aria-label="设备筛选"
               @change="load(true)"
             >
               <el-option v-for="device in devices" :key="device.id" :value="device.id" :label="device.name" />
             </el-select>
 
-            <el-cascader
-              v-model="unitId"
-              :options="unitCascaderOptions"
-              :props="{ emitPath: false, checkStrictly: false }"
+            <el-select
+              v-model="areaId"
               clearable
               filterable
-              placeholder="全部单元（可下钻）"
-              style="width: 220px;"
+              placeholder="全部区域"
+              style="width: 150px;"
+              aria-label="区域筛选"
+              @change="onAreaSelectChange"
+            >
+              <el-option
+                v-for="area in organization.areas"
+                :key="area.id"
+                :value="area.id"
+                :label="getAreaOptionLabel(area)"
+              />
+            </el-select>
+
+            <el-select
+              v-model="unitId"
+              clearable
+              filterable
+              placeholder="全部单元"
+              style="width: 160px;"
               aria-label="单元筛选"
+              @change="onUnitSelectChange"
+            >
+              <el-option
+                v-for="unit in filteredUnits"
+                :key="unit.id"
+                :value="unit.id"
+                :label="getUnitOptionLabel(unit)"
+              />
+            </el-select>
+
+            <el-select
+              v-model="assignedFilter"
+              clearable
+              placeholder="是否划拨单位"
+              style="width: 140px;"
+              aria-label="是否划拨单位"
               @change="load(true)"
-            />
+            >
+              <el-option label="全部划拨状态" value="" />
+              <el-option label="已划拨单位" value="true" />
+              <el-option label="未划拨单位" value="false" />
+            </el-select>
 
             <el-select
               v-model="online"
               clearable
               placeholder="全部在线状态"
-              style="width: 140px;"
+              style="width: 130px;"
               aria-label="在线状态筛选"
               @change="load(true)"
             >
@@ -412,6 +772,15 @@ onMounted(loadOptions)
 
             <el-button type="primary" native-type="submit" :icon="Search">查询</el-button>
             <el-button @click="resetFilters">重置</el-button>
+
+            <el-button
+              v-if="unitId && auth.can('channel.assign')"
+              type="warning"
+              :icon="Sort"
+              @click="openSortDialogForActiveUnit"
+            >
+              单元通道排序
+            </el-button>
 
             <div v-if="auth.can('channel.assign') && selected.length" class="filter-actions">
               <span class="muted" style="font-size: 12.5px;">已选 {{ selected.length }} 路通道：</span>
@@ -458,22 +827,40 @@ onMounted(loadOptions)
 
             <el-table-column prop="deviceChannel" label="通道号" width="75" align="center" />
 
+            <el-table-column v-if="unitId" label="排序" width="70" align="center">
+              <template #default="{ row }">
+                <el-tag v-if="row.sortOrder" size="small" effect="plain" type="warning" style="font-weight: 600;">
+                  {{ row.sortOrder }}
+                </el-tag>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+
             <el-table-column label="在线状态" width="95" align="center">
               <template #default="{ row }">
                 <StatusBadge :value="row.status" />
               </template>
             </el-table-column>
 
-            <el-table-column label="划拨单元" min-width="170">
+            <el-table-column label="归属区域" min-width="140" show-overflow-tooltip>
               <template #default="{ row }">
-                <div v-if="row.unitId" class="unit-cell" :title="getUnitHierarchy(row.unitId)">
-                  <el-tag size="small" type="success" effect="plain" style="font-weight: 500;">
-                    {{ organization.units.find(u => u.id === row.unitId)?.name || `单元 ${row.unitId}` }}
-                  </el-tag>
-                  <span v-if="getUnitParent(row.unitId)" class="unit-parent-label">
-                    {{ getUnitParent(row.unitId) }}
+                <div v-if="getUnitAreaNode(row.unitId)" class="unit-cell">
+                  <span style="font-weight: 600; color: var(--text-primary);">
+                    {{ getUnitAreaNode(row.unitId)?.name }}
+                  </span>
+                  <span v-if="getUnitWorkshopNode(row.unitId)" class="unit-parent-label">
+                    {{ getUnitWorkshopNode(row.unitId)?.name }}
                   </span>
                 </div>
+                <span v-else class="muted">—</span>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="划拨单元" min-width="130" show-overflow-tooltip>
+              <template #default="{ row }">
+                <el-tag v-if="row.unitId" size="small" type="success" effect="plain" style="font-weight: 500;">
+                  {{ getUnitLabel(row.unitId) }}
+                </el-tag>
                 <el-tag v-else size="small" type="info">未分配</el-tag>
               </template>
             </el-table-column>
@@ -576,8 +963,9 @@ onMounted(loadOptions)
             placeholder="未划拨（支持车间下钻，留空解除划拨）"
             style="width: 100%;"
           />
-          <div v-if="editForm.unitId" style="margin-top: 4px; font-size: 12px;" class="muted">
-            已选层级：{{ getUnitHierarchy(editForm.unitId) }}
+          <div v-if="editForm.unitId" style="margin-top: 6px; font-size: 12px; display: flex; gap: 16px;" class="muted">
+            <span>归属区域: <strong style="color: var(--text-primary);">{{ getUnitAreaNode(editForm.unitId)?.name || '—' }}</strong></span>
+            <span>划拨单元: <strong style="color: var(--text-primary);">{{ getUnitLabel(editForm.unitId) }}</strong></span>
           </div>
         </el-form-item>
 
@@ -643,9 +1031,9 @@ onMounted(loadOptions)
             style="width: 100%;"
           />
         </el-form-item>
-        <div v-if="assignTo" style="margin-bottom: 12px; font-size: 13px;">
-          <span class="muted">已选完整归属：</span>
-          <el-tag type="success" size="small">{{ getUnitHierarchy(assignTo) }}</el-tag>
+        <div v-if="assignTo" style="margin-bottom: 12px; font-size: 13px; display: flex; gap: 16px; align-items: center;">
+          <span>归属区域: <strong>{{ getUnitAreaNode(assignTo)?.name || '—' }}</strong></span>
+          <span>划拨单元: <el-tag type="success" size="small">{{ getUnitLabel(assignTo) }}</el-tag></span>
         </div>
         <div v-else style="margin-bottom: 12px; font-size: 13px;">
           <el-tag type="warning" size="small">未选择单元：若点击确认，将解除所选通道的单元关联</el-tag>
@@ -722,8 +1110,27 @@ onMounted(loadOptions)
               </dd>
             </div>
             <div>
-              <dt>所属业务组织</dt>
-              <dd>{{ getUnitHierarchy(currentChannel.unitId) }}</dd>
+              <dt>归属区域</dt>
+              <dd>
+                <template v-if="getUnitAreaNode(currentChannel.unitId)">
+                  <span style="font-weight: 500;">
+                    {{ getUnitAreaNode(currentChannel.unitId)?.name }}
+                  </span>
+                  <span v-if="getUnitWorkshopNode(currentChannel.unitId)" class="muted" style="margin-left: 6px; font-size: 12px;">
+                    ({{ getUnitWorkshopNode(currentChannel.unitId)?.name }})
+                  </span>
+                </template>
+                <span v-else class="muted">—</span>
+              </dd>
+            </div>
+            <div>
+              <dt>划拨单元</dt>
+              <dd>
+                <el-tag v-if="currentChannel.unitId" size="small" type="success" effect="plain" style="font-weight: 500;">
+                  {{ getUnitLabel(currentChannel.unitId) }}
+                </el-tag>
+                <el-tag v-else size="small" type="info">未分配</el-tag>
+              </dd>
             </div>
           </dl>
         </div>
@@ -859,10 +1266,90 @@ onMounted(loadOptions)
         </div>
       </template>
     </el-drawer>
+    <!-- 单元通道排序对话框 -->
+    <el-dialog
+      v-model="sortDialog"
+      :title="`单元通道排序 - ${sortUnitName}`"
+      width="640px"
+      destroy-on-close
+    >
+      <div style="margin-bottom: 14px; font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+        调整当前单元下各监控通道（点位）的显示次序。保存后将实时联动同步至桌面端资源树与管理端界面。
+      </div>
+
+      <div v-loading="sortLoading" style="min-height: 180px; max-height: 440px; overflow-y: auto; padding-right: 4px;">
+        <div v-if="!sortLoading && !sortChannelsList.length" class="muted" style="text-align: center; padding: 48px 0;">
+          当前单元下暂无已划拨的通道
+        </div>
+        <div
+          v-for="(channel, idx) in sortChannelsList"
+          :key="channel.id"
+          class="channel-entry"
+          style="display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; margin-bottom: 6px; background: #f8fafc; border: 1px solid var(--border); border-radius: var(--radius-md);"
+        >
+          <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;">
+            <span style="font-weight: 700; font-size: 13px; color: var(--text-secondary); width: 24px; text-align: center;">
+              {{ idx + 1 }}
+            </span>
+            <div style="flex: 1; min-width: 0;">
+              <div style="font-weight: 600; font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                {{ channel.alias || channel.name }}
+                <span v-if="channel.alias" class="muted" style="font-weight: normal; font-size: 11.5px; margin-left: 6px;">
+                  ({{ channel.name }})
+                </span>
+              </div>
+              <small class="muted" style="font-size: 11px;">
+                {{ channel.deviceName }} / 通道 {{ channel.deviceChannel }}
+              </small>
+            </div>
+            <StatusBadge :value="channel.status" style="margin-right: 8px;" />
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 4px;">
+            <el-tooltip content="置顶">
+              <el-button link type="primary" :disabled="idx === 0" :icon="Top" @click="moveSortChannel(idx, 'top')" />
+            </el-tooltip>
+            <el-tooltip content="上移">
+              <el-button link type="primary" :disabled="idx === 0" @click="moveSortChannel(idx, 'up')">上移</el-button>
+            </el-tooltip>
+            <el-tooltip content="下移">
+              <el-button link type="primary" :disabled="idx === sortChannelsList.length - 1" @click="moveSortChannel(idx, 'down')">下移</el-button>
+            </el-tooltip>
+            <el-tooltip content="置底">
+              <el-button link type="primary" :disabled="idx === sortChannelsList.length - 1" :icon="Bottom" @click="moveSortChannel(idx, 'bottom')" />
+            </el-tooltip>
+          </div>
+        </div>
+      </div>
+
+      <template #footer>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span class="muted" style="font-size: 12px;">共 {{ sortChannelsList.length }} 路通道</span>
+          <div>
+            <el-button @click="sortDialog = false">取消</el-button>
+            <el-button type="primary" :loading="sortSaving" :disabled="sortLoading || !sortChannelsList.length" @click="saveSortOrder">
+              保存排序
+            </el-button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
+.org-node-item {
+  transition: all 0.2s ease;
+}
+.org-node-item:hover {
+  border-color: var(--primary) !important;
+}
+.org-node-item.is-selected {
+  border-color: var(--primary) !important;
+  background-color: #eff6ff !important;
+  box-shadow: 0 0 0 1px var(--primary);
+}
+
 .unit-cell {
   display: inline-flex;
   flex-direction: column;

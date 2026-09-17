@@ -33,6 +33,11 @@ public static class AdministrationEndpoints
             await service.AssignChannelsAsync(ApiSupport.Actor(context), request, ApiSupport.Ip(context), context.RequestAborted);
             return Results.NoContent();
         }).WithName("AssignChannels");
+        group.MapPut("/channels/sort", async (ChannelSortRequest request, HttpContext context) =>
+        {
+            await service.SortChannelsAsync(ApiSupport.Actor(context), request, ApiSupport.Ip(context), context.RequestAborted);
+            return Results.NoContent();
+        }).WithName("SortChannels");
 
         group.MapGet("/users", async (HttpContext context) =>
         {

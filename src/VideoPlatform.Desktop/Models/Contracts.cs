@@ -45,7 +45,7 @@ public sealed record Preferences(string Theme = "light", bool PreferSubStreamInG
 public sealed record StreamCapability(int StreamType, bool Available, string? Codec = null,
     int? Width = null, int? Height = null, int? BitrateKbps = null, string? Error = null);
 public sealed record Channel(long Id, long DeviceId, string DeviceName, int DeviceChannel, string Name, string? Alias, string? Model,
-    string Status, long? UnitId, bool PtzCapable, string? Codec)
+    string Status, long? UnitId, bool PtzCapable, string? Codec, int SortOrder = 0)
 {
     public bool Online => Status == "online";
     public string DisplayName => string.IsNullOrWhiteSpace(Alias) ? Name : Alias;

@@ -172,6 +172,26 @@ public sealed class AdministrationService(Database db, AccessService access, Med
         await RevokeUsersAsync(affected);
     }
 
+    public async Task SortChannelsAsync(Actor actor, ChannelSortRequest request, string? ip, CancellationToken ct = default)
+    {
+        var ids = ValidateIds(request.ChannelIds, 1000, false);
+        Rules.Require(request.UnitId > 0, "目标单元无效");
+        await WriteAsync(actor, "channel.assign", async tx =>
+        {
+            var unit = await RequiredAsync(tx, "units", request.UnitId, ct);
+            Rules.Require(unit.Text("status") == "active", "目标单元已停用", "organization.disabled", 409);
+            await DemandNodeScopeAsync(tx, actor.UserId, "units", request.UnitId, ct);
+            await DemandChannelsAsync(tx, actor.UserId, ids, false, ct);
+            for (var i = 0; i < ids.Length; i++)
+            {
+                await tx.ExecuteAsync("update channels set sort_order=@sortOrder,updated_at=now() where id=@id and unit_id=@unitId", new { sortOrder = i + 1, id = ids[i], unitId = request.UnitId }, ct);
+            }
+            await AuditAsync(tx, actor, "channel.sort", $"units/{request.UnitId}/channels", $"更新单元通道排序：{string.Join(",", ids)}", ip, ct);
+            await AccessChangedAsync(tx, await AllUserIdsAsync(tx, ct), ct);
+            return (long[])[];
+        }, ct: ct);
+    }
+
     public async Task<ChannelDto> UpdateChannelAsync(Actor actor, long id, ChannelUpdateRequest request, string? ip, CancellationToken ct = default)
     {
         Rules.Require(request.Alias is null || request.Alias.Length <= 256, "别名长度超出限制");
@@ -821,7 +841,8 @@ public sealed class AdministrationService(Database db, AccessService access, Med
         row["deviceSerial"]?.ToString(),
         row["pluginId"]?.ToString(),
         row["pluginName"]?.ToString(),
-        row["firmwareVersion"]?.ToString());
+        row["firmwareVersion"]?.ToString(),
+        (int)row.Id("sortOrder"));
     private static AdministrationLayoutDto ToLayout(JsonObject row) => new(row.Id(), row.Text("name"), row.Text("kind"), row.Flag("shared"), (int)row.Id("layout"), (int)row.Id("intervalSeconds"), Array<long?>(row, "channelIds"));
 }
 

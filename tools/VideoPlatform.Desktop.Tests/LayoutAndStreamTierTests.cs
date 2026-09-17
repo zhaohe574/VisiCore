@@ -251,6 +251,40 @@ public sealed class LayoutAndStreamTierTests
         var unassignedNode = vm.Resources[1];
         Assert.Equal("未分配组织", unassignedNode.Name);
         Assert.Single(unassignedNode.Children);
+        Assert.Equal("门区 303", unassignedNode.Children[0].Name);
+        Assert.False(unitNode.Children[0].Name.StartsWith("01  "));
+        await vm.ClearAsync();
+    }
+
+    [Fact]
+    public async Task OrganizationChannelsAreOrderedBySortOrderWithinUnit()
+    {
+        var api = new FakeApi();
+        api.GetResults["organization"] = new Organization(
+            [new(1, "一号车间", null, "active", null)],
+            [new(10, "总装区域", null, "active", 1)],
+            [new(100, "测试单元", null, "active", 10)]);
+
+        // 通道 101 的 SortOrder 是 2，通道 202 的 SortOrder 是 1
+        var ch1 = Fixtures.Channel(101, 1) with { UnitId = 100, SortOrder = 2, Name = "通道后" };
+        var ch2 = Fixtures.Channel(202, 2) with { UnitId = 100, SortOrder = 1, Name = "通道先" };
+        api.GetResults["channels?page=1&pageSize=200"] = new Page<Channel>([ch1, ch2], 2);
+
+        var vm = Create(api, out _);
+        await vm.SetAccessAsync(Fixtures.User("channel.read", "live.view"));
+        await vm.RefreshAsync();
+
+        var unitNode = vm.Resources[0].Children[0].Children[0];
+        Assert.Equal("测试单元", unitNode.Name);
+        Assert.Equal(2, unitNode.Children.Count);
+
+        // 验证通道名称去除了通道号前缀，直接显示 DisplayName
+        Assert.Equal("通道先", unitNode.Children[0].Name);
+        Assert.Equal("通道后", unitNode.Children[1].Name);
+
+        // 验证通道严格按 SortOrder 升序排列：SortOrder=1 的 ch2 排在首位
+        Assert.Equal(202, unitNode.Children[0].Channel!.Id);
+        Assert.Equal(101, unitNode.Children[1].Channel!.Id);
         await vm.ClearAsync();
     }
 
@@ -386,6 +420,133 @@ public sealed class LayoutAndStreamTierTests
         await vm.SetAccessAsync(Fixtures.User("live.view", "channel.read"));
         Assert.False(vm.CanSplit25);
         Assert.Equal(4, vm.LayoutCount);
+
+        await vm.ClearAsync();
+    }
+
+    [Fact]
+    public async Task NewChannelDefaultsToSubStreamAndToggleMaximizeSwitchesStream()
+    {
+        var api = new FakeApi();
+        api.GetResults["channels?page=1&pageSize=200"] = new Page<Channel>([Fixtures.Channel(1), Fixtures.Channel(2)], 2);
+        api.Post = (path, body) => Task.FromResult<object>(path == "live-sessions"
+            ? Fixtures.Media(((LiveRequest)body!).ChannelId) with { StreamType = ((LiveRequest)body!).StreamType }
+            : Fixtures.Media(((PlaybackRequest)body!).ChannelId));
+        var vm = Create(api, out _);
+        await vm.SetAccessAsync(Fixtures.User("live.view", "channel.read"));
+        await vm.RefreshAsync();
+
+        // 1. 新打开通道默认打开子码流 (streamType == 2)
+        await vm.OpenChannelAsync(Fixtures.Channel(1), vm.Tiles[0]);
+        Assert.Equal(2, vm.Tiles[0].StreamType);
+        Assert.Equal("SD", vm.Tiles[0].StreamBadge);
+
+        // 2. 双击放大画面：自动切换为主码流 (streamType == 1)
+        vm.SelectedTile = vm.Tiles[0];
+        vm.ToggleMaximizeCommand.Execute(null);
+        await vm.ApplyLayoutTiersAsync();
+        Assert.True(vm.IsMaximized);
+        Assert.Equal(1, vm.Tiles[0].StreamType);
+        Assert.Equal("HD", vm.Tiles[0].StreamBadge);
+
+        // 3. 再次双击切回小画面：自动换回子码流 (streamType == 2)
+        vm.ToggleMaximizeCommand.Execute(null);
+        await vm.ApplyLayoutTiersAsync();
+        Assert.False(vm.IsMaximized);
+        Assert.Equal(2, vm.Tiles[0].StreamType);
+        Assert.Equal("SD", vm.Tiles[0].StreamBadge);
+
+        // 4. 手动切为主码流后，重新打开通道依然默认使用子码流
+        vm.Tiles[0].ManualStreamOverride = 1;
+        await vm.Tiles[0].SwitchStreamAsync(1);
+        Assert.Equal(1, vm.Tiles[0].StreamType);
+
+        await vm.OpenChannelAsync(Fixtures.Channel(2), vm.Tiles[0]);
+        Assert.Equal(2, vm.Tiles[0].StreamType);
+        Assert.Equal("SD", vm.Tiles[0].StreamBadge);
+        Assert.Null(vm.Tiles[0].ManualStreamOverride);
+
+        await vm.ClearAsync();
+    }
+
+    [Fact]
+    public async Task ApplySavedViewDefaultsAllTilesToSubStream()
+    {
+        var api = new FakeApi();
+        api.GetResults["channels?page=1&pageSize=200"] = new Page<Channel>([Fixtures.Channel(1), Fixtures.Channel(2), Fixtures.Channel(3), Fixtures.Channel(4)], 4);
+        api.Post = (path, body) => Task.FromResult<object>(path == "live-sessions"
+            ? Fixtures.Media(((LiveRequest)body!).ChannelId) with { StreamType = ((LiveRequest)body!).StreamType }
+            : Fixtures.Media(((PlaybackRequest)body!).ChannelId));
+        var vm = Create(api, out _);
+        await vm.SetAccessAsync(Fixtures.User("live.view", "channel.read"));
+        await vm.RefreshAsync();
+
+        // 加载包含 4 路通道的保存视图
+        var layout = new LayoutDto(200, "测试值守视图", "layout", false, 4, 30, [1, 2, 3, 4]);
+        vm.SelectedLayout = layout;
+        await vm.ApplyLayoutCommand.ExecuteAsync(null);
+
+        // 视图内所有已打开通道必须全部默认采用子码流 (2)
+        Assert.Equal(4, vm.LayoutCount);
+        Assert.Equal(2, vm.Tiles[0].StreamType);
+        Assert.Equal(2, vm.Tiles[1].StreamType);
+        Assert.Equal(2, vm.Tiles[2].StreamType);
+        Assert.Equal(2, vm.Tiles[3].StreamType);
+        Assert.All(vm.VisibleTiles, tile => Assert.Equal("SD", tile.StreamBadge));
+
+        // 双击放大第 2 格，仅第 2 格升为主码流
+        vm.SelectedTile = vm.Tiles[1];
+        vm.ToggleMaximizeCommand.Execute(null);
+        await vm.ApplyLayoutTiersAsync();
+        Assert.True(vm.IsMaximized);
+        Assert.Equal(1, vm.Tiles[1].StreamType);
+        Assert.Equal("HD", vm.Tiles[1].StreamBadge);
+
+        // 还原回 4 分屏，第 2 格自动换回子码流
+        vm.ToggleMaximizeCommand.Execute(null);
+        await vm.ApplyLayoutTiersAsync();
+        Assert.False(vm.IsMaximized);
+        Assert.Equal(2, vm.Tiles[1].StreamType);
+        Assert.Equal("SD", vm.Tiles[1].StreamBadge);
+
+        await vm.ClearAsync();
+    }
+
+    [Fact]
+    public async Task SingleLayoutPresetDefaultsToSubStreamAndTogglesOnMaximize()
+    {
+        var api = new FakeApi();
+        api.GetResults["channels?page=1&pageSize=200"] = new Page<Channel>([Fixtures.Channel(1)], 1);
+        api.Post = (path, body) => Task.FromResult<object>(path == "live-sessions"
+            ? Fixtures.Media(((LiveRequest)body!).ChannelId) with { StreamType = ((LiveRequest)body!).StreamType }
+            : Fixtures.Media(((PlaybackRequest)body!).ChannelId));
+        var vm = Create(api, out _);
+        await vm.SetAccessAsync(Fixtures.User("live.view", "channel.read"));
+        await vm.RefreshAsync();
+
+        // 切换到 1 分屏
+        await vm.SetLayoutCommand.ExecuteAsync("1");
+        Assert.Equal(1, vm.LayoutCount);
+
+        // 1 分屏下新打开摄像头：必须默认打开子码流
+        await vm.OpenChannelAsync(Fixtures.Channel(1), vm.Tiles[0]);
+        Assert.Equal(2, vm.Tiles[0].StreamType);
+        Assert.Equal("SD", vm.Tiles[0].StreamBadge);
+
+        // 双击放大：自动切换为主码流
+        vm.SelectedTile = vm.Tiles[0];
+        vm.ToggleMaximizeCommand.Execute(null);
+        await vm.ApplyLayoutTiersAsync();
+        Assert.True(vm.IsMaximized);
+        Assert.Equal(1, vm.Tiles[0].StreamType);
+        Assert.Equal("HD", vm.Tiles[0].StreamBadge);
+
+        // 切换回小画面：自动换回子码流
+        vm.ToggleMaximizeCommand.Execute(null);
+        await vm.ApplyLayoutTiersAsync();
+        Assert.False(vm.IsMaximized);
+        Assert.Equal(2, vm.Tiles[0].StreamType);
+        Assert.Equal("SD", vm.Tiles[0].StreamBadge);
 
         await vm.ClearAsync();
     }

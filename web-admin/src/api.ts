@@ -102,6 +102,7 @@ export const managementApi = {
   channels: (query?: Query, signal?: AbortSignal) => list<Channel>('/channels', query, signal),
   updateChannel: (id: number, data: { alias?: string | null; unitId?: number | null; ip?: string | null; username?: string | null; password?: string | null; remark?: string | null }) => put<Channel>(`/channels/${id}`, data),
   assign: (channelIds: number[], unitId: number | null) => put('/channels/assignment', { channelIds, unitId }),
+  sortChannels: (unitId: number, channelIds: number[]) => put('/channels/sort', { unitId, channelIds }),
   organization: () => api<Organization>('/organization'),
   saveNode: (kind: OrganizationKind, id: number | null, data: Omit<OrganizationNode, 'id'>) => id ? put(`/organization/${kind}/${id}`, data) : post(`/organization/${kind}`, data),
   deleteNode: (kind: OrganizationKind, id: number) => remove(`/organization/${kind}/${id}`),

@@ -1,0 +1,17 @@
+[Unit]
+Description=VisiCore P2P 穿透守护服务 (EasyTier)
+Wants=network-online.target
+After=network-online.target nginx.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/lib/video-platform/p2p
+ExecStartPre=/usr/bin/test -x /usr/local/bin/easytier-core
+ExecStart=/usr/local/bin/easytier-core --config-file /etc/video-platform/p2p-config.json
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

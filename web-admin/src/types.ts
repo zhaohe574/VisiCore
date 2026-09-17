@@ -48,6 +48,7 @@ export type Channel = SchemaDto<'ChannelDto'> & {
   pluginId?: string | null
   pluginName?: string | null
   firmwareVersion?: string | null
+  sortOrder?: number
 }
 export type OrganizationNode = SchemaDto<'OrganizationNodeDto'>
 export type Organization = SchemaDto<'OrganizationTreeDto'>

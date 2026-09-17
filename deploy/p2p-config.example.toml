@@ -1,0 +1,7 @@
+instance_name = "visicore-dev"
+ipv4 = "10.144.1.1"
+network_name = "visicore-lan-dev"
+network_secret = "dev_secret_visicore_2026"
+peers = [
+    "tcp://public.easytier.top:11010"
+]
