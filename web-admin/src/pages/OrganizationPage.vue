@@ -27,6 +27,11 @@ import {
   type OrganizationKind,
   type OrganizationNode
 } from '../api'
+import {
+  buildUnitCascaderOptions,
+  getUnitHierarchy as formatUnitHierarchy,
+  getUnitParentPath
+} from '../lib/organization'
 import { usePaged } from '../composables/usePaged'
 import { useAction } from '../composables/useAction'
 import { useAuth } from '../stores/auth'
@@ -48,7 +53,7 @@ const { items, total, page, pageSize, search, loading, error, load } = usePaged(
   managementApi.channels,
   () => ({
     deviceId: deviceId.value,
-    unitId: unitId.value,
+    unitId: unitId.value ?? undefined,
     online: online.value
   }),
   ['device.changed', 'access.changed']
@@ -68,6 +73,7 @@ const editDialog = ref(false)
 const editTarget = ref<Channel | null>(null)
 const editForm = reactive({
   alias: '',
+  unitId: null as number | null,
   ip: '',
   username: '',
   password: '',
@@ -92,6 +98,9 @@ const parents = computed(() =>
       ? organization.value.areas
       : []
 )
+
+// 单元下钻级联选择树
+const unitCascaderOptions = computed(() => buildUnitCascaderOptions(organization.value))
 
 // 通道统计概览
 const stats = computed(() => {
@@ -176,6 +185,7 @@ function showDetail(channel: Channel) {
 function openEdit(channel: Channel) {
   editTarget.value = channel
   editForm.alias = channel.alias || ''
+  editForm.unitId = channel.unitId ?? null
   editForm.ip = channel.ip || ''
   editForm.username = channel.username || ''
   editForm.password = channel.password || ''
@@ -194,6 +204,10 @@ async function saveChannel() {
         password: editForm.password || null,
         remark: editForm.remark.trim() || null
       })
+      if (editForm.unitId !== (editTarget.value!.unitId ?? null)) {
+        await managementApi.assign([editTarget.value!.id], editForm.unitId ?? null)
+        updated.unitId = editForm.unitId ?? null
+      }
       if (currentChannel.value && currentChannel.value.id === editTarget.value!.id) {
         Object.assign(currentChannel.value, updated)
       }
@@ -218,14 +232,11 @@ async function copyText(text?: string | null, label = '内容') {
 }
 
 function getUnitHierarchy(unitId?: number | null): string {
-  if (!unitId) return '未划拨单元'
-  const unit = organization.value.units.find(u => u.id === unitId)
-  if (!unit) return `单元 ${unitId}`
-  const area = organization.value.areas.find(a => a.id === unit.parentId)
-  if (!area) return unit.name
-  const workshop = organization.value.workshops.find(w => w.id === area.parentId)
-  if (!workshop) return `${area.name} / ${unit.name}`
-  return `${workshop.name} / ${area.name} / ${unit.name}`
+  return formatUnitHierarchy(organization.value, unitId)
+}
+
+function getUnitParent(unitId?: number | null): string {
+  return getUnitParentPath(organization.value, unitId)
 }
 
 function getDevice(channel?: Channel | Record<string, any> | null): Device | undefined {
@@ -375,16 +386,17 @@ onMounted(loadOptions)
               <el-option v-for="device in devices" :key="device.id" :value="device.id" :label="device.name" />
             </el-select>
 
-            <el-select
+            <el-cascader
               v-model="unitId"
+              :options="unitCascaderOptions"
+              :props="{ emitPath: false, checkStrictly: false }"
               clearable
-              placeholder="全部单元"
-              style="width: 160px;"
+              filterable
+              placeholder="全部单元（可下钻）"
+              style="width: 220px;"
               aria-label="单元筛选"
               @change="load(true)"
-            >
-              <el-option v-for="unit in organization.units" :key="unit.id" :value="unit.id" :label="unit.name" />
-            </el-select>
+            />
 
             <el-select
               v-model="online"
@@ -452,11 +464,16 @@ onMounted(loadOptions)
               </template>
             </el-table-column>
 
-            <el-table-column label="划拨单元" min-width="130">
+            <el-table-column label="划拨单元" min-width="170">
               <template #default="{ row }">
-                <el-tag v-if="row.unitId" size="small" type="success">
-                  {{ organization.units.find(u => u.id === row.unitId)?.name || `单元 ${row.unitId}` }}
-                </el-tag>
+                <div v-if="row.unitId" class="unit-cell" :title="getUnitHierarchy(row.unitId)">
+                  <el-tag size="small" type="success" effect="plain" style="font-weight: 500;">
+                    {{ organization.units.find(u => u.id === row.unitId)?.name || `单元 ${row.unitId}` }}
+                  </el-tag>
+                  <span v-if="getUnitParent(row.unitId)" class="unit-parent-label">
+                    {{ getUnitParent(row.unitId) }}
+                  </span>
+                </div>
                 <el-tag v-else size="small" type="info">未分配</el-tag>
               </template>
             </el-table-column>
@@ -549,6 +566,21 @@ onMounted(loadOptions)
           />
         </el-form-item>
 
+        <el-form-item label="划拨业务单元">
+          <el-cascader
+            v-model="editForm.unitId"
+            :options="unitCascaderOptions"
+            :props="{ emitPath: false, checkStrictly: false }"
+            clearable
+            filterable
+            placeholder="未划拨（支持车间下钻，留空解除划拨）"
+            style="width: 100%;"
+          />
+          <div v-if="editForm.unitId" style="margin-top: 4px; font-size: 12px;" class="muted">
+            已选层级：{{ getUnitHierarchy(editForm.unitId) }}
+          </div>
+        </el-form-item>
+
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
           <el-form-item label="通道独立 IP">
             <el-input
@@ -598,13 +630,26 @@ onMounted(loadOptions)
     </el-dialog>
 
     <!-- 批量分配单元弹窗 -->
-    <el-dialog v-model="assignmentOpen" title="批量划拨通道至单元" width="460px">
+    <el-dialog v-model="assignmentOpen" title="批量划拨通道至单元" width="480px">
       <el-form label-position="top">
-        <el-form-item label="目标单元">
-          <el-select v-model="assignTo" clearable filterable placeholder="不选择单元则解除当前分配" style="width: 100%;">
-            <el-option v-for="unit in organization.units" :key="unit.id" :value="unit.id" :label="unit.name" />
-          </el-select>
+        <el-form-item label="目标单元（支持车间 / 区域层级下钻与名称搜索）">
+          <el-cascader
+            v-model="assignTo"
+            :options="unitCascaderOptions"
+            :props="{ emitPath: false, checkStrictly: false }"
+            clearable
+            filterable
+            placeholder="请选择划拨目标单元（留空解除划拨）"
+            style="width: 100%;"
+          />
         </el-form-item>
+        <div v-if="assignTo" style="margin-bottom: 12px; font-size: 13px;">
+          <span class="muted">已选完整归属：</span>
+          <el-tag type="success" size="small">{{ getUnitHierarchy(assignTo) }}</el-tag>
+        </div>
+        <div v-else style="margin-bottom: 12px; font-size: 13px;">
+          <el-tag type="warning" size="small">未选择单元：若点击确认，将解除所选通道的单元关联</el-tag>
+        </div>
       </el-form>
       <p class="muted" style="font-size: 13px; margin: 0;">
         本次操作将批量更新所勾选的 <strong>{{ selected.length }}</strong> 路通道的归属单元。
@@ -816,3 +861,22 @@ onMounted(loadOptions)
     </el-drawer>
   </div>
 </template>
+
+<style scoped>
+.unit-cell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  line-height: 1.2;
+}
+
+.unit-parent-label {
+  font-size: 11.5px;
+  color: var(--text-secondary, #6b7280);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 170px;
+}
+</style>
