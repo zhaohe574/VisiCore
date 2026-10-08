@@ -420,82 +420,56 @@ DS-A72124R ── 一路上游流 ──> ZLMediaKit ──> 多个桌面端
 
 所有 API 使用 HTTPS、JSON 和统一错误格式。设备操作接口只允许平台服务调用。
 
-### 16.1 认证
+### 16.1 当前唯一 API 契约
+
+当前业务入口统一为 `/api/v2`，旧 `/api/*` 路由不再注册，也不提供兼容重定向。完整 OpenAPI 文档由 `GET /api/v2/openapi/v2.json` 提供。
+
+认证与会话：
 
 ```text
-POST /api/auth/login
-POST /api/auth/refresh
-POST /api/auth/logout
-GET  /api/auth/me
-PUT  /api/auth/password
+GET  /api/v2/auth/csrf
+POST /api/v2/auth/login
+POST /api/v2/auth/refresh
+POST /api/v2/auth/logout
+GET  /api/v2/auth/me
+PUT  /api/v2/auth/profile
+PUT  /api/v2/auth/password
 ```
 
-### 16.2 业务区域
+设备、组织与通道：
 
 ```text
-GET    /api/workshops
-POST   /api/workshops
-PUT    /api/workshops/{id}
-DELETE /api/workshops/{id}
-
-GET    /api/areas
-POST   /api/areas
-PUT    /api/areas/{id}
-DELETE /api/areas/{id}
-
-GET    /api/units
-POST   /api/units
-PUT    /api/units/{id}
-DELETE /api/units/{id}
-
-GET    /api/channels/unassigned
-PUT    /api/channels/{id}/unit
+GET|POST /api/v2/devices
+GET|PUT|DELETE /api/v2/devices/{id}
+POST /api/v2/devices/{id}/sync
+GET|PUT /api/v2/channels
+PUT /api/v2/channels/{id}
+PUT /api/v2/channels/assignment
+PUT /api/v2/channels/sort
+GET|POST|PUT|DELETE /api/v2/organization/...
 ```
 
-### 16.3 设备和流媒体
+值守、回放、报警和导出：
 
 ```text
-GET  /api/devices
-GET  /api/devices/{id}
-GET  /api/devices/{id}/channels
-GET  /api/devices/{id}/stats
-GET  /api/system-stats
-GET  /api/device-stats
-
-POST /api/auth/logout
-PUT  /api/auth/profile
-PUT  /api/users/{id}
-POST /api/roles
-PUT  /api/roles/{id}
-DELETE /api/roles/{id}
-
-POST /api/live-sessions
-DELETE /api/live-sessions/{id}
-POST /api/playback-sessions
-POST /api/playback-sessions/{id}/control
-DELETE /api/playback-sessions/{id}
+POST|GET|DELETE /api/v2/live-sessions[/{id}]
+POST|GET|DELETE /api/v2/playback-sessions[/{id}]
+POST /api/v2/playback-sessions/{id}/control
+GET|POST /api/v2/alarms[/{id}]
+POST /api/v2/alarms/{id}/actions
+GET|POST /api/v2/exports[/{id}/cancel|/{id}/retry]
 ```
 
-`POST /api/live-sessions` 和 `POST /api/playback-sessions` 返回短期播放令牌，不返回录像机账号、密码或源 RTSP 地址。
-
-### 16.4 报警和 PTZ
+管理、发布和 SSL：
 
 ```text
-GET  /api/alarms
-GET  /api/alarms/{id}
-POST /api/alarms/{id}/ack
-POST /api/channels/{id}/ptz/start
-POST /api/channels/{id}/ptz/stop
-POST /api/channels/{id}/ptz/preset/{presetId}
+GET|POST|PUT|DELETE /api/v2/users、/roles、/sessions、/layouts
+GET /api/v2/audit、/settings、/dashboard、/system
+GET|POST|PUT|DELETE /api/v2/releases/...
+GET|POST|PUT|DELETE /api/v2/ssl/...
 ```
 
-SignalR Hub：
-
-```text
-/hubs/alarm
-/hubs/device-status
-/hubs/media
-```
+媒体会话只返回短期令牌和代理播放地址，不返回录像机账号、密码或源 RTSP 地址。SignalR 事件入口为 `/hubs/v2/events`，连接必须通过会话和资源权限校验。
 
 ## 17．媒体鉴权和安全
 
