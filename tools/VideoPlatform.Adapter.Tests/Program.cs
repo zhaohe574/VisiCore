@@ -282,7 +282,7 @@ static async Task HttpContract()
     await using var server = await TestServer.StartAsync();
     using var unauthorized = new HttpClient { BaseAddress = server.Client.BaseAddress };
     Check.Equal(HttpStatusCode.Unauthorized, (await unauthorized.GetAsync("/health")).StatusCode);
-    Check.Equal("2.0.0", (await server.Get("/health")).GetProperty("version").GetString()!);
+    Check.Equal("2.1.6", (await server.Get("/health")).GetProperty("version").GetString()!);
     Check.Equal("hikvision", (await server.Get("/manifest")).GetProperty("id").GetString()!);
     Check.Equal(0, (await server.Get("/internal/sessions")).GetProperty("devices").GetArrayLength());
     foreach (var device in new[] { 1, 2 })

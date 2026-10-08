@@ -12,7 +12,7 @@ using System.Net.NetworkInformation;
 
 namespace VideoPlatform.Infrastructure;
 
-public sealed record AdministrationPage<T>(IReadOnlyList<T> Items, long Total, int Page, int PageSize);public sealed record OrganizationNodeDto(long Id, string Name, string Code, string Status, long? ParentId);
+public sealed record OrganizationNodeDto(long Id, string Name, string Code, string Status, long? ParentId);
 public sealed record OrganizationTreeDto(IReadOnlyList<OrganizationNodeDto> Workshops, IReadOnlyList<OrganizationNodeDto> Areas, IReadOnlyList<OrganizationNodeDto> Units);
 public sealed record AdministrationRoleDto(long Id, string Name, string Code, string Status, string[] PermissionCodes, long UserCount);
 public sealed record PermissionDto(string Code, string Name);
@@ -209,11 +209,11 @@ public sealed class AdministrationService(Database db, AccessService access, Med
                 await DemandNodeScopeAsync(tx, actor.UserId, "units", unitId, ct);
             }
             var before = await RequiredAsync(tx, "channels", id, ct);
-            var alias = string.IsNullOrWhiteSpace(request.Alias) ? null : request.Alias.Trim();
-            var channelIp = string.IsNullOrWhiteSpace(request.Ip) ? null : request.Ip.Trim();
-            var username = string.IsNullOrWhiteSpace(request.Username) ? null : request.Username.Trim();
-            var password = string.IsNullOrWhiteSpace(request.Password) ? null : request.Password.Trim();
-            var remark = string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
+            var alias = request.Alias is null ? before["alias"]?.ToString() : string.IsNullOrWhiteSpace(request.Alias) ? null : request.Alias.Trim();
+            var channelIp = request.Ip is null ? before["ip"]?.ToString() : string.IsNullOrWhiteSpace(request.Ip) ? null : request.Ip.Trim();
+            var username = request.Username is null ? before["username"]?.ToString() : string.IsNullOrWhiteSpace(request.Username) ? null : request.Username.Trim();
+            var password = request.ClearPassword ? null : request.Password is null || string.IsNullOrWhiteSpace(request.Password) ? before["password"]?.ToString() : request.Password.Trim();
+            var remark = request.Remark is null ? before["remark"]?.ToString() : string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
             if (request.UnitId.HasValue)
                 await tx.ExecuteAsync("update channels set alias=@alias,unit_id=@unitId,ip=@channelIp,username=@username,password=@password,remark=@remark,updated_at=now() where id=@id", new { id, alias, unitId = request.UnitId.Value, channelIp, username, password, remark }, ct);
             else
@@ -224,7 +224,7 @@ public sealed class AdministrationService(Database db, AccessService access, Med
         }, ct: ct);
     }
 
-    public async Task<AdministrationPage<UserDto>> UsersAsync(Actor actor, int page, int pageSize, string? search, CancellationToken ct = default)
+    public async Task<PagedResponse<UserDto>> UsersAsync(Actor actor, int page, int pageSize, string? search, CancellationToken ct = default)
     {
         await access.DemandAsync(actor, "user.read", ct);
         ValidatePage(page, pageSize);
@@ -400,7 +400,7 @@ public sealed class AdministrationService(Database db, AccessService access, Med
         return new(request.AllChannels, items);
     }
 
-    public async Task<AdministrationPage<AdministrationSessionDto>> SessionsAsync(Actor actor, int page, int pageSize, string? search, CancellationToken ct = default)
+    public async Task<PagedResponse<AdministrationSessionDto>> SessionsAsync(Actor actor, int page, int pageSize, string? search, CancellationToken ct = default)
     {
         await access.DemandAsync(actor, "session.manage", ct);
         ValidatePage(page, pageSize);
@@ -428,7 +428,7 @@ public sealed class AdministrationService(Database db, AccessService access, Med
         await media.RevokeAsync(userId, id, CancellationToken.None);
     }
 
-    public async Task<AdministrationPage<AdministrationAuditDto>> AuditAsync(Actor actor, int page, int pageSize, string? search, string? action, DateTimeOffset? from, DateTimeOffset? to, CancellationToken ct = default)
+    public async Task<PagedResponse<AdministrationAuditDto>> AuditAsync(Actor actor, int page, int pageSize, string? search, string? action, DateTimeOffset? from, DateTimeOffset? to, CancellationToken ct = default)
     {
         await access.DemandAsync(actor, "audit.read", ct);
         ValidatePage(page, pageSize);
@@ -609,7 +609,7 @@ public sealed class AdministrationService(Database db, AccessService access, Med
         var disks = AdministrationHostMetrics.Disks(options.DataPath);
         var host = AdministrationHostMetrics.Host();
         return new(cpu, memoryTotal, memoryUsed, diskTotal, diskFree, uptime, services,
-            new(row.Id("liveSessions"), row.Id("playbackSessions"), row.Id("transcodes")), "2.0.0",
+            new(row.Id("liveSessions"), row.Id("playbackSessions"), row.Id("transcodes")), typeof(AdministrationService).Assembly.GetName().Version?.ToString(3) ?? "unknown",
             network, performance, disks, host);
     }
 
@@ -833,7 +833,7 @@ public sealed class AdministrationService(Database db, AccessService access, Med
         row["codec"]?.ToString(),
         row["ip"]?.ToString(),
         row["username"]?.ToString(),
-        row["password"]?.ToString(),
+        row.Flag("hasPassword"),
         row["remark"]?.ToString(),
         row["deviceModel"]?.ToString(),
         row["deviceHost"]?.ToString(),

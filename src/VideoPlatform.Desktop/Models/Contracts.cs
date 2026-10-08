@@ -11,7 +11,7 @@ public sealed record User(long Id, string Username, string DisplayName, string? 
     public bool Can(string permission) => Permissions.Contains(permission, StringComparer.Ordinal);
     public string Label => string.IsNullOrWhiteSpace(DisplayName) ? Username : DisplayName;
 }
-public sealed record LoginRequest(string Username, string Password, string ClientType = "desktop", string ClientVersion = "2.0.0");
+public sealed record LoginRequest(string Username, string Password, string ClientType = "desktop", string ClientVersion = "2.1.6");
 public sealed record LoginResponse(User User, string? AccessToken, DateTimeOffset ExpiresAt);
 public sealed record SavedSession(string Server, string AccessToken, DateTimeOffset ExpiresAt);
 public sealed record ClientSettings(string Server = "", string? RequiredVersion = null, bool PreferRtsp = false,

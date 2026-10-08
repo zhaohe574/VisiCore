@@ -128,7 +128,7 @@ public sealed class JobHealth(Database db, WorkerOptions options, TimeProvider c
 
     public Task BeatAsync(CancellationToken ct)
         => db.ExecuteAsync("insert into service_heartbeats(name,checked_at,details) values(@name,now(),cast(@details as jsonb)) on conflict(name) do update set checked_at=excluded.checked_at,details=excluded.details",
-            new { name = $"worker:{options.InstanceId}", details = JsonSerializer.Serialize(new { version = "2.0.0", instanceId = options.InstanceId, jobs = _states }, JsonDefaults.Options) }, ct);
+            new { name = $"worker:{options.InstanceId}", details = JsonSerializer.Serialize(new { version = typeof(JobHealth).Assembly.GetName().Version?.ToString(3) ?? "unknown", instanceId = options.InstanceId, jobs = _states }, JsonDefaults.Options) }, ct);
 }
 
 public static class JobAuthorization

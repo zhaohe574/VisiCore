@@ -61,7 +61,7 @@ public static class ApiContractCatalog
             // 权限变化与压力测试收尾时调用，此前漏登记元数据，导致生成客户端无法为它生成调用。
             "StopActiveliveSessions", "StopActiveplaybackSessions",
             "CancelExport", "PublishRelease", "RevokeRelease", "DeleteOrganizationNode", "AssignChannels", "DeleteRole", "RevokeSession", "DeleteLayout", "DeletePlugin",
-            "DeleteSslDomain", "DeleteSslCertificate" }) values[id] = new(204, null);
+            "DeleteSslDomain", "DeleteSslCertificate", "SortChannels" }) values[id] = new(204, null);
         return values;
     }
 

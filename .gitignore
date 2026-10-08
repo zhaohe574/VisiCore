@@ -17,6 +17,10 @@ HCNetSDK*/
 tools/wix/
 tools/wix6/
 
+# 专有 SDK 与现场 CAD 资料只保留在内网工作区，不进入源码提交。
+JovisionClentSDK.zip
+docs/cad/
+
 # 本机配置、密钥、数据库备份和验收产物不进入源码仓库。
 .vs/
 .idea/

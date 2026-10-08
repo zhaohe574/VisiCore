@@ -1,5 +1,5 @@
-import type { AccessScope, Alarm, AlarmDetail, Audit, Channel, Dashboard, Device, DeviceInput, DevicePlugin, ExportJob, Layout, LiveSession, LoginResult, NginxConfig, OnlineSession, Organization, OrganizationKind, OrganizationNode, Page, Permission, PlaybackControl, PlaybackSession, PluginCreateInput, PtzCommand, Recording, Release, Role, Settings, SslCertificate, SslCertificateUploadInput, SslDomain, SslDomainInput, SslOverview, SystemStatus, User } from './types'
-import type { components } from './generated/api-schema'
+import type { AccessScope, Alarm, AlarmDetail, Audit, Channel, ChannelUpdateInput, Dashboard, Device, DeviceInput, DevicePlugin, ExportJob, Layout, LiveSession, LoginResult, NginxConfig, OnlineSession, Organization, OrganizationKind, OrganizationNode, Page, Permission, PlaybackControl, PlaybackSession, PluginCreateInput, PtzCommand, Recording, Release, Role, Settings, SslCertificate, SslCertificateUploadInput, SslDomain, SslDomainInput, SslOverview, SystemStatus, User } from './types'
+import type { components } from './generated/schema'
 import type { PublicRelease } from './types'
 export type * from './types'
 
@@ -44,10 +44,6 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
     if (error instanceof Error && error.name === 'AbortError') throw error
     throw new ApiError(0, 'network_error', '无法连接平台服务，请检查网络连接')
   }
-  if (response.status === 401 && retry && !path.startsWith('/auth/') && !path.startsWith('/public/')) {
-    await refreshSession()
-    return api<T>(path, init, false)
-  }
   if (!response.ok) {
     const error = await readError(response)
     if (response.status === 401 && path !== '/auth/login') window.dispatchEvent(new Event('platform-auth-expired'))
@@ -79,7 +75,7 @@ const remove = (path: string, keepalive = false) => api<void>(path, { method: 'D
 const segment = (id: string | number) => encodeURIComponent(id)
 
 export const authApi = {
-  login: async (username: string, password: string) => { const result = await post<LoginResult>('/auth/login', { username, password, clientType: 'web', clientVersion: '2.1.0' } satisfies components['schemas']['LoginRequest']); clearCsrf(); return result },
+  login: async (username: string, password: string) => { const result = await post<LoginResult>('/auth/login', { username, password, clientType: 'web', clientVersion: '2.1.6' } satisfies components['schemas']['LoginRequest']); clearCsrf(); return result },
   me: () => api<User>('/auth/me'),
   logout: async () => { await post('/auth/logout'); clearCsrf() },
   profile: (displayName: string, phone: string) => put('/auth/profile', { displayName, phone }),
@@ -100,7 +96,7 @@ export const managementApi = {
   deletePlugin: (id: string) => remove(`/plugins/${segment(id)}`),
   exportPluginUrl: (id: string) => apiUrl(`/plugins/${segment(id)}/export`),
   channels: (query?: Query, signal?: AbortSignal) => list<Channel>('/channels', query, signal),
-  updateChannel: (id: number, data: { alias?: string | null; unitId?: number | null; ip?: string | null; username?: string | null; password?: string | null; remark?: string | null }) => put<Channel>(`/channels/${id}`, data),
+  updateChannel: (id: number, data: ChannelUpdateInput) => put<Channel>(`/channels/${id}`, data),
   assign: (channelIds: number[], unitId: number | null) => put('/channels/assignment', { channelIds, unitId }),
   sortChannels: (unitId: number, channelIds: number[]) => put('/channels/sort', { unitId, channelIds }),
   organization: () => api<Organization>('/organization'),
@@ -123,7 +119,7 @@ export const mediaApi = {
   live: (channelId: number, streamType: 1 | 2) => post<LiveSession>('/live-sessions', { channelId, streamType, profile: 'browser' } satisfies components['schemas']['LiveRequest']),
   renewLive: (id: string) => post<LiveSession>(`/live-sessions/${segment(id)}/renew`), stopLive: (id: string, keepalive = false) => remove(`/live-sessions/${segment(id)}`, keepalive),
   recordings: (channelId: number, start: string, end: string) => post<Recording[]>('/recordings/search', { channelId, start, end }),
-  playback: (channelId: number, start: string, end: string) => post<PlaybackSession>('/playback-sessions', { channelId, start, end, profile: 'browser' } satisfies components['schemas']['PlaybackRequest']),
+  playback: (channelId: number, start: string, end: string) => post<PlaybackSession>('/playback-sessions', { channelId, start, end, streamType: 1, profile: 'browser' } satisfies components['schemas']['PlaybackRequest']),
   getPlayback: (id: string) => api<PlaybackSession>(`/playback-sessions/${segment(id)}`),
   renewPlayback: (id: string) => post<PlaybackSession>(`/playback-sessions/${segment(id)}/renew`),
   stopPlayback: (id: string, keepalive = false) => remove(`/playback-sessions/${segment(id)}`, keepalive),

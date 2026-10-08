@@ -1,6 +1,6 @@
 # 独立后台服务交接说明
 
-版本：2.0.0。目标框架：.NET 10。入口依次调用 `AddPlatform`、`AddPlatformJobs`、`Bootstrap.InitializeAsync`，再启动独立通用宿主。没有修改 API、共享数据库迁移或适配器文件，没有提交或部署。
+版本：2.1.6。目标框架：.NET 10。入口依次调用 `AddPlatform`、`AddPlatformJobs`、`Bootstrap.InitializeAsync`，再启动独立通用宿主。
 
 ## 任务与配置
 

@@ -1,16 +1,16 @@
 namespace VideoPlatform.Contracts;
 
 public sealed record ErrorResponse(string Code, string Message, string TraceId);
-public sealed record Page<T>(IReadOnlyList<T> Items, long Total, int PageNumber, int PageSize);
-public sealed record LoginRequest(string Username, string Password, string ClientType = "web", string ClientVersion = "2.0.0");
+public sealed record LoginRequest(string Username, string Password, string ClientType = "web", string ClientVersion = "2.1.6");
 public sealed record UserDto(long Id, string Username, string? DisplayName, string? Phone, string Status, string[] Permissions, long[] RoleIds);
 public sealed record AuthResponse(UserDto User, string? AccessToken, DateTimeOffset ExpiresAt);
 public sealed record ProfileRequest(string? DisplayName, string? Phone);
 public sealed record PasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record DeviceRequest(string Name, string Host, int Port, string Username, string? Password, bool Enabled = true, string? PluginId = "hikvision", string? ExtraConfig = null);
 public sealed record DeviceDto(long Id, string Name, string Host, int Port, string Username, bool Enabled, string Status, string? Model, string? SerialNumber, DateTimeOffset? LastSeenAt, long ChannelCount, long OnlineChannels, string? PluginId = "hikvision", string? PluginName = null);
-public sealed record ChannelDto(long Id, long DeviceId, string DeviceName, int DeviceChannel, string Name, string? Alias, string? Model, string Status, long? UnitId, bool PtzCapable, string? Codec, string? Ip = null, string? Username = null, string? Password = null, string? Remark = null, string? DeviceModel = null, string? DeviceHost = null, int? DevicePort = null, string? DeviceSerial = null, string? PluginId = null, string? PluginName = null, string? FirmwareVersion = null, int SortOrder = 0);
-public sealed record ChannelUpdateRequest(string? Alias, long? UnitId = null, string? Ip = null, string? Username = null, string? Password = null, string? Remark = null);
+public sealed record ChannelDto(long Id, long DeviceId, string DeviceName, int DeviceChannel, string Name, string? Alias, string? Model, string Status, long? UnitId, bool PtzCapable, string? Codec, string? Ip = null, string? Username = null, bool HasPassword = false, string? Remark = null, string? DeviceModel = null, string? DeviceHost = null, int? DevicePort = null, string? DeviceSerial = null, string? PluginId = null, string? PluginName = null, string? FirmwareVersion = null, int SortOrder = 0);
+/// <summary>通道配置的部分更新请求。未提供的字段保留原值；空字符串清除文本字段；密码只能写入，读取时永不返回。</summary>
+public sealed record ChannelUpdateRequest(string? Alias, long? UnitId = null, string? Ip = null, string? Username = null, string? Password = null, string? Remark = null, bool ClearPassword = false);
 /// <summary>码流档位能力探测请求。StreamType：1 主码流、2 子码流。</summary>
 public sealed record StreamProbeRequest(int StreamType);
 /// <summary>

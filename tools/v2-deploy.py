@@ -15,9 +15,11 @@ def main():
     parser.add_argument("--switch", action="store_true")
     parser.add_argument("--release")
     parser.add_argument("--config-only", action="store_true")
+    parser.add_argument("--artifact-root", type=Path, help="服务端候选产物根目录，默认使用 artifacts/v2")
     args = parser.parse_args()
     release = args.release or ("2.1.1-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
     if any(c not in "0123456789.-" for c in release): raise RuntimeError("版本目录名无效")
+    artifact_root = (args.artifact_root or (ROOT / "artifacts/v2")).resolve()
     client=paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     sock = None
@@ -52,7 +54,7 @@ def main():
                         target=dest+"/"+path.relative_to(local).as_posix()
                         mkdir(posixpath.dirname(target));sftp.put(str(path),target)
             for part in ([] if args.config_only else ["api","worker","adapter"]):
-                source=ROOT/"artifacts/v2"/part
+                source=artifact_root/part
                 if not source.is_dir(): raise RuntimeError("缺少发布产物："+str(source))
                 upload_tree(source,remote+"/"+part)
                 print("已上传 "+part,flush=True)

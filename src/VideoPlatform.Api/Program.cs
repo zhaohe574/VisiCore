@@ -108,7 +108,8 @@ app.UseAuthorization();
 app.MapGet("/health", async (Database db) =>
 {
     await db.OneAsync("select 1 as ok");
-    return Results.Ok(new { status = "ok", service = "video-platform-api", version = "2.0.0" });
+    var version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+    return Results.Ok(new { status = "ok", service = "video-platform-api", version });
 }).WithName("Health");
 app.MapOpenApi("/api/v2/openapi/{documentName}.json");
 app.MapAuthEndpoints();

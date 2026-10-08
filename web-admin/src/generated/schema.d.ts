@@ -320,6 +320,22 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/channels/sort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["SortChannels"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/dashboard": {
         parameters: {
             query?: never;
@@ -1035,33 +1051,6 @@ export type components = {
             name: string;
             shared: boolean;
         };
-        AdministrationPageOfAdministrationAuditDto: {
-            items: components["schemas"]["AdministrationAuditDto"][];
-            /** Format: int32 */
-            page: number | string;
-            /** Format: int32 */
-            pageSize: number | string;
-            /** Format: int64 */
-            total: number | string;
-        };
-        AdministrationPageOfAdministrationSessionDto: {
-            items: components["schemas"]["AdministrationSessionDto"][];
-            /** Format: int32 */
-            page: number | string;
-            /** Format: int32 */
-            pageSize: number | string;
-            /** Format: int64 */
-            total: number | string;
-        };
-        AdministrationPageOfUserDto: {
-            items: components["schemas"]["UserDto"][];
-            /** Format: int32 */
-            page: number | string;
-            /** Format: int32 */
-            pageSize: number | string;
-            /** Format: int64 */
-            total: number | string;
-        };
         AdministrationRoleDto: {
             code: string;
             /** Format: int64 */
@@ -1168,22 +1157,51 @@ export type components = {
             codec: null | string;
             /** Format: int32 */
             deviceChannel: number | string;
+            deviceHost?: null | string;
             /** Format: int64 */
             deviceId: number | string;
+            deviceModel?: null | string;
             deviceName: string;
+            /** Format: int32 */
+            devicePort?: null | number | string;
+            deviceSerial?: null | string;
+            firmwareVersion?: null | string;
+            /** @default false */
+            hasPassword: boolean;
             /** Format: int64 */
             id: number | string;
+            ip?: null | string;
             model: null | string;
             name: string;
+            pluginId?: null | string;
+            pluginName?: null | string;
             ptzCapable: boolean;
+            remark?: null | string;
+            /**
+             * Format: int32
+             * @default 0
+             */
+            sortOrder: number | string;
             status: string;
             /** Format: int64 */
             unitId: null | number | string;
+            username?: null | string;
+        };
+        ChannelSortRequest: {
+            channelIds: (number | string)[];
+            /** Format: int64 */
+            unitId: number | string;
         };
         ChannelUpdateRequest: {
             alias: null | string;
+            /** @default false */
+            clearPassword: boolean;
+            ip?: null | string;
+            password?: null | string;
+            remark?: null | string;
             /** Format: int64 */
             unitId?: null | number | string;
+            username?: null | string;
         };
         CsrfTokenResponse: {
             token: string;
@@ -1252,6 +1270,19 @@ export type components = {
             channels: number | string;
             success: boolean;
         };
+        DiskInfoDto: {
+            /** Format: int64 */
+            freeBytes: null | number | string;
+            isDataPath: boolean;
+            label: null | string;
+            name: string;
+            /** Format: int64 */
+            totalBytes: null | number | string;
+            /** Format: int64 */
+            usedBytes: null | number | string;
+            /** Format: double */
+            usedPercent: null | number | string;
+        };
         ErrorResponse: {
             code: string;
             message: string;
@@ -1293,6 +1324,16 @@ export type components = {
         };
         FavoritesRequest: {
             channelIds: (number | string)[];
+        };
+        HostInfoDto: {
+            framework: string;
+            machineName: string;
+            osArchitecture: string;
+            osDescription: string;
+            /** Format: date-time */
+            serverTime: string;
+            /** Format: int64 */
+            systemUptimeSeconds: number | string;
         };
         LatestReleaseDto: {
             /** Format: date-time */
@@ -1364,7 +1405,7 @@ export type components = {
         LoginRequest: {
             /** @default web */
             clientType: string;
-            /** @default 2.0.0 */
+            /** @default 2.1.6 */
             clientVersion: string;
             password: string;
             username: string;
@@ -1376,6 +1417,30 @@ export type components = {
             playbackSessions: number | string;
             /** Format: int64 */
             transcodes: number | string;
+        };
+        NetworkInterfaceDto: {
+            /** Format: int64 */
+            bytesReceived: number | string;
+            /** Format: int64 */
+            bytesSent: number | string;
+            description: string;
+            ipAddress: null | string;
+            name: string;
+            /** Format: int64 */
+            speed: number | string;
+            status: string;
+            type: string;
+        };
+        NetworkMetricsDto: {
+            interfaces: components["schemas"]["NetworkInterfaceDto"][];
+            /** Format: double */
+            rxBytesPerSecond: number | string;
+            /** Format: int64 */
+            totalBytesReceived: number | string;
+            /** Format: int64 */
+            totalBytesSent: number | string;
+            /** Format: double */
+            txBytesPerSecond: number | string;
         };
         OrganizationNodeDto: {
             code: string;
@@ -1444,6 +1509,33 @@ export type components = {
             /** Format: int64 */
             total: number | string;
         };
+        PagedResponseOfAdministrationAuditDto: {
+            items: components["schemas"]["AdministrationAuditDto"][];
+            /** Format: int32 */
+            page: number | string;
+            /** Format: int32 */
+            pageSize: number | string;
+            /** Format: int64 */
+            total: number | string;
+        };
+        PagedResponseOfAdministrationSessionDto: {
+            items: components["schemas"]["AdministrationSessionDto"][];
+            /** Format: int32 */
+            page: number | string;
+            /** Format: int32 */
+            pageSize: number | string;
+            /** Format: int64 */
+            total: number | string;
+        };
+        PagedResponseOfUserDto: {
+            items: components["schemas"]["UserDto"][];
+            /** Format: int32 */
+            page: number | string;
+            /** Format: int32 */
+            pageSize: number | string;
+            /** Format: int64 */
+            total: number | string;
+        };
         PasswordRequest: {
             currentPassword: string;
             newPassword: string;
@@ -1488,7 +1580,7 @@ export type components = {
             exportRetentionDays: number | string;
             /**
              * Format: int32
-             * @default 16
+             * @default 25
              */
             livePerUser: number | string;
             /**
@@ -1671,6 +1763,24 @@ export type components = {
             allChannels: boolean;
             scopes: components["schemas"]["ScopeItem"][];
         };
+        ServerPerformanceDto: {
+            /** Format: int32 */
+            cpuCores: number | string;
+            /** Format: int64 */
+            gcHeapBytes: null | number | string;
+            /** Format: double */
+            processCpuPercent: null | number | string;
+            /** Format: int64 */
+            processPrivateMemoryBytes: number | string;
+            /** Format: int32 */
+            processThreads: number | string;
+            /** Format: int64 */
+            processWorkingSetBytes: number | string;
+            /** Format: int64 */
+            swapTotalBytes: null | number | string;
+            /** Format: int64 */
+            swapUsedBytes: null | number | string;
+        };
         ServiceHealthDto: {
             name: string;
             reason?: null | string;
@@ -1698,13 +1808,17 @@ export type components = {
             cpuPercent: null | number | string;
             /** Format: int64 */
             diskFreeBytes: null | number | string;
+            disks?: null | components["schemas"]["DiskInfoDto"][];
             /** Format: int64 */
             diskTotalBytes: null | number | string;
+            host?: null | components["schemas"]["HostInfoDto"];
             media: components["schemas"]["MediaStatisticsDto"];
             /** Format: int64 */
             memoryTotalBytes: null | number | string;
             /** Format: int64 */
             memoryUsedBytes: null | number | string;
+            network?: null | components["schemas"]["NetworkMetricsDto"];
+            performance?: null | components["schemas"]["ServerPerformanceDto"];
             services: components["schemas"]["ServiceHealthDto"][];
             /** Format: int64 */
             uptimeSeconds: number | string;
@@ -2166,7 +2280,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdministrationPageOfAdministrationAuditDto"];
+                    "application/json": components["schemas"]["PagedResponseOfAdministrationAuditDto"];
                 };
             };
             /** @description 请求失败；认证中间件也可能返回空正文。 */
@@ -3104,12 +3218,15 @@ export interface operations {
     ListChannels: {
         parameters: {
             query?: {
+                areaId?: number | string;
+                assigned?: boolean;
                 deviceId?: number | string;
                 online?: boolean;
                 page?: number;
                 pageSize?: number;
                 search?: string;
                 unitId?: number | string;
+                workshopId?: number | string;
             };
             header?: never;
             path?: never;
@@ -3705,6 +3822,103 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AssignmentRequest"];
+            };
+        };
+        responses: {
+            /** @description 操作完成，无响应正文 */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description 请求失败；认证中间件也可能返回空正文。 */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    SortChannels: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description 使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。 */
+                "X-CSRF-Token"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelSortRequest"];
             };
         };
         responses: {
@@ -9038,7 +9252,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdministrationPageOfAdministrationSessionDto"];
+                    "application/json": components["schemas"]["PagedResponseOfAdministrationSessionDto"];
                 };
             };
             /** @description 请求失败；认证中间件也可能返回空正文。 */
@@ -9512,7 +9726,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdministrationPageOfUserDto"];
+                    "application/json": components["schemas"]["PagedResponseOfUserDto"];
                 };
             };
             /** @description 请求失败；认证中间件也可能返回空正文。 */

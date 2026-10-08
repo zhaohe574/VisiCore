@@ -35,9 +35,8 @@ const events = useEvents()
 const route = useRoute()
 const router = useRouter()
 
-// 侧边栏折叠与移动端控制
+// 侧边栏折叠状态
 const isCollapsed = ref(localStorage.getItem('visicore-sidebar-collapsed') === 'true')
-const mobileOpen = ref(false)
 const leaving = ref(false)
 
 // 待处理报警数量统计
@@ -170,10 +169,6 @@ const unsubscribers = [
   })
 ]
 
-watch(() => route.fullPath, () => {
-  mobileOpen.value = false
-})
-
 watch(() => auth.authenticated, loggedIn => {
   if (!loggedIn) {
     void events.stop()
@@ -196,17 +191,8 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="workspace-shell">
-    <!-- 移动端遮罩层 -->
-    <div
-      v-if="mobileOpen"
-      class="sidebar-overlay"
-      aria-label="关闭导航"
-      style="position: fixed; inset: 0; background: rgba(15, 23, 42, 0.6); z-index: 49;"
-      @click="mobileOpen = false"
-    />
-
     <!-- 左侧主导航侧边栏 -->
-    <aside :class="['sidebar', { collapsed: isCollapsed, open: mobileOpen }]">
+    <aside :class="['sidebar', { collapsed: isCollapsed }]">
       <router-link class="workspace-brand" to="/app">
         <img src="/visicore.svg" alt="VisiCore 标识" />
         <div class="brand-text">
@@ -255,15 +241,6 @@ onBeforeUnmount(() => {
       <!-- 现代化顶部导航栏 -->
       <header class="workspace-topbar">
         <div class="topbar-left">
-          <el-button
-            class="mobile-menu-btn"
-            style="display: none;"
-            text
-            :icon="Expand"
-            aria-label="展开导航"
-            @click="mobileOpen = !mobileOpen"
-          />
-
           <div class="topbar-breadcrumb">
             <el-icon style="font-size: 14px;"><House /></el-icon>
             <span>工作区</span>
@@ -376,24 +353,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-@media (max-width: 1024px) {
-  .mobile-menu-btn {
-    display: inline-flex !important;
-    margin-right: 4px;
-  }
-  .global-search-trigger {
-    min-width: 0;
-    padding: 6px;
-  }
-  .global-search-trigger span,
-  .global-search-trigger .search-shortcut-badge {
-    display: none;
-  }
-  .user-meta {
-    display: none;
-  }
-}
-
 .fade-transform-leave-active,
 .fade-transform-enter-active {
   transition: all 0.18s ease-out;

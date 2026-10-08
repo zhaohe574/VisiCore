@@ -5,13 +5,14 @@ internal static class AdapterEndpoints
 {
     public static void Map(WebApplication app, DeviceRegistry registry, ExportService exports)
     {
-        app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "hikvision-adapter", version = "2.0.0", detail = registry.Health }));
+        var version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown";
+        app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "hikvision-adapter", version, detail = registry.Health }));
         app.MapGet("/manifest", () => Results.Ok(new
         {
             id = "hikvision",
             name = "海康威视网络设备驱动",
             vendor = "Hikvision",
-            version = "2.0.0",
+            version,
             description = "支持海康威视全系列网络摄像机（IPC）、嵌入式录像机（NVR/DVR）及存储服务器，支持 ISAPI 与 HCNetSDK 混合协议，纯透传零转码。",
             protocol = "http",
             capabilities = new[] { "live", "playback", "recordings", "ptz", "alarms", "presets" }

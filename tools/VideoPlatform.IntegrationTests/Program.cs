@@ -63,6 +63,8 @@ try
     var login = await Ok("POST", "/api/v2/auth/login", new { username = "admin", password = Environment.GetEnvironmentVariable("PLATFORM_ADMIN_PASSWORD"), clientType = "desktop", clientVersion = "2.0.0-test" });
     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", login.Text("accessToken"));
     var adminId = login["user"].Id();
+    await using var data = NpgsqlDataSource.Create(Environment.GetEnvironmentVariable("PLATFORM_DATABASE_URL")!);
+    var db = new Database(data);
     foreach (var endpoint in new[] { "/health", "/api/v2/auth/me", "/api/v2/dashboard", "/api/v2/system", "/api/v2/users", "/api/v2/roles", "/api/v2/permissions", "/api/v2/organization", "/api/v2/devices", "/api/v2/channels", "/api/v2/alarms", "/api/v2/exports", "/api/v2/layouts", "/api/v2/favorites", "/api/v2/audit", "/api/v2/sessions", "/api/v2/settings", "/api/v2/releases", "/api/v2/openapi/v2.json" }) await Ok("GET", endpoint);
     var first = await Ok("POST", "/api/v2/devices", new { name = "测试录像机甲" + stamp, host = "test-a-" + stamp + ".example", port = 8000, username = "test", password = "device-test-password", enabled = true });
     var second = await Ok("POST", "/api/v2/devices", new { name = "测试录像机乙" + stamp, host = "test-b-" + stamp + ".example", port = 8000, username = "test", password = "device-test-password", enabled = true });
@@ -74,6 +76,15 @@ try
     var channelB = secondChannels["items"]![0].Id();
     Check(channelA != channelB && firstChannels["items"]![0].Id("deviceChannel") == secondChannels["items"]![0].Id("deviceChannel"), "两台录像机相同通道号使用不同全局 ID");
     Check(!firstChannels.ToJsonString().Contains("password", StringComparison.OrdinalIgnoreCase), "通道响应没有设备密码");
+    await Ok("PUT", $"/api/v2/channels/{channelA}", new { alias = "安全测试通道", password = "channel-test-secret-2026" });
+    var configuredPassword = await db.OneAsync("select password from channels where id=@id", new { id = channelA });
+    Check(configuredPassword?.Text("password") == "channel-test-secret-2026", "通道密码可写入但只保存在服务端");
+    await Ok("PUT", $"/api/v2/channels/{channelA}", new { alias = "只改别名" });
+    var retainedPassword = await db.OneAsync("select password from channels where id=@id", new { id = channelA });
+    Check(retainedPassword?.Text("password") == "channel-test-secret-2026", "通道部分更新不会意外清除密码");
+    await Ok("PUT", $"/api/v2/channels/{channelA}", new { clearPassword = true });
+    var clearedPassword = await db.OneAsync("select password from channels where id=@id", new { id = channelA });
+    Check(clearedPassword?["password"] is null, "只有显式 clearPassword 才会清除通道密码");
     var role = await Ok("POST", "/api/v2/roles", new { name = "测试值班角色" + stamp, code = "test" + stamp, status = "active", permissionCodes = new[] { "device.read", "channel.read", "area.read", "live.view", "playback.view", "ptz.control", "alarm.read", "alarm.ack", "export.create" } });
     var user = await Ok("POST", "/api/v2/users", new { username = "test" + stamp, password = "Test-password-2026!", displayName = "集成测试值班员", phone = "", status = "active", roleIds = new[] { role.Id() } });
     var userClient = new HttpClient { BaseAddress = new Uri(apiBase) };
@@ -114,8 +125,6 @@ try
     await Ok("PUT", "/api/v2/channels/assignment", new { channelIds = new[] { channelA }, unitId = unit.Id() });
     var referenced = await Send("DELETE", $"/api/v2/organization/units/{unit.Id()}");
     Check(referenced.Status == HttpStatusCode.Conflict, "有通道引用的机组不可删除");
-    await using var data = NpgsqlDataSource.Create(Environment.GetEnvironmentVariable("PLATFORM_DATABASE_URL")!);
-    var db = new Database(data);
     var alarm = await db.OneAsync("insert into alarm_events(device_id,channel_id,source_id,event_type,occurred_at) values(@device,@channel,@source,'alarm.motion',now()) returning id", new { device = first.Id(), channel = channelA, source = stamp });
     await Ok("GET", $"/api/v2/alarms/{alarm.Id()}");
     await Ok("POST", $"/api/v2/alarms/{alarm.Id()}/actions", new { action = "claim", note = "开始处理" });

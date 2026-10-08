@@ -197,8 +197,9 @@ export async function generate(options = {}) {
   await command(dotnet, [nswag, 'run', 'nswag.json'], { cwd: output });
   const generated = path.join(output, 'csharp/VideoPlatformClient.g.cs');
   const generatedText = await fs.readFile(generated, 'utf8');
-  // 只统一换行和行尾空白；模型和客户端代码完全由 NSwag 输出。
-  await fs.writeFile(generated, '// 此文件由 NSwag 根据 OpenAPI 自动生成，请勿手动编辑。\n' + generatedText.replaceAll('\r\n', '\n').replace(/[ \t]+$/gm, ''));
+  // 统一换行、行尾空白和文件末尾换行；模型和客户端代码完全由 NSwag 输出。
+  const normalizedGenerated = generatedText.replaceAll('\r\n', '\n').replace(/[ \t]+$/gm, '').replace(/\n?$/, '\n');
+  await fs.writeFile(generated, '// 此文件由 NSwag 根据 OpenAPI 自动生成，请勿手动编辑。\n' + normalizedGenerated);
   const report = ['# OpenAPI 元数据接入报告', '', `实际发现 ${count} 个业务操作，补充 ${notes.length} 项 API 元数据。`, '',
     '以下补充仅作用于 SDK 文档，未修改服务端。主代理应将这些定义移回端点注册，随后使用 --strict 验证不再依赖补充表。', '',
     '| 操作 | 方法与路径 | 缺失类型 | 建议 |', '| --- | --- | --- | --- |',

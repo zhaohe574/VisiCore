@@ -551,9 +551,4 @@ onBeforeUnmount(() => {
 .perf-stats-list span { color: var(--text-muted); }
 .perf-stats-list strong { color: var(--text-regular); font-weight: 500; }
 
-@media (max-width: 1024px) {
-  .shortcuts-row {
-    grid-template-columns: repeat(2, 1fr) !important;
-  }
-}
 </style>

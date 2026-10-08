@@ -7,7 +7,6 @@ import {
   Delete,
   Edit,
   Folder,
-  Hide,
   InfoFilled,
   Plus,
   Refresh,
@@ -17,7 +16,6 @@ import {
   Bottom,
   VideoCamera,
   VideoPlay,
-  View,
   Warning
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -91,7 +89,6 @@ const editing = ref<number | null>(null)
 
 const detailDrawer = ref(false)
 const currentChannel = ref<Channel | null>(null)
-const showPassword = ref(false)
 
 const editDialog = ref(false)
 const editTarget = ref<Channel | null>(null)
@@ -101,6 +98,7 @@ const editForm = reactive({
   ip: '',
   username: '',
   password: '',
+  clearPassword: false,
   remark: ''
 })
 
@@ -202,7 +200,6 @@ async function assign() {
 
 function showDetail(channel: Channel) {
   currentChannel.value = channel
-  showPassword.value = false
   detailDrawer.value = true
 }
 
@@ -212,7 +209,8 @@ function openEdit(channel: Channel) {
   editForm.unitId = channel.unitId ?? null
   editForm.ip = channel.ip || ''
   editForm.username = channel.username || ''
-  editForm.password = channel.password || ''
+  editForm.password = ''
+  editForm.clearPassword = false
   editForm.remark = channel.remark || ''
   editDialog.value = true
 }
@@ -222,11 +220,12 @@ async function saveChannel() {
   if (
     await run(async () => {
       const updated = await managementApi.updateChannel(editTarget.value!.id, {
-        alias: editForm.alias.trim() || null,
-        ip: editForm.ip.trim() || null,
-        username: editForm.username.trim() || null,
-        password: editForm.password || null,
-        remark: editForm.remark.trim() || null
+        alias: editForm.alias.trim(),
+        ip: editForm.ip.trim(),
+        username: editForm.username.trim(),
+        remark: editForm.remark.trim(),
+        ...(editForm.clearPassword ? { clearPassword: true } : {}),
+        ...(editForm.password.trim() ? { password: editForm.password.trim() } : {})
       })
       if (editForm.unitId !== (editTarget.value!.unitId ?? null)) {
         await managementApi.assign([editTarget.value!.id], editForm.unitId ?? null)
@@ -996,8 +995,12 @@ onMounted(loadOptions)
             show-password
             maxlength="256"
             clearable
-            placeholder="未单独配置则保持滞空"
+            :disabled="editForm.clearPassword"
+            placeholder="留空则保持原密码"
           />
+          <el-checkbox v-model="editForm.clearPassword" :disabled="!editTarget?.hasPassword" style="margin-top: 8px;">
+            清除已配置密码
+          </el-checkbox>
         </el-form-item>
 
         <el-form-item label="备注说明">
@@ -1216,30 +1219,9 @@ onMounted(loadOptions)
             <div>
               <dt>独立访问密码</dt>
               <dd style="display: flex; align-items: center; gap: 8px; justify-content: flex-end;">
-                <template v-if="currentChannel.password">
-                  <span class="monospace">
-                    {{ showPassword ? currentChannel.password : '••••••••••••' }}
-                  </span>
-                  <el-button
-                    link
-                    type="primary"
-                    :icon="showPassword ? Hide : View"
-                    size="small"
-                    @click="showPassword = !showPassword"
-                  >
-                    {{ showPassword ? '隐藏' : '显示' }}
-                  </el-button>
-                  <el-button
-                    link
-                    type="primary"
-                    :icon="CopyDocument"
-                    size="small"
-                    @click="copyText(currentChannel.password, '密码')"
-                  >
-                    复制
-                  </el-button>
-                </template>
-                <span v-else class="muted">—</span>
+                <span :class="currentChannel.hasPassword ? 'teal' : 'muted'">
+                  {{ currentChannel.hasPassword ? '已配置（不会回显）' : '未配置' }}
+                </span>
               </dd>
             </div>
             <div>

@@ -43,7 +43,7 @@ public static class AdministrationEndpoints
         {
             var (page, size, _) = ApiSupport.Pagination(context);
             return Results.Ok(await service.UsersAsync(ApiSupport.Actor(context), page, size, ApiSupport.Search(context), context.RequestAborted));
-        }).Produces<AdministrationPage<UserDto>>().WithName("GetUsers");
+        }).Produces<PagedResponse<UserDto>>().WithName("GetUsers");
         group.MapPost("/users", async (UserRequest request, HttpContext context) =>
         {
             var result = await service.SaveUserAsync(ApiSupport.Actor(context), null, request, ApiSupport.Ip(context), context.RequestAborted);
@@ -84,7 +84,7 @@ public static class AdministrationEndpoints
         {
             var (page, size, _) = ApiSupport.Pagination(context);
             return Results.Ok(await service.SessionsAsync(ApiSupport.Actor(context), page, size, ApiSupport.Search(context), context.RequestAborted));
-        }).Produces<AdministrationPage<AdministrationSessionDto>>().WithName("GetSessions");
+        }).Produces<PagedResponse<AdministrationSessionDto>>().WithName("GetSessions");
         group.MapDelete("/sessions/{id:guid}", async (Guid id, HttpContext context) =>
         {
             await service.RevokeSessionAsync(ApiSupport.Actor(context), id, ApiSupport.Ip(context), context.RequestAborted);
@@ -94,7 +94,7 @@ public static class AdministrationEndpoints
         {
             var (page, size, _) = ApiSupport.Pagination(context);
             return Results.Ok(await service.AuditAsync(ApiSupport.Actor(context), page, size, ApiSupport.Search(context), context.Request.Query["action"], QueryTime(context, "from"), QueryTime(context, "to"), context.RequestAborted));
-        }).Produces<AdministrationPage<AdministrationAuditDto>>().WithName("GetAudit");
+        }).Produces<PagedResponse<AdministrationAuditDto>>().WithName("GetAudit");
         group.MapGet("/settings", async Task<IResult> (HttpContext context) => Results.Ok(await service.SettingsAsync(ApiSupport.Actor(context), context.RequestAborted)))
             .Produces<PlatformSettings>().WithName("GetSettings");
         group.MapPut("/settings", async (PlatformSettings request, HttpContext context) =>

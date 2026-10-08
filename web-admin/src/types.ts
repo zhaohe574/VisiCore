@@ -39,7 +39,7 @@ export type Channel = SchemaDto<'ChannelDto'> & {
   alias?: string | null
   ip?: string | null
   username?: string | null
-  password?: string | null
+  hasPassword?: boolean
   remark?: string | null
   deviceModel?: string | null
   deviceHost?: string | null
@@ -50,6 +50,8 @@ export type Channel = SchemaDto<'ChannelDto'> & {
   firmwareVersion?: string | null
   sortOrder?: number
 }
+/** 通道部分更新：未提供字段保持原值，密码只有显式输入或 clearPassword 才改变。 */
+export type ChannelUpdateInput = Partial<SchemaDto<'ChannelUpdateRequest'>> & { clearPassword?: boolean }
 export type OrganizationNode = SchemaDto<'OrganizationNodeDto'>
 export type Organization = SchemaDto<'OrganizationTreeDto'>
 export type OrganizationKind = keyof Organization

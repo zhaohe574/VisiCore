@@ -125,7 +125,7 @@ namespace VideoPlatform.Client.Generated
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <returns>成功响应</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
-        System.Threading.Tasks.Task<PagedChannelResponse> ListChannelsAsync(long? deviceId = null, long? unitId = null, bool? online = null, int? page = null, int? pageSize = null, string? search = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
+        System.Threading.Tasks.Task<PagedChannelResponse> ListChannelsAsync(long? deviceId = null, long? unitId = null, long? areaId = null, long? workshopId = null, bool? online = null, bool? assigned = null, int? page = null, int? pageSize = null, string? search = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
 
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <param name="x_CSRF_Token">使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。</param>
@@ -368,9 +368,15 @@ namespace VideoPlatform.Client.Generated
         System.Threading.Tasks.Task AssignChannelsAsync(AssignmentRequest body, string? x_CSRF_Token = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
 
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
+        /// <param name="x_CSRF_Token">使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。</param>
+        /// <returns>操作完成，无响应正文</returns>
+        /// <exception cref="ApiException">A server side error occurred.</exception>
+        System.Threading.Tasks.Task SortChannelsAsync(ChannelSortRequest body, string? x_CSRF_Token = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
+
+        /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
-        System.Threading.Tasks.Task<AdministrationPageOfUserDto> GetUsersAsync(int? page = null, int? pageSize = null, string? search = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
+        System.Threading.Tasks.Task<PagedResponseOfUserDto> GetUsersAsync(int? page = null, int? pageSize = null, string? search = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
 
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <param name="x_CSRF_Token">使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。</param>
@@ -432,7 +438,7 @@ namespace VideoPlatform.Client.Generated
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
-        System.Threading.Tasks.Task<AdministrationPageOfAdministrationSessionDto> GetSessionsAsync(int? page = null, int? pageSize = null, string? search = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
+        System.Threading.Tasks.Task<PagedResponseOfAdministrationSessionDto> GetSessionsAsync(int? page = null, int? pageSize = null, string? search = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
 
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <param name="x_CSRF_Token">使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。</param>
@@ -443,7 +449,7 @@ namespace VideoPlatform.Client.Generated
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
-        System.Threading.Tasks.Task<AdministrationPageOfAdministrationAuditDto> GetAuditAsync(int? page = null, int? pageSize = null, string? search = null, string? action = null, System.DateTimeOffset? from = null, System.DateTimeOffset? to = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
+        System.Threading.Tasks.Task<PagedResponseOfAdministrationAuditDto> GetAuditAsync(int? page = null, int? pageSize = null, string? search = null, string? action = null, System.DateTimeOffset? from = null, System.DateTimeOffset? to = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken));
 
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <returns>OK</returns>
@@ -3055,7 +3061,7 @@ namespace VideoPlatform.Client.Generated
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <returns>成功响应</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
-        public virtual async System.Threading.Tasks.Task<PagedChannelResponse> ListChannelsAsync(long? deviceId = null, long? unitId = null, bool? online = null, int? page = null, int? pageSize = null, string? search = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken))
+        public virtual async System.Threading.Tasks.Task<PagedChannelResponse> ListChannelsAsync(long? deviceId = null, long? unitId = null, long? areaId = null, long? workshopId = null, bool? online = null, bool? assigned = null, int? page = null, int? pageSize = null, string? search = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken))
         {
             var client_ = _httpClient;
             var disposeClient_ = false;
@@ -3079,9 +3085,21 @@ namespace VideoPlatform.Client.Generated
                     {
                         urlBuilder_.Append(System.Uri.EscapeDataString("unitId")).Append('=').Append(System.Uri.EscapeDataString(ConvertToString(unitId, System.Globalization.CultureInfo.InvariantCulture))).Append('&');
                     }
+                    if (areaId != null)
+                    {
+                        urlBuilder_.Append(System.Uri.EscapeDataString("areaId")).Append('=').Append(System.Uri.EscapeDataString(ConvertToString(areaId, System.Globalization.CultureInfo.InvariantCulture))).Append('&');
+                    }
+                    if (workshopId != null)
+                    {
+                        urlBuilder_.Append(System.Uri.EscapeDataString("workshopId")).Append('=').Append(System.Uri.EscapeDataString(ConvertToString(workshopId, System.Globalization.CultureInfo.InvariantCulture))).Append('&');
+                    }
                     if (online != null)
                     {
                         urlBuilder_.Append(System.Uri.EscapeDataString("online")).Append('=').Append(System.Uri.EscapeDataString(ConvertToString(online, System.Globalization.CultureInfo.InvariantCulture))).Append('&');
+                    }
+                    if (assigned != null)
+                    {
+                        urlBuilder_.Append(System.Uri.EscapeDataString("assigned")).Append('=').Append(System.Uri.EscapeDataString(ConvertToString(assigned, System.Globalization.CultureInfo.InvariantCulture))).Append('&');
                     }
                     if (page != null)
                     {
@@ -9979,9 +9997,165 @@ namespace VideoPlatform.Client.Generated
         }
 
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
+        /// <param name="x_CSRF_Token">使用浏览器 Cookie 写入时必须提供；桌面 Bearer 请求不需要。</param>
+        /// <returns>操作完成，无响应正文</returns>
+        /// <exception cref="ApiException">A server side error occurred.</exception>
+        public virtual async System.Threading.Tasks.Task SortChannelsAsync(ChannelSortRequest body, string? x_CSRF_Token = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken))
+        {
+            if (body == null)
+                throw new System.ArgumentNullException("body");
+
+            var client_ = _httpClient;
+            var disposeClient_ = false;
+            try
+            {
+                using (var request_ = new System.Net.Http.HttpRequestMessage())
+                {
+
+                    if (x_CSRF_Token != null)
+                        request_.Headers.TryAddWithoutValidation("X-CSRF-Token", ConvertToString(x_CSRF_Token, System.Globalization.CultureInfo.InvariantCulture));
+                    var json_ = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(body, JsonSerializerSettings);
+                    var content_ = new System.Net.Http.ByteArrayContent(json_);
+                    content_.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse("application/json");
+                    request_.Content = content_;
+                    request_.Method = new System.Net.Http.HttpMethod("PUT");
+
+                    var urlBuilder_ = new System.Text.StringBuilder();
+
+                    // Operation Path: "api/v2/channels/sort"
+                    urlBuilder_.Append("api/v2/channels/sort");
+
+                    PrepareRequest(client_, request_, urlBuilder_);
+
+                    var url_ = urlBuilder_.ToString();
+                    request_.RequestUri = new System.Uri(url_, System.UriKind.RelativeOrAbsolute);
+
+                    PrepareRequest(client_, request_, url_);
+
+                    var response_ = await client_.SendAsync(request_, System.Net.Http.HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                    var disposeResponse_ = true;
+                    try
+                    {
+                        var headers_ = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.IEnumerable<string>>();
+                        foreach (var item_ in response_.Headers)
+                            headers_[item_.Key] = item_.Value;
+                        if (response_.Content != null && response_.Content.Headers != null)
+                        {
+                            foreach (var item_ in response_.Content.Headers)
+                                headers_[item_.Key] = item_.Value;
+                        }
+
+                        ProcessResponse(client_, response_);
+
+                        var status_ = (int)response_.StatusCode;
+                        if (status_ == 204)
+                        {
+                            return;
+                        }
+                        else
+                        if (status_ == 400)
+                        {
+                            var objectResponse_ = await ReadObjectResponseAsync<ErrorResponse>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            if (objectResponse_.Object == null)
+                            {
+                                throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
+                            }
+                            throw new ApiException<ErrorResponse>("\u8bf7\u6c42\u5931\u8d25\uff1b\u8ba4\u8bc1\u4e2d\u95f4\u4ef6\u4e5f\u53ef\u80fd\u8fd4\u56de\u7a7a\u6b63\u6587\u3002", status_, objectResponse_.Text, headers_, objectResponse_.Object, null);
+                        }
+                        else
+                        if (status_ == 401)
+                        {
+                            var objectResponse_ = await ReadObjectResponseAsync<ErrorResponse>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            if (objectResponse_.Object == null)
+                            {
+                                throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
+                            }
+                            throw new ApiException<ErrorResponse>("\u8bf7\u6c42\u5931\u8d25\uff1b\u8ba4\u8bc1\u4e2d\u95f4\u4ef6\u4e5f\u53ef\u80fd\u8fd4\u56de\u7a7a\u6b63\u6587\u3002", status_, objectResponse_.Text, headers_, objectResponse_.Object, null);
+                        }
+                        else
+                        if (status_ == 403)
+                        {
+                            var objectResponse_ = await ReadObjectResponseAsync<ErrorResponse>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            if (objectResponse_.Object == null)
+                            {
+                                throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
+                            }
+                            throw new ApiException<ErrorResponse>("\u8bf7\u6c42\u5931\u8d25\uff1b\u8ba4\u8bc1\u4e2d\u95f4\u4ef6\u4e5f\u53ef\u80fd\u8fd4\u56de\u7a7a\u6b63\u6587\u3002", status_, objectResponse_.Text, headers_, objectResponse_.Object, null);
+                        }
+                        else
+                        if (status_ == 404)
+                        {
+                            var objectResponse_ = await ReadObjectResponseAsync<ErrorResponse>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            if (objectResponse_.Object == null)
+                            {
+                                throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
+                            }
+                            throw new ApiException<ErrorResponse>("\u8bf7\u6c42\u5931\u8d25\uff1b\u8ba4\u8bc1\u4e2d\u95f4\u4ef6\u4e5f\u53ef\u80fd\u8fd4\u56de\u7a7a\u6b63\u6587\u3002", status_, objectResponse_.Text, headers_, objectResponse_.Object, null);
+                        }
+                        else
+                        if (status_ == 409)
+                        {
+                            var objectResponse_ = await ReadObjectResponseAsync<ErrorResponse>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            if (objectResponse_.Object == null)
+                            {
+                                throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
+                            }
+                            throw new ApiException<ErrorResponse>("\u8bf7\u6c42\u5931\u8d25\uff1b\u8ba4\u8bc1\u4e2d\u95f4\u4ef6\u4e5f\u53ef\u80fd\u8fd4\u56de\u7a7a\u6b63\u6587\u3002", status_, objectResponse_.Text, headers_, objectResponse_.Object, null);
+                        }
+                        else
+                        if (status_ == 429)
+                        {
+                            var objectResponse_ = await ReadObjectResponseAsync<ErrorResponse>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            if (objectResponse_.Object == null)
+                            {
+                                throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
+                            }
+                            throw new ApiException<ErrorResponse>("\u8bf7\u6c42\u5931\u8d25\uff1b\u8ba4\u8bc1\u4e2d\u95f4\u4ef6\u4e5f\u53ef\u80fd\u8fd4\u56de\u7a7a\u6b63\u6587\u3002", status_, objectResponse_.Text, headers_, objectResponse_.Object, null);
+                        }
+                        else
+                        if (status_ == 500)
+                        {
+                            var objectResponse_ = await ReadObjectResponseAsync<ErrorResponse>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            if (objectResponse_.Object == null)
+                            {
+                                throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
+                            }
+                            throw new ApiException<ErrorResponse>("\u8bf7\u6c42\u5931\u8d25\uff1b\u8ba4\u8bc1\u4e2d\u95f4\u4ef6\u4e5f\u53ef\u80fd\u8fd4\u56de\u7a7a\u6b63\u6587\u3002", status_, objectResponse_.Text, headers_, objectResponse_.Object, null);
+                        }
+                        else
+                        if (status_ == 503)
+                        {
+                            var objectResponse_ = await ReadObjectResponseAsync<ErrorResponse>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            if (objectResponse_.Object == null)
+                            {
+                                throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
+                            }
+                            throw new ApiException<ErrorResponse>("\u8bf7\u6c42\u5931\u8d25\uff1b\u8ba4\u8bc1\u4e2d\u95f4\u4ef6\u4e5f\u53ef\u80fd\u8fd4\u56de\u7a7a\u6b63\u6587\u3002", status_, objectResponse_.Text, headers_, objectResponse_.Object, null);
+                        }
+                        else
+                        {
+                            var responseData_ = response_.Content == null ? null : await ReadAsStringAsync(response_.Content, cancellationToken).ConfigureAwait(false);
+                            throw new ApiException("The HTTP status code of the response was not expected (" + status_ + ").", status_, responseData_, headers_, null);
+                        }
+                    }
+                    finally
+                    {
+                        if (disposeResponse_)
+                            response_.Dispose();
+                    }
+                }
+            }
+            finally
+            {
+                if (disposeClient_)
+                    client_.Dispose();
+            }
+        }
+
+        /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
-        public virtual async System.Threading.Tasks.Task<AdministrationPageOfUserDto> GetUsersAsync(int? page = null, int? pageSize = null, string? search = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken))
+        public virtual async System.Threading.Tasks.Task<PagedResponseOfUserDto> GetUsersAsync(int? page = null, int? pageSize = null, string? search = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken))
         {
             var client_ = _httpClient;
             var disposeClient_ = false;
@@ -10036,7 +10210,7 @@ namespace VideoPlatform.Client.Generated
                         var status_ = (int)response_.StatusCode;
                         if (status_ == 200)
                         {
-                            var objectResponse_ = await ReadObjectResponseAsync<AdministrationPageOfUserDto>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            var objectResponse_ = await ReadObjectResponseAsync<PagedResponseOfUserDto>(response_, headers_, cancellationToken).ConfigureAwait(false);
                             if (objectResponse_.Object == null)
                             {
                                 throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
@@ -11755,7 +11929,7 @@ namespace VideoPlatform.Client.Generated
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
-        public virtual async System.Threading.Tasks.Task<AdministrationPageOfAdministrationSessionDto> GetSessionsAsync(int? page = null, int? pageSize = null, string? search = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken))
+        public virtual async System.Threading.Tasks.Task<PagedResponseOfAdministrationSessionDto> GetSessionsAsync(int? page = null, int? pageSize = null, string? search = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken))
         {
             var client_ = _httpClient;
             var disposeClient_ = false;
@@ -11810,7 +11984,7 @@ namespace VideoPlatform.Client.Generated
                         var status_ = (int)response_.StatusCode;
                         if (status_ == 200)
                         {
-                            var objectResponse_ = await ReadObjectResponseAsync<AdministrationPageOfAdministrationSessionDto>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            var objectResponse_ = await ReadObjectResponseAsync<PagedResponseOfAdministrationSessionDto>(response_, headers_, cancellationToken).ConfigureAwait(false);
                             if (objectResponse_.Object == null)
                             {
                                 throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
@@ -12073,7 +12247,7 @@ namespace VideoPlatform.Client.Generated
         /// <param name="cancellationToken">A cancellation token that can be used by other objects or threads to receive notice of cancellation.</param>
         /// <returns>OK</returns>
         /// <exception cref="ApiException">A server side error occurred.</exception>
-        public virtual async System.Threading.Tasks.Task<AdministrationPageOfAdministrationAuditDto> GetAuditAsync(int? page = null, int? pageSize = null, string? search = null, string? action = null, System.DateTimeOffset? from = null, System.DateTimeOffset? to = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken))
+        public virtual async System.Threading.Tasks.Task<PagedResponseOfAdministrationAuditDto> GetAuditAsync(int? page = null, int? pageSize = null, string? search = null, string? action = null, System.DateTimeOffset? from = null, System.DateTimeOffset? to = null, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken))
         {
             var client_ = _httpClient;
             var disposeClient_ = false;
@@ -12140,7 +12314,7 @@ namespace VideoPlatform.Client.Generated
                         var status_ = (int)response_.StatusCode;
                         if (status_ == 200)
                         {
-                            var objectResponse_ = await ReadObjectResponseAsync<AdministrationPageOfAdministrationAuditDto>(response_, headers_, cancellationToken).ConfigureAwait(false);
+                            var objectResponse_ = await ReadObjectResponseAsync<PagedResponseOfAdministrationAuditDto>(response_, headers_, cancellationToken).ConfigureAwait(false);
                             if (objectResponse_.Object == null)
                             {
                                 throw new ApiException("Response was null which was not expected.", status_, objectResponse_.Text, headers_, null);
@@ -14015,90 +14189,6 @@ namespace VideoPlatform.Client.Generated
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class AdministrationPageOfAdministrationAuditDto
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("items")]
-        [System.ComponentModel.DataAnnotations.Required]
-        public System.Collections.Generic.ICollection<AdministrationAuditDto> Items { get; set; } = new System.Collections.ObjectModel.Collection<AdministrationAuditDto>();
-
-        [System.Text.Json.Serialization.JsonPropertyName("total")]
-        public long Total { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("page")]
-        public int Page { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("pageSize")]
-        public int PageSize { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class AdministrationPageOfAdministrationSessionDto
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("items")]
-        [System.ComponentModel.DataAnnotations.Required]
-        public System.Collections.Generic.ICollection<AdministrationSessionDto> Items { get; set; } = new System.Collections.ObjectModel.Collection<AdministrationSessionDto>();
-
-        [System.Text.Json.Serialization.JsonPropertyName("total")]
-        public long Total { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("page")]
-        public int Page { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("pageSize")]
-        public int PageSize { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class AdministrationPageOfUserDto
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("items")]
-        [System.ComponentModel.DataAnnotations.Required]
-        public System.Collections.Generic.ICollection<UserDto> Items { get; set; } = new System.Collections.ObjectModel.Collection<UserDto>();
-
-        [System.Text.Json.Serialization.JsonPropertyName("total")]
-        public long Total { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("page")]
-        public int Page { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("pageSize")]
-        public int PageSize { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AdministrationRoleDto
     {
 
@@ -14482,8 +14572,63 @@ namespace VideoPlatform.Client.Generated
         [System.Text.Json.Serialization.JsonPropertyName("codec")]
         public string? Codec { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("ip")]
+        public string? Ip { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("username")]
+        public string? Username { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("hasPassword")]
+        public bool? HasPassword { get; set; } = false;
+
+        [System.Text.Json.Serialization.JsonPropertyName("remark")]
+        public string? Remark { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("deviceModel")]
+        public string? DeviceModel { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("deviceHost")]
+        public string? DeviceHost { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("devicePort")]
+        public int? DevicePort { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("deviceSerial")]
+        public string? DeviceSerial { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("pluginId")]
+        public string? PluginId { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("pluginName")]
+        public string? PluginName { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("firmwareVersion")]
+        public string? FirmwareVersion { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("sortOrder")]
-        public int SortOrder { get; set; } = default!;
+        public int? SortOrder { get; set; } = 0;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ChannelSortRequest
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("unitId")]
+        public long UnitId { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("channelIds")]
+        [System.ComponentModel.DataAnnotations.Required]
+        public System.Collections.Generic.ICollection<long> ChannelIds { get; set; } = new System.Collections.ObjectModel.Collection<long>();
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -14505,6 +14650,21 @@ namespace VideoPlatform.Client.Generated
 
         [System.Text.Json.Serialization.JsonPropertyName("unitId")]
         public long? UnitId { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("ip")]
+        public string? Ip { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("username")]
+        public string? Username { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("password")]
+        public string? Password { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("remark")]
+        public string? Remark { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("clearPassword")]
+        public bool? ClearPassword { get; set; } = false;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -14709,6 +14869,43 @@ namespace VideoPlatform.Client.Generated
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class DiskInfoDto
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        [System.ComponentModel.DataAnnotations.Required(AllowEmptyStrings = true)]
+        public string Name { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("label")]
+        public string? Label { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("totalBytes")]
+        public long? TotalBytes { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("freeBytes")]
+        public long? FreeBytes { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("usedBytes")]
+        public long? UsedBytes { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("usedPercent")]
+        public double? UsedPercent { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("isDataPath")]
+        public bool IsDataPath { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class ErrorResponse
     {
 
@@ -14848,6 +15045,44 @@ namespace VideoPlatform.Client.Generated
         [System.Text.Json.Serialization.JsonPropertyName("channelIds")]
         [System.ComponentModel.DataAnnotations.Required]
         public System.Collections.Generic.ICollection<long> ChannelIds { get; set; } = new System.Collections.ObjectModel.Collection<long>();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class HostInfoDto
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("osDescription")]
+        [System.ComponentModel.DataAnnotations.Required(AllowEmptyStrings = true)]
+        public string OsDescription { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("osArchitecture")]
+        [System.ComponentModel.DataAnnotations.Required(AllowEmptyStrings = true)]
+        public string OsArchitecture { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("framework")]
+        [System.ComponentModel.DataAnnotations.Required(AllowEmptyStrings = true)]
+        public string Framework { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("machineName")]
+        [System.ComponentModel.DataAnnotations.Required(AllowEmptyStrings = true)]
+        public string MachineName { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("systemUptimeSeconds")]
+        public long SystemUptimeSeconds { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("serverTime")]
+        [System.ComponentModel.DataAnnotations.Required(AllowEmptyStrings = true)]
+        public System.DateTimeOffset ServerTime { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -15074,7 +15309,7 @@ namespace VideoPlatform.Client.Generated
         public string? ClientType { get; set; } = "web";
 
         [System.Text.Json.Serialization.JsonPropertyName("clientVersion")]
-        public string? ClientVersion { get; set; } = "2.0.0";
+        public string? ClientVersion { get; set; } = "2.1.6";
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -15099,6 +15334,80 @@ namespace VideoPlatform.Client.Generated
 
         [System.Text.Json.Serialization.JsonPropertyName("transcodes")]
         public long Transcodes { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class NetworkInterfaceDto
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("name")]
+        [System.ComponentModel.DataAnnotations.Required(AllowEmptyStrings = true)]
+        public string Name { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("description")]
+        [System.ComponentModel.DataAnnotations.Required(AllowEmptyStrings = true)]
+        public string Description { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("type")]
+        [System.ComponentModel.DataAnnotations.Required(AllowEmptyStrings = true)]
+        public string Type { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("status")]
+        [System.ComponentModel.DataAnnotations.Required(AllowEmptyStrings = true)]
+        public string Status { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("speed")]
+        public long Speed { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("bytesReceived")]
+        public long BytesReceived { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("bytesSent")]
+        public long BytesSent { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("ipAddress")]
+        public string? IpAddress { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class NetworkMetricsDto
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("rxBytesPerSecond")]
+        public double RxBytesPerSecond { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("txBytesPerSecond")]
+        public double TxBytesPerSecond { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("totalBytesReceived")]
+        public long TotalBytesReceived { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("totalBytesSent")]
+        public long TotalBytesSent { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("interfaces")]
+        [System.ComponentModel.DataAnnotations.Required]
+        public System.Collections.Generic.ICollection<NetworkInterfaceDto> Interfaces { get; set; } = new System.Collections.ObjectModel.Collection<NetworkInterfaceDto>();
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -15341,6 +15650,90 @@ namespace VideoPlatform.Client.Generated
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PagedResponseOfAdministrationAuditDto
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        [System.ComponentModel.DataAnnotations.Required]
+        public System.Collections.Generic.ICollection<AdministrationAuditDto> Items { get; set; } = new System.Collections.ObjectModel.Collection<AdministrationAuditDto>();
+
+        [System.Text.Json.Serialization.JsonPropertyName("total")]
+        public long Total { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("page")]
+        public int Page { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("pageSize")]
+        public int PageSize { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PagedResponseOfAdministrationSessionDto
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        [System.ComponentModel.DataAnnotations.Required]
+        public System.Collections.Generic.ICollection<AdministrationSessionDto> Items { get; set; } = new System.Collections.ObjectModel.Collection<AdministrationSessionDto>();
+
+        [System.Text.Json.Serialization.JsonPropertyName("total")]
+        public long Total { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("page")]
+        public int Page { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("pageSize")]
+        public int PageSize { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class PagedResponseOfUserDto
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("items")]
+        [System.ComponentModel.DataAnnotations.Required]
+        public System.Collections.Generic.ICollection<UserDto> Items { get; set; } = new System.Collections.ObjectModel.Collection<UserDto>();
+
+        [System.Text.Json.Serialization.JsonPropertyName("total")]
+        public long Total { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("page")]
+        public int Page { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("pageSize")]
+        public int PageSize { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class PasswordRequest
     {
 
@@ -15410,7 +15803,7 @@ namespace VideoPlatform.Client.Generated
     {
 
         [System.Text.Json.Serialization.JsonPropertyName("livePerUser")]
-        public int? LivePerUser { get; set; } = 16;
+        public int? LivePerUser { get; set; } = 25;
 
         [System.Text.Json.Serialization.JsonPropertyName("playbackPerUser")]
         public int? PlaybackPerUser { get; set; } = 4;
@@ -15952,6 +16345,45 @@ namespace VideoPlatform.Client.Generated
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ServerPerformanceDto
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("cpuCores")]
+        public int CpuCores { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("processCpuPercent")]
+        public double? ProcessCpuPercent { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("processThreads")]
+        public int ProcessThreads { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("processWorkingSetBytes")]
+        public long ProcessWorkingSetBytes { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("processPrivateMemoryBytes")]
+        public long ProcessPrivateMemoryBytes { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("gcHeapBytes")]
+        public long? GcHeapBytes { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("swapTotalBytes")]
+        public long? SwapTotalBytes { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("swapUsedBytes")]
+        public long? SwapUsedBytes { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class ServiceHealthDto
     {
 
@@ -16064,6 +16496,18 @@ namespace VideoPlatform.Client.Generated
         [System.Text.Json.Serialization.JsonPropertyName("version")]
         [System.ComponentModel.DataAnnotations.Required(AllowEmptyStrings = true)]
         public string Version { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("network")]
+        public NetworkMetricsDto? Network { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("performance")]
+        public ServerPerformanceDto? Performance { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("disks")]
+        public System.Collections.Generic.ICollection<DiskInfoDto>? Disks { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("host")]
+        public HostInfoDto? Host { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
