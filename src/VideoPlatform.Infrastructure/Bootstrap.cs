@@ -28,6 +28,8 @@ public static class Bootstrap
         services.AddSingleton<SessionStore>();
         services.AddSingleton<ISettingsStore, SettingsStore>();
         services.AddHttpClient<IDeviceAdapter, DeviceAdapter>(client => client.Timeout = TimeSpan.FromSeconds(45));
+        // 类型化适配器端口：薄外观，复用 IDeviceAdapter 的路由与错误语义（见 Adapter/HttpCameraAdapter.cs）。
+        services.AddSingleton<Adapter.ICameraAdapter, Adapter.HttpCameraAdapter>();
         services.AddHttpClient("zlm", client => client.Timeout = TimeSpan.FromSeconds(10));
         services.AddSingleton<Pon.EsightPonClient>();
         services.AddSingleton<Pon.PonService>();
