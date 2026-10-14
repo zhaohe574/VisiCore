@@ -69,7 +69,7 @@ public sealed class FailureAndRaceTests
         await h.AddMediaAsync(2, 21);
         await h.Db.ExecuteAsync("update media_sessions set expires_at=now()-interval '1 second'");
         h.Adapter.Handler = (method, path, body, ct) => throw new PlatformException(503, "test.down", "模拟设备适配器失败。");
-        var job = new MediaMaintenanceJob(h.Db, h.Services.GetRequiredService<MediaService>(), h.Adapter,
+        var job = new MediaMaintenanceJob(h.Db, h.Services.GetRequiredService<MediaService>(), h.CameraAdapter,
             h.Services.GetRequiredService<JobLocks>(), h.Services.GetRequiredService<ResourceRetries>(), new WorkerOptions { BatchSize = 1 },
             h.Services.GetRequiredService<JobHealth>(), h.Clock);
         await job.RunAsync(default);

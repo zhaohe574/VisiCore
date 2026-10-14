@@ -1,10 +1,11 @@
 using System.Text.Json.Nodes;
 using VideoPlatform.Application;
 using VideoPlatform.Domain;
+using VideoPlatform.Infrastructure.Adapter;
 
 namespace VideoPlatform.Infrastructure.Jobs;
 
-public sealed class MediaMaintenanceJob(Database db, MediaService media, IDeviceAdapter adapter, JobLocks locks,
+public sealed class MediaMaintenanceJob(Database db, MediaService media, ICameraAdapter adapter, JobLocks locks,
     ResourceRetries retries, WorkerOptions options, JobHealth health, TimeProvider clock)
 {
     private static readonly string MediaAllowed = JobAuthorization.ForRow("m", "case when m.kind='live' then 'live.view' else 'playback.view' end");
@@ -58,7 +59,7 @@ public sealed class MediaMaintenanceJob(Database db, MediaService media, IDevice
         await using var held = await locks.TryAcquireAsync("inventory", "all", ct);
         if (held is null) return;
         var snapshotStarted = clock.GetUtcNow();
-        var inventory = AdapterInventory.Parse(await adapter.SendAsync(HttpMethod.Get, "/internal/sessions", ct: ct));
+        var inventory = await adapter.SessionsAsync(ct);
         var failures = 0;
         foreach (var resource in inventory.Resources)
         {
@@ -70,7 +71,18 @@ public sealed class MediaMaintenanceJob(Database db, MediaService media, IDevice
             if (keep || resource.Kind == "exports" && resource.State is "completed" or "failed" or "cancelled") continue;
             if (!await retries.RunAsync($"orphan:{resource.Kind}:{resource.DeviceId}:{resource.Id}", async bounded =>
             {
-                try { await adapter.SendAsync(HttpMethod.Delete, $"/internal/devices/{resource.DeviceId}/{resource.Kind}/{resource.Id}", ct: bounded); }
+                try
+                {
+                    // 按资源种类分派到类型化停止方法（AdapterInventory 的 Kind 取自适配器，
+                    // 只会是 live/playback/exports；未知种类按 live 处理以保持与旧通用 DELETE 等价的清理意图）。
+                    Task stop = resource.Kind switch
+                    {
+                        "playback" => adapter.StopPlaybackAsync(resource.DeviceId, resource.Id, bounded),
+                        "exports" => adapter.CancelExportAsync(resource.DeviceId, resource.Id, bounded),
+                        _ => adapter.StopLiveAsync(resource.DeviceId, resource.Id, bounded)
+                    };
+                    await stop;
+                }
                 catch (PlatformException ex) when (ex.Status == 404) { }
             }, options.RequestTimeout, ct)) failures++;
         }

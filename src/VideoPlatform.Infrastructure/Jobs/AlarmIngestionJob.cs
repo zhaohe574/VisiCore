@@ -1,9 +1,10 @@
 using Microsoft.Extensions.Logging;
 using VideoPlatform.Application;
+using VideoPlatform.Infrastructure.Adapter;
 
 namespace VideoPlatform.Infrastructure.Jobs;
 
-public sealed class AlarmIngestionJob(Database db, IDeviceAdapter adapter, JobLocks locks, ResourceRetries retries,
+public sealed class AlarmIngestionJob(Database db, ICameraAdapter adapter, JobLocks locks, ResourceRetries retries,
     WorkerOptions options, TimeProvider clock, JobHealth health, ILogger<AlarmIngestionJob> logger)
 {
     public async Task RunAsync(CancellationToken ct)
@@ -25,8 +26,7 @@ public sealed class AlarmIngestionJob(Database db, IDeviceAdapter adapter, JobLo
         var checkpoint = await db.OneAsync("select cursor from adapter_checkpoints where device_id=@deviceId", new { deviceId }, ct);
         var previous = checkpoint.Text("cursor");
         if (string.IsNullOrEmpty(previous)) previous = "0:0";
-        var response = await adapter.SendAsync(HttpMethod.Get, $"/internal/devices/{deviceId}/events?after={Uri.EscapeDataString(previous)}&limit=100", ct: ct);
-        var batch = AdapterAlarmBatch.Parse(deviceId, previous, response, clock.GetUtcNow());
+        var batch = await adapter.EventsAsync(deviceId, previous, 100, clock.GetUtcNow(), ct);
         await db.TransactionAsync(async tx =>
         {
             await tx.ExecuteAsync("insert into adapter_checkpoints(device_id,cursor) values(@deviceId,'0:0') on conflict do nothing", new { deviceId }, ct);
@@ -73,7 +73,7 @@ public sealed class AlarmIngestionJob(Database db, IDeviceAdapter adapter, JobLo
         foreach (var item in batch.Items.Where(i => i.Warning is not null))
             logger.LogWarning("设备 {DeviceId} 的报警记录 {SourceId} 已持久化隔离：{Reason}", deviceId, item.SourceId, item.Warning);
         // 即使上一轮确认失败且本轮为空，仍重新确认已提交游标。
-        await adapter.SendAsync(HttpMethod.Post, $"/internal/devices/{deviceId}/events/ack", new { cursor = batch.NextCursor }, ct);
+        await adapter.AckEventsAsync(deviceId, batch.NextCursor, ct);
     }
 
     private static Task NotifyAsync(DbSession tx, long id, CancellationToken ct)

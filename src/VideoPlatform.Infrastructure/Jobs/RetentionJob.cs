@@ -1,10 +1,11 @@
 using Microsoft.Extensions.Logging;
 using VideoPlatform.Application;
 using VideoPlatform.Domain;
+using VideoPlatform.Infrastructure.Adapter;
 
 namespace VideoPlatform.Infrastructure.Jobs;
 
-public sealed class RetentionJob(Database db, ISettingsStore settings, IDeviceAdapter adapter, ExportFiles files,
+public sealed class RetentionJob(Database db, ISettingsStore settings, ICameraAdapter adapter, ExportFiles files,
     JobLocks locks, ResourceRetries retries, WorkerOptions options, JobHealth health, ILogger<RetentionJob> logger)
 {
     public async Task RunAsync(CancellationToken ct)
@@ -49,10 +50,10 @@ public sealed class RetentionJob(Database db, ISettingsStore settings, IDeviceAd
                     if (job is null) return false;
                     try
                     {
-                        var status = AdapterExportStatus.Parse(await adapter.SendAsync(HttpMethod.Get, $"/internal/devices/{job.Id("deviceId")}/exports/{id}", ct: token));
+                        var status = await adapter.GetExportAsync(job.Id("deviceId"), id, token);
                         if (status.State is "queued" or "running")
                         {
-                            await adapter.SendAsync(HttpMethod.Delete, $"/internal/devices/{job.Id("deviceId")}/exports/{id}", ct: token);
+                            await adapter.CancelExportAsync(job.Id("deviceId"), id, token);
                             throw new InvalidOperationException("导出任务仍在适配器运行，等待下一轮确认后清理。");
                         }
                     }

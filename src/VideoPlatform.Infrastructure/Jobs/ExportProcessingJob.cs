@@ -4,10 +4,11 @@ using Microsoft.Extensions.Logging;
 using VideoPlatform.Application;
 using VideoPlatform.Contracts;
 using VideoPlatform.Domain;
+using VideoPlatform.Infrastructure.Adapter;
 
 namespace VideoPlatform.Infrastructure.Jobs;
 
-public sealed class ExportProcessingJob(Database db, IDeviceAdapter adapter, ISettingsStore settings, JobLocks locks,
+public sealed class ExportProcessingJob(Database db, ICameraAdapter adapter, ISettingsStore settings, JobLocks locks,
     ExportFiles files, WorkerOptions options, TimeProvider clock, JobHealth health, ILogger<ExportProcessingJob> logger)
 {
     public const long SchedulingLock = 72002010;
@@ -143,10 +144,8 @@ public sealed class ExportProcessingJob(Database db, IDeviceAdapter adapter, ISe
                 var channel = await db.OneAsync("select device_channel from channels where id=@channelId and device_id=@deviceId", new { channelId = job.Id("channelId"), deviceId = job.Id("deviceId") }, bounded.Token);
                 if (channel is null) throw new InvalidDataException("导出通道已不存在。");
                 // GET 后仅对不存在的任务或明确用户重试进行 POST；jobId 在断线重试中保持不变。
-                status = AdapterExportStatus.Parse(await adapter.SendAsync(HttpMethod.Post, $"/internal/devices/{job.Id("deviceId")}/exports", new
-                {
-                    jobId = id, channel = (int)channel.Id("deviceChannel"), start = job.Time("startAt"), end = job.Time("endAt"), outputDirectory = directory
-                }, bounded.Token));
+                status = await adapter.StartExportAsync(job.Id("deviceId"), new ExportSpec(
+                    id, (int)channel.Id("deviceChannel"), job.Time("startAt"), job.Time("endAt"), directory), bounded.Token);
             }
             var latest = await ReadOwnedAsync(id, claimed, bounded.Token);
             if (latest is null || latest.Text("state") != "running" || !await StillAllowedAsync(id, job, bounded.Token))
@@ -190,7 +189,7 @@ public sealed class ExportProcessingJob(Database db, IDeviceAdapter adapter, ISe
 
     private async Task<AdapterExportStatus?> GetAsync(JsonObject job, CancellationToken ct)
     {
-        try { return AdapterExportStatus.Parse(await adapter.SendAsync(HttpMethod.Get, $"/internal/devices/{job.Id("deviceId")}/exports/{job.Text("id")}", ct: ct)); }
+        try { return await adapter.GetExportAsync(job.Id("deviceId"), Guid.Parse(job.Text("id")), ct); }
         catch (PlatformException ex) when (ex.Status == 404) { return null; }
     }
 
@@ -252,7 +251,7 @@ public sealed class ExportProcessingJob(Database db, IDeviceAdapter adapter, ISe
         if (current is null || current.Text("state") is not ("failed" or "cancelled")) return;
         try
         {
-            var response = AdapterExportStatus.Parse(await adapter.SendAsync(HttpMethod.Delete, $"/internal/devices/{job.Id("deviceId")}/exports/{job.Text("id")}", ct: ct));
+            var response = await adapter.CancelExportAsync(job.Id("deviceId"), Guid.Parse(job.Text("id")), ct);
             if (response.State is "queued" or "running") throw new InvalidOperationException("适配器尚未确认导出取消。");
         }
         catch (PlatformException ex) when (ex.Status == 404) { }

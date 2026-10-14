@@ -61,6 +61,9 @@ public sealed class DatabaseHarness : IAsyncDisposable
     public ServiceProvider Services { get; }
     public Database Db => Services.GetRequiredService<Database>();
     public FakeAdapter Adapter => Services.GetRequiredService<FakeAdapter>();
+    /// <summary>类型化适配器端口（生产为 HttpCameraAdapter，内部委托同一个 FakeAdapter）。
+    /// 作业类依赖此端口；FakeAdapter 的 Handler 覆盖与 Calls 记录仍然生效。</summary>
+    public VideoPlatform.Infrastructure.Adapter.ICameraAdapter CameraAdapter => Services.GetRequiredService<VideoPlatform.Infrastructure.Adapter.ICameraAdapter>();
     public WorkerOptions Options => Services.GetRequiredService<WorkerOptions>();
     public TestClock Clock => (TestClock)Services.GetRequiredService<TimeProvider>();
     public Guid AuthId { get; } = Guid.NewGuid();
