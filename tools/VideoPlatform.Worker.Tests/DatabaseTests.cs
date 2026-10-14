@@ -241,7 +241,7 @@ public sealed class DatabaseTests
         health.Set("alarms", "degraded", "模拟读取故障。");
         await health.BeatAsync(default);
         var row = await h.Db.OneAsync("select * from service_heartbeats where name=@name", new { name = "worker:" + h.Options.InstanceId });
-        Assert.Equal("2.1.6", row?["details"].Text("version"));
+        Assert.Equal("2.0.0", row?["details"].Text("version"));
         Assert.Equal("degraded", row?["details"]?["jobs"]?["alarms"].Text("state"));
     }
 }

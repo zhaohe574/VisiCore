@@ -21,7 +21,7 @@ public static class VideoMouseHook
     private const int WM_RBUTTONUP = 0x0205;
 
     public static event Action<Point>? MouseMoved;
-    public static Func<Point, bool>? IsOverFullscreenToolbar;
+    public static event Func<Point, bool>? FullscreenToolbarHitTest;
     private static Point _lastReportedPt;
     private static long _lastReportedTick;
     private static WeakReference<VideoTileView>? _currentHoveredTileRef;
@@ -173,30 +173,6 @@ public static class VideoMouseHook
             return;
         }
 
-        // 2. 检查主窗口状态：最小化或未显示时不响应
-        var mainWin = Application.Current?.MainWindow;
-        if (mainWin is null || !mainWin.IsVisible || mainWin.WindowState == WindowState.Minimized)
-        {
-            ClearHoveredTile();
-            return;
-        }
-
-        // 3. 检查鼠标是否在主窗口可视客户区内
-        try
-        {
-            var winPt = mainWin.PointFromScreen(screenPt);
-            if (winPt.X < 0 || winPt.X >= mainWin.ActualWidth || winPt.Y < 0 || winPt.Y >= mainWin.ActualHeight)
-            {
-                ClearHoveredTile();
-                return;
-            }
-        }
-        catch
-        {
-            ClearHoveredTile();
-            return;
-        }
-
         // 4. 查找鼠标落在哪一个【当前活跃】且【正在播放】的分屏窗格内
         VideoTileView? hoveredTile = null;
 
@@ -212,6 +188,7 @@ public static class VideoMouseHook
 
                 // 核心过滤：窗格必须处于可见状态、在当前分屏档位排布中活跃 (IsActive)、且正在播放
                 if (!tile.IsVisible || tile.ActualWidth <= 0 || tile.ActualHeight <= 0) continue;
+                if (Window.GetWindow(tile) is not { IsVisible: true } window || window.WindowState == WindowState.Minimized) continue;
                 if (tile.Tile is not { IsActive: true, IsPlaying: true }) continue;
 
                 Point localPt;
@@ -306,7 +283,7 @@ public static class VideoMouseHook
         var screenPt = new Point(hookStruct.pt.x, hookStruct.pt.y);
 
         // 若鼠标落在全屏悬浮工具栏或退出按钮上，放行以便点击底栏按钮与退出全屏
-        if (IsOverFullscreenToolbar?.Invoke(screenPt) == true) return false;
+        if (FullscreenToolbarHitTest?.GetInvocationList().Cast<Func<Point, bool>>().Any(test => test(screenPt)) == true) return false;
 
         VideoTileView? targetTile = null;
 

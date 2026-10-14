@@ -12,6 +12,7 @@ namespace VideoPlatform.Desktop.ViewModels;
 
 public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
 {
+    public Guid Id { get; private set; } = Guid.NewGuid();
     private readonly IPlatformApi _api;
     private readonly PtzService _ptz;
     private readonly IUserInteraction _dialogs;
@@ -34,6 +35,7 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
     public IReadOnlyDictionary<long, Channel> Channels => _channels;
     /// <summary>播放器工厂：设置页通过 IConfigurablePlayerFactory 套用硬解与网络缓存参数。</summary>
     public IPlayerFactory PlayerFactory { get; }
+    public ResourceCatalog Catalog { get; }
     /// <summary>
     /// 允许的分屏格数，必须与 database/v2/007_layout_presets.sql 的约束一致，
     /// 否则保存的布局会被服务端以 data.constraint 拒绝。
@@ -115,10 +117,11 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
         foreach (var p in wanted) LayoutPresets.Add(p);
     }
 
-    public WorkspaceViewModel(IPlatformApi api, IPlayerFactory players, PtzService ptz, IUiDispatcher dispatcher, IUserInteraction dialogs)
+    public WorkspaceViewModel(IPlatformApi api, IPlayerFactory players, PtzService ptz, IUiDispatcher dispatcher, IUserInteraction dialogs, ResourceCatalog? catalog = null)
     {
         _api = api; _ptz = ptz; _dialogs = dialogs; _dispatcher = dispatcher;
         PlayerFactory = players;
+        Catalog = catalog ?? new ResourceCatalog(api);
         for (var i = 0; i < 25; ++i) Tiles.Add(new(i, api, players, dispatcher));
         foreach (var tile in Tiles) tile.PreferSubStreamInGrid = _preferSubStreamInGrid;
         SelectedTile = Tiles[0];
@@ -126,7 +129,11 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
         CurrentPreset = DefaultPreset;
         SelectedLayoutPreset = DefaultPreset;
         UpdateVisibleTiles();
-        _ptz.Failed += message => _ = dispatcher.InvokeAsync(() => { Status = message; return Task.CompletedTask; });
+        _ptz.OwnerFailed += OnPtzFailed;
+    }
+    private void OnPtzFailed(Guid owner, string message)
+    {
+        if (owner == Id) _ = _dispatcher.InvokeAsync(() => { Status = message; return Task.CompletedTask; });
     }
     public async Task SetAccessAsync(User? user)
     {
@@ -157,154 +164,14 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
         _user = null;
         _channels.Clear(); Resources.Clear(); Recordings.Clear(); Layouts.Clear(); _favoriteIds.Clear();
         SelectedResource = null; SelectedLayout = null; TimelineSegments = []; Playhead = null;
+        _liveState = _playbackState = null;
+        _awaitingRestore = false;
+        _lastOrganization = null;
+        TimelineTracks = []; TimelineClipStart = TimelineClipEnd = null;
+        SelectedRecording = null;
+        RecordingDate = DateTime.Today; StartTime = "00:00:00"; EndTime = "23:59:59";
+        Search = ""; FavoritesOnly = false; IsPlayback = false;
     }
-    public async Task RefreshAsync()
-    {
-        await _refreshGate.WaitAsync();
-        var generation = _generation;
-        try
-        {
-            if (_user is null) return;
-            var channels = new List<Channel>();
-            for (var page = 1; ; ++page)
-            {
-                var result = await _api.GetAsync<Page<Channel>>($"channels?page={page}&pageSize=200");
-                if (result is null || result.Items.Length == 0) break;
-                channels.AddRange(result.Items);
-                if (channels.Count >= result.Total) break;
-            }
-            Channel[] favorites = [];
-            try { favorites = await _api.GetAsync<Channel[]>("favorites") ?? []; }
-            catch (Exception ex) { ClientFiles.Log($"读取收藏夹列表失败，降级为空：{ex.Message}"); }
-            var layouts = await _api.GetAsync<LayoutDto[]>("layouts") ?? [];
-            Organization? organization = null;
-            try { organization = await _api.GetAsync<Organization>("organization"); }
-            catch (PlatformException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Forbidden) { }
-            _lastOrganization = organization;
-            if (generation != _generation) return;
-            var selectedId = SelectedResource?.Channel?.Id;
-            var checkedIds = CheckedChannels().Select(c => c.Id).ToHashSet();
-            if (channels.Count > 0)
-            {
-                // 通道集合与在线状态都未变化时保留现有节点实例，避免每 60 秒重建整棵树造成容器重排与闪烁。
-                var changed = channels.Count != _channels.Count || channels.Any(channel => !_channels.TryGetValue(channel.Id, out var existing)
-                    || existing.Online != channel.Online || existing.Alias != channel.Alias || existing.PtzCapable != channel.PtzCapable
-                    || existing.Name != channel.Name || existing.UnitId != channel.UnitId || existing.DeviceName != channel.DeviceName);
-                if (changed)
-                {
-                    foreach (var channel in channels) _channels[channel.Id] = channel;
-                    foreach (var stale in _channels.Keys.Where(id => channels.All(channel => channel.Id != id)).ToArray()) _channels.Remove(stale);
-                }
-                _favoriteIds.Clear(); _favoriteIds.UnionWith(favorites.Select(c => c.Id).Where(_channels.ContainsKey));
-                if (changed) BuildResources(channels, organization, checkedIds);
-                SelectedResource = Resources.SelectMany(n => n.Flatten()).FirstOrDefault(n => n.Channel?.Id == selectedId);
-                var layoutId = SelectedLayout?.Id;
-                Layouts.Clear(); foreach (var layout in layouts) Layouts.Add(layout);
-                SelectedLayout = Layouts.FirstOrDefault(l => l.Id == layoutId);
-                if (changed)
-                {
-                    foreach (var tile in Tiles.Where(t => t.Channel is not null && !_channels.ContainsKey(t.Channel.Id))) await tile.StopAsync();
-                    Filter();
-                }
-                OnPropertyChanged(nameof(OnlineStatsLabel));
-            }
-        }
-        finally { _refreshGate.Release(); }
-    }
-    /// <summary>
-    /// 构建资源树。只保留组织架构模式（车间 → 区域 → 单元），未关联组织的通道归入“未分配组织”节点。
-    /// </summary>
-    private void BuildResources(IEnumerable<Channel> channels, Organization? organization, HashSet<long> checkedIds)
-    {
-        Resources.Clear();
-        var channelList = channels.ToList();
-
-        var units = organization?.Units.ToDictionary(u => u.Id) ?? [];
-        var areas = organization?.Areas.ToDictionary(a => a.Id) ?? [];
-        var workshops = organization?.Workshops.ToDictionary(w => w.Id) ?? [];
-
-        var assigned = channelList.Where(c => c.UnitId is not null && units.ContainsKey(c.UnitId.Value)).ToList();
-        var unassigned = channelList.Where(c => c.UnitId is null || !units.ContainsKey(c.UnitId.Value)).ToList();
-
-        var workshopNodes = new Dictionary<long, ResourceNode>();
-        var areaNodes = new Dictionary<long, ResourceNode>();
-        var unitNodes = new Dictionary<long, ResourceNode>();
-
-        var unitOrder = organization?.Units.Select((u, i) => (u.Id, i)).ToDictionary(x => x.Id, x => x.i) ?? [];
-        foreach (var channel in assigned.OrderBy(c => unitOrder.GetValueOrDefault(c.UnitId!.Value)).ThenBy(c => c.SortOrder).ThenBy(c => c.DeviceChannel))
-        {
-            var unit = units[channel.UnitId!.Value];
-            if (!unitNodes.TryGetValue(unit.Id, out var unitNode))
-            {
-                unitNode = new ResourceNode(unit.Name);
-                unitNodes[unit.Id] = unitNode;
-
-                if (unit.ParentId is { } parentId && areas.TryGetValue(parentId, out var area))
-                {
-                    if (!areaNodes.TryGetValue(area.Id, out var areaNode))
-                    {
-                        areaNode = new ResourceNode(area.Name);
-                        areaNodes[area.Id] = areaNode;
-
-                        if (area.ParentId is { } wsId && workshops.TryGetValue(wsId, out var ws))
-                        {
-                            if (!workshopNodes.TryGetValue(ws.Id, out var wsNode))
-                            {
-                                wsNode = new ResourceNode(ws.Name);
-                                workshopNodes[ws.Id] = wsNode;
-                                Resources.Add(wsNode);
-                            }
-                            wsNode.Children.Add(areaNode);
-                        }
-                        else
-                        {
-                            Resources.Add(areaNode);
-                        }
-                    }
-                    areaNode.Children.Add(unitNode);
-                }
-                else if (unit.ParentId is { } wsParentId && workshops.TryGetValue(wsParentId, out var directWs))
-                {
-                    if (!workshopNodes.TryGetValue(directWs.Id, out var wsNode))
-                    {
-                        wsNode = new ResourceNode(directWs.Name);
-                        workshopNodes[directWs.Id] = wsNode;
-                        Resources.Add(wsNode);
-                    }
-                    wsNode.Children.Add(unitNode);
-                }
-                else
-                {
-                    Resources.Add(unitNode);
-                }
-            }
-            unitNode.Children.Add(CreateChannelNode(channel, checkedIds));
-        }
-
-        if (unassigned.Count > 0)
-        {
-            var unassignedNode = new ResourceNode("未分配组织");
-            foreach (var channel in unassigned.OrderBy(c => c.DeviceName).ThenBy(c => c.DeviceChannel))
-                unassignedNode.Children.Add(CreateChannelNode(channel, checkedIds));
-            Resources.Add(unassignedNode);
-        }
-    }
-
-    private static ResourceNode CreateChannelNode(Channel channel, HashSet<long> checkedIds) =>
-        new(channel.DisplayName, channel) { IsChecked = checkedIds.Contains(channel.Id), IsExpanded = false };
-    public string OnlineStatsLabel => $"在线 {_channels.Values.Count(c => c.Online)}/{_channels.Count}";
-    private IEnumerable<Channel> CheckedChannels() => Resources.SelectMany(n => n.Flatten()).Where(n => n.IsChecked && n.Channel is not null).Select(n => n.Channel!);
-    partial void OnSearchChanged(string value) => Filter();
-    partial void OnFavoritesOnlyChanged(bool value) => Filter();
-    [RelayCommand] private void ClearSearch() => Search = "";
-    [RelayCommand] private void ExpandAllResources() { foreach (var root in Resources) root.SetExpandedRecursive(true); }
-    [RelayCommand] private void CollapseAllResources() { foreach (var root in Resources) root.SetExpandedRecursive(false); }
-    partial void OnSelectedLayoutChanged(LayoutDto? value)
-    {
-        if (value is null) return;
-        LayoutName = value.Name; SaveAsPatrol = value.Kind == "patrol"; ShareLayout = value.Shared; IntervalSeconds = value.IntervalSeconds;
-    }
-    private void Filter() { foreach (var node in Resources) node.Filter(Search.Trim(), FavoritesOnly ? _favoriteIds : null); }
     partial void OnSelectedTileChanged(VideoTileViewModel? oldValue, VideoTileViewModel? newValue)
     {
         if (oldValue is not null) { oldValue.IsSelected = false; oldValue.PropertyChanged -= TileChanged; }
@@ -600,24 +467,10 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
     public async Task SetModeAsync(bool playback)
     {
         if (IsPlayback == playback) return;
+        SaveCurrentMode();
         await StopAllCoreAsync();
         IsPlayback = playback;
-        Recordings.Clear();
-        TimelineSegments = [];
-        TimelineTracks = [];
-        TimelineClipStart = null;
-        TimelineClipEnd = null;
-    }
-    public (DateTimeOffset Start, DateTimeOffset End) ReadRange()
-    {
-        if (!TimeSpan.TryParse(StartTime, out var start) || start < TimeSpan.Zero || start >= TimeSpan.FromDays(1))
-            start = TimeSpan.Zero;
-        var date = RecordingDate.Date;
-        var from = new DateTimeOffset(date.Add(start));
-        var to = new DateTimeOffset(date.AddDays(1).AddSeconds(-1)); // 当天 23:59:59
-        RangeStart = new DateTimeOffset(date); // 当天 00:00:00（时间轴起点）
-        RangeEnd = new DateTimeOffset(date.AddDays(1)); // 当天 24:00:00（时间轴终点，整整24小时）
-        return (from, to);
+        await RestoreModeAsync(playback ? _playbackState : _liveState, startPlayback: !_awaitingRestore);
     }
     public async Task OpenChannelCoreAsync(Channel channel, VideoTileViewModel tile)
     {
@@ -638,6 +491,7 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
         // 打开摄像头时默认打开子码流（若设备不支持子码流则自动安全回退为主码流）；双击放大画面时自动切换为主码流
         var streamType = IsPlayback ? tile.DesiredStreamType : tile.DefaultSubStreamType(channel);
         await tile.StartAsync(channel, IsPlayback, streamType, range.Item1, range.Item2);
+        _awaitingRestore = false;
     }
 
     /// <summary>
@@ -751,8 +605,6 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
         }
         await StopPtzAsync();
         await Task.WhenAll(Tiles.Select(t => t.StopAsync()));
-        try { await _api.SendAsync(HttpMethod.Delete, IsPlayback ? "playback-sessions?all=true" : "live-sessions?all=true"); }
-        catch { }
     }
     public async Task PurgeOrphanSessionsAsync()
     {
@@ -762,14 +614,14 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
             try { await _api.SendAsync(HttpMethod.Delete, $"{path}/{id}"); }
             catch (Exception ex) { ClientFiles.Log($"清理历史孤儿会话 {id} 失败：{ex.Message}"); }
         }
-        try
-        {
-            await _api.SendAsync(HttpMethod.Delete, "live-sessions?all=true");
-            await _api.SendAsync(HttpMethod.Delete, "playback-sessions?all=true");
-        }
-        catch { }
     }
-    public async ValueTask DisposeAsync() => await StopAllCoreAsync();
+    public async ValueTask DisposeAsync()
+    {
+        _ptz.OwnerFailed -= OnPtzFailed;
+        _toastCts?.Cancel();
+        _toastCts?.Dispose();
+        await ClearAsync();
+    }
     [RelayCommand] private Task ApplyStreamAsync() => RunAsync(async () =>
     {
         if (IsPlayback) return;
@@ -782,141 +634,6 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
             Status = $"窗口 {tile.Number} 已切换为{(targetStream == 1 ? "主码流" : "子码流")}。";
         }
     });
-    [RelayCommand] private Task SearchRecordingsAsync() => RunAsync(async () =>
-    {
-        if (!CanPlayback) throw new InvalidOperationException("当前账号没有回放权限。");
-        var primaryChannel = SelectedResource?.Channel ?? SelectedTile?.Channel;
-        var checkedChannels = CheckedChannels().ToArray();
-        var candidateChannels = checkedChannels.Length > 0
-            ? checkedChannels
-            : (primaryChannel is not null ? [primaryChannel] : Tiles.Where(t => t.Channel is not null).Select(t => t.Channel!).Distinct().ToArray());
-
-        if (candidateChannels.Length == 0) throw new InvalidOperationException("请选择录像通道。");
-        var range = ReadRange();
-
-        var tracks = new List<TimelineTrack>();
-        Recording[]? primaryRecordings = null;
-
-        foreach (var ch in candidateChannels.Take(4))
-        {
-            try
-            {
-                var recs = await _api.PostAsync<Recording[]>("recordings/search", new RecordingRequest(ch.Id, range.Start, range.End));
-                var segs = recs.Select(r => new RecordingSegment(r.Start, r.End)).ToArray();
-                var isActive = (primaryChannel is not null && ch.Id == primaryChannel.Id) || (SelectedTile?.Channel?.Id == ch.Id);
-                tracks.Add(new TimelineTrack(ch.DisplayName, segs, isActive));
-                if (primaryRecordings is null || ch.Id == primaryChannel?.Id)
-                {
-                    primaryRecordings = recs;
-                }
-            }
-            catch (Exception ex)
-            {
-                ClientFiles.Log($"查询通道 {ch.DisplayName} 录像失败：{ex.Message}");
-            }
-        }
-
-        Recordings.Clear();
-        if (primaryRecordings is not null)
-        {
-            foreach (var recording in primaryRecordings) Recordings.Add(recording);
-            TimelineSegments = primaryRecordings.Select(r => new RecordingSegment(r.Start, r.End)).ToArray();
-        }
-        else
-        {
-            TimelineSegments = [];
-        }
-
-        TimelineTracks = [.. tracks];
-        Status = $"已找到 {Recordings.Count} 段录像（共检索 {tracks.Count} 个通道）。";
-    });
-    [RelayCommand] private Task PlayRecordingAsync() => RunAsync(async () =>
-    {
-        if (SelectedRecording is null || !CanPlayback) return;
-        var channel = SelectedResource?.Channel ?? SelectedTile?.Channel ?? throw new InvalidOperationException("请选择录像通道。");
-        var target = SelectedTile ?? Tiles[0];
-        await target.StartAsync(channel, true, target.DesiredStreamType, SelectedRecording.Start, SelectedRecording.End);
-        Playhead = SelectedRecording.Start;
-    });
-    [RelayCommand] private Task PlaybackActionAsync(string? action) => RunAsync(() => ControlAsync(new PlaybackControl(action ?? "pause")));
-    [RelayCommand] private Task ApplySpeedAsync() => RunAsync(() => ControlAsync(new PlaybackControl("speed", Speed: PlaybackSpeed)));
-    public Task SeekAsync(DateTimeOffset position) => RunAsync(() => ControlAsync(new PlaybackControl("seek", position)));
-
-    [RelayCommand]
-    private Task StepBackwardAsync() => RunAsync(async () =>
-    {
-        var current = Playhead ?? RangeStart;
-        var target = current.AddSeconds(-10);
-        if (target < RangeStart) target = RangeStart;
-        await SeekAsync(target);
-    });
-
-    [RelayCommand]
-    private Task StepForwardAsync() => RunAsync(async () =>
-    {
-        var current = Playhead ?? RangeStart;
-        var target = current.AddSeconds(10);
-        if (target > RangeEnd) target = RangeEnd;
-        await SeekAsync(target);
-    });
-
-    [RelayCommand]
-    private Task FrameStepAsync() => RunAsync(async () =>
-    {
-        await ControlAsync(new PlaybackControl("pause"));
-        var tiles = UnifiedControl ? Tiles.Where(t => t.IsPlayback && t.SessionId is not null).ToArray() : SelectedTile is { } selected ? [selected] : Array.Empty<VideoTileViewModel>();
-        foreach (var tile in tiles) tile.StepFrame();
-    });
-
-    [RelayCommand]
-    private void ApplyQuickPreset(string? preset)
-    {
-        switch (preset)
-        {
-            case "today":
-                RecordingDate = DateTime.Today;
-                StartTime = "00:00:00";
-                EndTime = "23:59:59";
-                break;
-            case "yesterday":
-                RecordingDate = DateTime.Today.AddDays(-1);
-                StartTime = "00:00:00";
-                EndTime = "23:59:59";
-                break;
-        }
-        ReadRange();
-        _ = SearchRecordingsAsync();
-    }
-
-    [RelayCommand]
-    private Task ExportTimelineClipAsync() => RunAsync(async () =>
-    {
-        if (!CanExport) throw new InvalidOperationException("当前账号没有录像导出权限。");
-        var channel = SelectedResource?.Channel ?? SelectedTile?.Channel ?? throw new InvalidOperationException("请选择录像通道。");
-        var (start, end) = HasTimelineClip ? (TimelineClipStart!.Value, TimelineClipEnd!.Value) : ReadRange();
-        await _api.PostAsync<ExportJob>("exports", new ExportRequest(channel.Id, start, end));
-        Status = $"已提交 {channel.DisplayName} 录像导出任务（{start.LocalDateTime:MM-dd HH:mm:ss} ~ {end.LocalDateTime:HH:mm:ss}）。";
-        if (ExportCreated is not null) await ExportCreated();
-    });
-
-    public void SetTimelineClip(DateTimeOffset start, DateTimeOffset end)
-    {
-        TimelineClipStart = start;
-        TimelineClipEnd = end;
-    }
-
-    private async Task ControlAsync(PlaybackControl command)
-    {
-        if (!CanPlayback) throw new InvalidOperationException("当前账号没有回放权限。");
-        var tiles = UnifiedControl ? Tiles.Where(t => t.IsPlayback && t.SessionId is not null).ToArray() : SelectedTile is { } selected ? [selected] : Array.Empty<VideoTileViewModel>();
-        var errors = new List<string>();
-        foreach (var tile in tiles)
-        {
-            try { await tile.ControlAsync(command); }
-            catch (Exception ex) { errors.Add($"窗口 {tile.Number}：{ex.Message}"); }
-        }
-        if (errors.Count != 0) throw new InvalidOperationException(string.Join("；", errors));
-    }
     [RelayCommand] private Task ToggleFavoriteAsync() => RunAsync(async () =>
     {
         var channel = SelectedResource?.Channel ?? SelectedTile?.Channel ?? throw new InvalidOperationException("请选择通道。");
@@ -926,188 +643,17 @@ public sealed partial class WorkspaceViewModel : ViewModelBase, IAsyncDisposable
         _favoriteIds.Clear(); _favoriteIds.UnionWith(changed); Filter();
         Status = changed.Contains(channel.Id) ? "通道已加入收藏。" : "通道已移出收藏。";
     });
-    [RelayCommand] private Task SaveLayoutAsync() => SaveLayoutCoreAsync(false);
-    [RelayCommand] private Task UpdateLayoutAsync() => SaveLayoutCoreAsync(true);
-    private Task SaveLayoutCoreAsync(bool update) => RunAsync(async () =>
-    {
-        if (string.IsNullOrWhiteSpace(LayoutName)) throw new ArgumentException("请输入布局名称。");
-        if (IntervalSeconds is < 10 or > 300) throw new ArgumentException("轮巡停留时间必须在 10 至 300 秒之间。");
-        if (ShareLayout && !CanShareLayouts) throw new InvalidOperationException("当前账号无权发布共享轮巡。");
-        var slots = Tiles.Take(LayoutCount).Select(t => t.Channel?.Id).ToArray();
-        var ids = SaveAsPatrol ? CheckedChannels().Select(c => (long?)c.Id).Distinct().ToArray() : slots;
-        if (!ids.Any(id => id is > 0)) throw new InvalidOperationException("请先选择轮巡通道或打开视频窗口。");
-        if (SaveAsPatrol && ids.Any(id => id is null)) throw new InvalidOperationException("轮巡方案不能包含空窗口。");
-        var request = new LayoutRequest(LayoutName.Trim(), SaveAsPatrol ? "patrol" : "layout", ShareLayout, LayoutCount, IntervalSeconds, ids);
-        if (update)
-        {
-            if (SelectedLayout is null) throw new InvalidOperationException("请选择要更新的方案。");
-            await _api.SendAsync(HttpMethod.Put, $"layouts/{SelectedLayout.Id}", request);
-        }
-        else await _api.PostAsync<LayoutDto>("layouts", request);
-        await RefreshAsync(); Status = "布局已保存并同步至平台。";
-    });
-    [RelayCommand] private Task DeleteLayoutAsync() => RunAsync(async () =>
-    {
-        if (SelectedLayout is null) return;
-        if (!_dialogs.Confirm($"确定删除“{SelectedLayout.Name}”？")) return;
-        await _api.SendAsync(HttpMethod.Delete, $"layouts/{SelectedLayout.Id}"); await RefreshAsync();
-    });
-    /// <summary>iVMS-4200 主预览“新建视图”：把当前分屏窗口安排保存为新的视图方案。</summary>
-    [RelayCommand] private Task NewViewAsync() => RunAsync(async () =>
-    {
-        if (IsPlayback) throw new InvalidOperationException("请在主预览模式下新建视图。");
-        LayoutName = $"视图 {Layouts.Count(l => l.Kind == "layout") + 1}";
-        SaveAsPatrol = false; ShareLayout = false; SelectedLayout = null;
-        await SaveLayoutCoreAsync(false);
-        SelectedLayout = Layouts.FirstOrDefault(l => l.Kind == "layout" && l.Name == LayoutName);
-        Status = $"视图“{LayoutName}”已保存。";
-    });
-    /// <summary>iVMS-4200 主预览“保存视图”：更新当前选中的视图，或按当前名称另存为新的视图。</summary>
-    [RelayCommand] private Task SaveViewAsync() => RunAsync(async () =>
-    {
-        if (IsPlayback) throw new InvalidOperationException("请在主预览模式下保存视图。");
-        if (SelectedLayout is { Kind: "layout" } current)
-        {
-            SaveAsPatrol = false;
-            await SaveLayoutCoreAsync(true);
-            Status = $"视图“{current.Name}”已更新。";
-        }
-        else
-        {
-            if (string.IsNullOrWhiteSpace(LayoutName) || LayoutName == "我的值守布局") LayoutName = $"视图 {Layouts.Count(l => l.Kind == "layout") + 1}";
-            SaveAsPatrol = false; ShareLayout = false;
-            await SaveLayoutCoreAsync(false);
-            SelectedLayout = Layouts.FirstOrDefault(l => l.Kind == "layout" && l.Name == LayoutName);
-            Status = $"视图“{LayoutName}”已保存。";
-        }
-    });
-    /// <summary>iVMS-4200 主预览工具栏轮巡开关：按选中/首个轮巡方案启动，正在轮巡时停止。</summary>
-    [RelayCommand] private Task TogglePatrolAsync() => RunAsync(async () =>
-    {
-        if (IsPatrolling) { StopPatrol(); Status = "轮巡已停止。"; return; }
-        if (IsPlayback) throw new InvalidOperationException("请在主预览模式下启动轮巡。");
-        var patrol = SelectedLayout is { Kind: "patrol" } selected ? selected : Layouts.FirstOrDefault(l => l.Kind == "patrol");
-        if (patrol is null) throw new InvalidOperationException("没有可用的轮巡方案：请在“方案设置”中勾选“设为巡视轮巡”并保存。");
-        if (!CanLive) throw new InvalidOperationException("当前账号没有预览权限。");
-        SelectedLayout = patrol;
-        await ApplyLayoutCommand.ExecuteAsync(null);
-    });
-    [RelayCommand] private Task ApplyLayoutAsync() => RunAsync(async () =>
-    {
-        var layout = SelectedLayout ?? throw new InvalidOperationException("请选择布局或轮巡方案。");
-        if (!LayoutOptions.Contains(layout.Layout)) throw new InvalidOperationException("此布局的分屏数量无效。");
-        if (layout.Layout == 25 && !CanSplit25) throw new InvalidOperationException("当前账号未被分配 25 路分屏权限。");
-        await StopAllCoreAsync();
-        var preset = LayoutPreset.Find(AllPresets, layout.Layout.ToString());
-        if (preset is not null)
-        {
-            await ApplyLayoutCountAsync(preset.Count, preset.Columns, preset.Rows, preset);
-        }
-        else
-        {
-            var cols = (int)Math.Max(1, Math.Round(Math.Sqrt(layout.Layout)));
-            var rows = (int)Math.Ceiling((double)layout.Layout / cols);
-            await ApplyLayoutCountAsync(layout.Layout, cols, rows);
-        }
-        _ = ApplyLayoutTiersAsync();
-        if (layout.Kind == "patrol")
-        {
-            if (!CanLive) throw new InvalidOperationException("当前账号没有预览权限。");
-            IsPlayback = false; _patrol = layout; _patrolOffset = 0; IsPatrolling = true;
-            await AdvancePatrolAsync(DateTimeOffset.UtcNow);
-        }
-        else
-        {
-            var limit = Math.Min(layout.ChannelIds.Length, LayoutCount);
-            var generation = _generation;
-            var tasks = new List<Task>();
-            for (var i = 0; i < limit; ++i)
-            {
-                var channelId = layout.ChannelIds[i];
-                var tile = Tiles[i];
-                if (channelId is { } id && _channels.TryGetValue(id, out var channel) && channel.Online)
-                {
-                    tasks.Add(OpenChannelGatedAsync(channel, tile, generation));
-                }
-                else
-                {
-                    tile.StateLabel = channelId is null ? "空闲" : "通道离线或无权访问";
-                }
-            }
-            for (var i = limit; i < LayoutCount; ++i)
-            {
-                Tiles[i].StateLabel = "空闲";
-            }
-            if (tasks.Count > 0)
-            {
-                Status = $"正在同时加载 {tasks.Count} 路视频...";
-                await Task.WhenAll(tasks);
-                if (generation == _generation) Status = $"已加载 {tasks.Count} 路分屏视频。";
-            }
-        }
-    });
-    [RelayCommand] private void StopPatrol() { IsPatrolling = false; _patrol = null; }
-    private async Task AdvancePatrolAsync(DateTimeOffset now)
-    {
-        if (!await _patrolGate.WaitAsync(0)) return;
-        var generation = _generation;
-        try
-        {
-            var patrol = _patrol;
-            if (patrol is null || patrol.ChannelIds.Length == 0) { StopPatrol(); return; }
-            var tasks = new List<Task>();
-            for (var i = 0; i < LayoutCount && IsPatrolling && generation == _generation; ++i)
-            {
-                var id = patrol.ChannelIds[(_patrolOffset + i) % patrol.ChannelIds.Length];
-                var tile = Tiles[i];
-                if (id is { } channelId && _channels.TryGetValue(channelId, out var channel) && channel.Online)
-                {
-                    tasks.Add(OpenChannelGatedAsync(channel, tile, generation));
-                }
-                else
-                {
-                    tasks.Add(Task.Run(async () => { await tile.StopAsync(); tile.StateLabel = "通道离线或无权访问"; }));
-                }
-            }
-            if (tasks.Count > 0)
-            {
-                await Task.WhenAll(tasks);
-            }
-            _patrolOffset = (_patrolOffset + LayoutCount) % patrol.ChannelIds.Length;
-            _nextPatrol = DateTimeOffset.UtcNow.AddSeconds(Math.Clamp(patrol.IntervalSeconds, 10, 300));
-        }
-        finally { _patrolGate.Release(); }
-    }
-    [RelayCommand] private Task CreateExportAsync() => RunAsync(async () =>
-    {
-        if (!CanExport) throw new InvalidOperationException("当前账号没有录像导出权限。");
-        var channel = SelectedResource?.Channel ?? SelectedTile?.Channel ?? throw new InvalidOperationException("请选择录像通道。");
-        var range = ReadRange();
-        await _api.PostAsync<ExportJob>("exports", new ExportRequest(channel.Id, range.Start, range.End));
-        Status = "录像导出任务已提交。";
-        if (ExportCreated is not null) await ExportCreated();
-    });
-    /// <summary>把选中的录像段直接提交导出（iVMS-4200 回放检索面板的“导出”语义）。</summary>
-    [RelayCommand] private Task ExportRecordingAsync() => RunAsync(async () =>
-    {
-        if (!CanExport) throw new InvalidOperationException("当前账号没有录像导出权限。");
-        var recording = SelectedRecording ?? throw new InvalidOperationException("请先选择录像段。");
-        var channel = SelectedResource?.Channel ?? SelectedTile?.Channel ?? throw new InvalidOperationException("请选择录像通道。");
-        await _api.PostAsync<ExportJob>("exports", new ExportRequest(channel.Id, recording.Start, recording.End));
-        Status = $"录像段导出已提交：{recording.Label}";
-        if (ExportCreated is not null) await ExportCreated();
-    });
     public Task StartPtzAsync(string command) => RunAsync(async () =>
     {
         if (!CanPtz || SelectedTile?.Channel is not { PtzCapable: true } channel || IsPlayback) throw new InvalidOperationException("请选择有云台控制权限的实时通道。");
-        await _ptz.StartAsync(channel.Id, command, PtzSpeed);
+        await _ptz.StartAsync(channel.Id, command, PtzSpeed, Id);
     });
-    public Task StopPtzAsync() => _ptz.StopAsync();
+    public Task StopPtzAsync() => _ptz.StopAsync(Id);
     [RelayCommand] private Task StopPtzCommandAsync() => StopPtzAsync();
     [RelayCommand] private Task CallPresetAsync() => RunAsync(async () =>
     {
         if (!CanPtz || SelectedTile?.Channel is not { PtzCapable: true } channel) throw new InvalidOperationException("请选择支持云台的通道。");
-        await _ptz.PresetAsync(channel.Id, Preset);
+        await _ptz.PresetAsync(channel.Id, Preset, Id);
     });
     public async Task TickAsync()
     {

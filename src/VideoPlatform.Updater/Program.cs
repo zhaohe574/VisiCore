@@ -13,22 +13,41 @@ internal static class Program
 {
     private static readonly HttpClient Http = new(new SocketsHttpHandler
     {
+        UseProxy = false,
         AllowAutoRedirect = false,
         ConnectTimeout = TimeSpan.FromSeconds(15),
         ConnectCallback = async (context, token) =>
         {
             var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-            if (context.DnsEndPoint.Host.StartsWith("10.37."))
+            try
             {
-                var local = NetworkInterface.GetAllNetworkInterfaces()
-                    .Where(i => i.OperationalStatus == OperationalStatus.Up)
-                    .SelectMany(i => i.GetIPProperties().UnicastAddresses)
-                    .Select(a => a.Address)
-                    .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && a.ToString().StartsWith("10.37."));
-                if (local is not null) socket.Bind(new IPEndPoint(local, 0));
+                var isInternal = context.DnsEndPoint.Host.StartsWith("10.37.", StringComparison.OrdinalIgnoreCase);
+                if (!isInternal)
+                {
+                    try
+                    {
+                        var ips = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, token);
+                        isInternal = ips.Any(a => a.ToString().StartsWith("10.37."));
+                    }
+                    catch { }
+                }
+                if (isInternal)
+                {
+                    var local = NetworkInterface.GetAllNetworkInterfaces()
+                        .Where(i => i.OperationalStatus == OperationalStatus.Up)
+                        .SelectMany(i => i.GetIPProperties().UnicastAddresses)
+                        .Select(a => a.Address)
+                        .FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork && a.ToString().StartsWith("10.37."));
+                    if (local is not null) socket.Bind(new IPEndPoint(local, 0));
+                }
+                await socket.ConnectAsync(context.DnsEndPoint, token);
+                return new NetworkStream(socket, ownsSocket: true);
             }
-            await socket.ConnectAsync(context.DnsEndPoint, token);
-            return new NetworkStream(socket, ownsSocket: true);
+            catch
+            {
+                socket.Dispose();
+                throw;
+            }
         },
         SslOptions = new SslClientAuthenticationOptions
         {
@@ -102,7 +121,15 @@ internal static class Program
         Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
         var installerLog = Path.Combine(Path.GetDirectoryName(LogPath)!, $"msi-{DateTime.Now:yyyyMMdd-HHmmss}.log");
         var installerUi = options.Quiet ? "/quiet" : "/passive";
-        using var installer = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "msiexec.exe"), $"/i \"{cachedPackage}\" {installerUi} /norestart MSIRESTARTMANAGERCONTROL=Disable /L*v \"{installerLog}\"") { UseShellExecute = true });
+        var startInfo = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "msiexec.exe"), $"/i \"{cachedPackage}\" {installerUi} /norestart MSIRESTARTMANAGERCONTROL=Disable /L*v \"{installerLog}\"")
+        {
+            UseShellExecute = true
+        };
+        if (!options.Quiet && !IsAdministrator())
+        {
+            startInfo.Verb = "runas";
+        }
+        using var installer = Process.Start(startInfo);
         if (installer is null) throw new InvalidOperationException("无法启动 Windows Installer");
         await installer.WaitForExitAsync();
         if (!InstallSucceeded(installer.ExitCode)) throw new InvalidOperationException($"MSI 安装失败，退出码 {installer.ExitCode}，详细日志：{installerLog}");
@@ -115,6 +142,17 @@ internal static class Program
             try { Directory.Delete(directory, true); }
             catch (Exception ex) { Log($"清理临时安装包失败：{ex.Message}"); }
         }
+    }
+
+    private static bool IsAdministrator()
+    {
+        try
+        {
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            var principal = new System.Security.Principal.WindowsPrincipal(identity);
+            return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+        }
+        catch { return false; }
     }
 
     internal static bool InstallSucceeded(int exitCode) => UpdatePolicy.InstallSucceeded(exitCode);

@@ -399,8 +399,7 @@ public partial class VideoTileView : UserControl
     #endregion
 
     private WorkspaceViewModel? Workspace => (Tag as WorkspaceViewModel)
-        ?? (WorkspaceViewInstance?.DataContext as WorkspaceViewModel)
-        ?? (Application.Current?.MainWindow?.DataContext as ShellViewModel)?.Workspace;
+        ?? (WorkspaceViewInstance?.DataContext as WorkspaceViewModel);
 
     private WorkspaceView? WorkspaceViewInstance
     {

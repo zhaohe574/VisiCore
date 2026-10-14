@@ -30,33 +30,7 @@ public partial class App : Application
             args.Handled = true;
         };
         var services = new ServiceCollection();
-        services.AddSingleton(new HttpClient(new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
-            ConnectTimeout = TimeSpan.FromSeconds(10),
-            AllowAutoRedirect = false,
-            EnableMultipleHttp2Connections = true,
-            MaxConnectionsPerServer = 100,
-            ConnectCallback = async (context, token) =>
-            {
-                var socket = new System.Net.Sockets.Socket(System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp) { NoDelay = true };
-                if (context.DnsEndPoint.Host.StartsWith("10.37."))
-                {
-                    var local = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
-                        .Where(i => i.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
-                        .SelectMany(i => i.GetIPProperties().UnicastAddresses)
-                        .Select(a => a.Address)
-                        .FirstOrDefault(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && a.ToString().StartsWith("10.37."));
-                    if (local is not null) socket.Bind(new System.Net.IPEndPoint(local, 0));
-                }
-                await socket.ConnectAsync(context.DnsEndPoint, token);
-                return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
-            },
-            SslOptions = new System.Net.Security.SslClientAuthenticationOptions
-            {
-                RemoteCertificateValidationCallback = (_, _, _, _) => true
-            }
-        }) { Timeout = TimeSpan.FromSeconds(60) });
+        services.AddSingleton(new HttpClient(TransportPolicy.CreateHandler()) { Timeout = TimeSpan.FromSeconds(60) });
         services.AddSingleton<ICredentialStore, DpapiCredentialStore>();
         services.AddSingleton<IUiDispatcher, UiDispatcher>();
         services.AddSingleton<IUserInteraction, UserInteraction>();
@@ -69,6 +43,8 @@ public partial class App : Application
         services.AddSingleton<EventService>();
         services.AddSingleton<UpdateService>();
         services.AddSingleton<WorkspaceViewModel>();
+        services.AddSingleton<ResourceCatalog>();
+        services.AddSingleton<WorkspaceRegistry>();
         services.AddSingleton<AlarmsViewModel>();
         services.AddSingleton<ExportsViewModel>();
         services.AddSingleton<ShellViewModel>();

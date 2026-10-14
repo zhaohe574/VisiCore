@@ -3,6 +3,7 @@ defineProps<{
   title: string
   count?: number
   description?: string
+  subtitle?: string
 }>()
 </script>
 
@@ -14,12 +15,14 @@ defineProps<{
           <h1>{{ title }}</h1>
           <span v-if="count !== undefined" class="count-badge">{{ count }}</span>
         </div>
-        <p v-if="description" class="muted" style="margin: 4px 0 0; font-size: 12.5px;">
-          {{ description }}
+        <p v-if="description || subtitle" class="muted" style="margin: 4px 0 0; font-size: 12.5px;">
+          {{ description || subtitle }}
         </p>
       </div>
     </div>
     <div class="heading-actions">
+      <slot name="actions" />
+      <slot name="extra" />
       <slot />
     </div>
   </header>

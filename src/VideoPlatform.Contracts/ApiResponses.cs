@@ -13,6 +13,10 @@ public sealed record UserPreferencesDto(string Theme = "light", bool PreferSubSt
     bool HardwareDecoding = true, int NetworkCachingMs = 800, bool ShowDiagnostics = false);
 public sealed record ResourceCreatedResponse(long Id);
 public sealed record DeviceSyncResponse(bool Success, int Channels);
+public sealed record OperationCountResponse(int Count);
+public sealed record PonSyncResponse(bool Success, int Count);
+public sealed record PonRebootResponse(bool Success, string Message);
+public sealed record TopologyCorrectionResponse(bool Success, int AppliedCount);
 public sealed record RecordingDto(string FileName, DateTimeOffset Start, DateTimeOffset End, long FileSize, int FileType, int StreamType, uint FileIndex);
 public sealed record RecordingSegmentDto(DateTimeOffset Start, DateTimeOffset End, string? FileName = null, long? FileSize = null, int? FileType = null, int? StreamType = null, uint? FileIndex = null);
 public record LiveSessionDto(Guid Id, long ChannelId, int StreamType, string State, DateTimeOffset ExpiresAt, string RtspUrl, string HttpFlvUrl, string HlsUrl, string Codec, bool Transcoded)

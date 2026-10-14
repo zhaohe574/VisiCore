@@ -20,6 +20,7 @@ public static class Bootstrap
         services.AddSingleton(options);
         services.AddSingleton(NpgsqlDataSource.Create(options.DatabaseUrl));
         services.AddSingleton<Database>();
+        services.AddSingleton<AuditStore>();
         services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(options.KeysPath)).SetApplicationName("VideoPlatform.v2");
         services.AddSingleton<SecretStore>();
         services.AddSingleton<AccessService>();
@@ -28,11 +29,24 @@ public static class Bootstrap
         services.AddSingleton<ISettingsStore, SettingsStore>();
         services.AddHttpClient<IDeviceAdapter, DeviceAdapter>(client => client.Timeout = TimeSpan.FromSeconds(45));
         services.AddHttpClient("zlm", client => client.Timeout = TimeSpan.FromSeconds(10));
-        services.AddSingleton<AuditStore>();
+        services.AddSingleton<Pon.EsightPonClient>();
+        services.AddSingleton<Pon.PonService>();
+        services.AddSingleton<Pon.TerminalBoxService>();
+        services.AddSingleton<Pon.PonSyncJob>();
         services.AddSingleton<DeviceService>();
         services.AddSingleton<MediaService>();
         services.AddSingleton<AdministrationService>();
+        services.AddSingleton<ComputerService>();
+        services.AddSingleton<AssetQueryService>();
+        services.AddSingleton<AssetMutationService>();
+        services.AddSingleton<AssetOperations>();
+        services.AddSingleton<IpPoolService>();
+        services.AddSingleton<NetworkDeviceService>();
+        services.AddSingleton<DevicePortService>();
+        services.AddSingleton<VirtualMachineService>();
+        services.AddSingleton<DigitalTwinMapService>();
         services.AddSingleton<SslService>();
+        services.AddSingleton<Nvr.INvrChannelManager, Nvr.NvrChannelManager>();
         return services;
     }
 
@@ -82,6 +96,17 @@ public static class Bootstrap
             return true;
         }, ct);
         await sslService.RefreshPlatformOptionsAsync(ct);
+        // 启动时加载已登记的网管配置，诊断和重启无需先手动同步设备。
+        var ponClient = provider.GetService<Pon.EsightPonClient>();
+        if (ponClient is not null)
+        {
+            var ponDevice = await db.OneAsync("select host,port,username,password_cipher from devices where plugin_id='esight_pon' and enabled order by id limit 1", ct: ct);
+            if (ponDevice is not null)
+            {
+                var secrets = provider.GetRequiredService<SecretStore>();
+                ponClient.Configure($"https://{ponDevice.Text("host")}:{ponDevice.Id("port")}", ponDevice.Text("username"), secrets.Unprotect(ponDevice.Text("passwordCipher")));
+            }
+        }
     }
 }
 

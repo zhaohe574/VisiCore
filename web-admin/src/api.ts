@@ -1,7 +1,12 @@
-import type { AccessScope, Alarm, AlarmDetail, Audit, Channel, ChannelUpdateInput, Dashboard, Device, DeviceInput, DevicePlugin, ExportJob, Layout, LiveSession, LoginResult, NginxConfig, OnlineSession, Organization, OrganizationKind, OrganizationNode, Page, Permission, PlaybackControl, PlaybackSession, PluginCreateInput, PtzCommand, Recording, Release, Role, Settings, SslCertificate, SslCertificateUploadInput, SslDomain, SslDomainInput, SslOverview, SystemStatus, User } from './types'
-import type { components } from './generated/schema'
+import type { AccessScope, AddCameraRequest, Alarm, AlarmDetail, ApplyTopologyCorrectionRequest, Audit, AutoTopologyDiscoverResultDto, BatchChannelNetworkBindingRequest, BatchClaimChannelsRequest, BatchGeneratePortsInput, CandidateNodeDto, Channel, Computer, ComputerInput, ComputerProbeResult, ConnectLinkInput, Dashboard, Device, DeviceInput, DeviceLink, DeviceOfflineHistoryDto, DevicePlugin, DevicePort, DevicePortInput, DigitalTwinCableDto, DigitalTwinNodeDto, DigitalTwinSceneDetailDto, DigitalTwinSceneDto, DigitalTwinStatsDto, ExportJob, IpConflictCheckResultDto, IpPool, IpPoolDetail, IpPoolInput, IpPoolScanResult, IpRecommendResultDto, Layout, LiveSession, LoginResult, NetworkDevice, NetworkDeviceInput, NetworkDeviceProbeResult, NetworkTopologyOnuDto, NetworkTopologyPortDto, NginxConfig, NvrAvailableChannelDto, OltDeviceDto, OnlineSession, OnuDeviceDto, OnuDiagnosisDto, OnuUpdateRequest, OpticalHealthIndexDto, Organization, OrganizationKind, OrganizationNode, OrganizationStats, Page, Permission, PlaybackControl, PlaybackSession, PluginCreateInput, PonKanbanResponseDto, PonStatisticsDto, PortCandidate, PtzCommand, Recording, Release, Role, SaveCablePathRequest, SaveCoordinateRequest, Settings, SslCertificate, SslCertificateUploadInput, SslDomain, SslDomainInput, SslOverview, SystemStatus, TerminalBoxDto, TerminalBoxRequest, TerminalBoxTopologyDto, User, VirtualMachine, VirtualMachineInput } from './types'
+import type { components } from './generated/client'
 import type { PublicRelease } from './types'
+import type { SchemaDto } from './types'
 export type * from './types'
+export type Asset = SchemaDto<'AssetDto'>
+export type AssetContext = SchemaDto<'AssetContextDto'>
+export type AssetSummary = SchemaDto<'AssetSummaryDto'>
+export type ComputerBatchUpdate = SchemaDto<'ComputerBatchUpdateRequest'>
 
 export const apiBase = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
 export const apiUrl = (path: string) => `${apiBase}/api/v2${path}`
@@ -69,13 +74,13 @@ export function queryString(query: Query = {}) {
   return params.size ? `?${params}` : ''
 }
 export const list = <T>(path: string, query: Query = {}, signal?: AbortSignal) => api<Page<T>>(`${path}${queryString(query)}`, { signal })
-const post = <T = void>(path: string, body?: unknown) => api<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) })
+const post = <T = void>(path: string, body?: unknown, signal?: AbortSignal) => api<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body), signal })
 const put = <T = void>(path: string, body: unknown) => api<T>(path, { method: 'PUT', body: JSON.stringify(body) })
 const remove = (path: string, keepalive = false) => api<void>(path, { method: 'DELETE', keepalive }, !keepalive)
 const segment = (id: string | number) => encodeURIComponent(id)
 
 export const authApi = {
-  login: async (username: string, password: string) => { const result = await post<LoginResult>('/auth/login', { username, password, clientType: 'web', clientVersion: '2.1.6' } satisfies components['schemas']['LoginRequest']); clearCsrf(); return result },
+  login: async (username: string, password: string) => { const result = await post<LoginResult>('/auth/login', { username, password, clientType: 'web', clientVersion: '2.1.7' } satisfies components['schemas']['LoginRequest']); clearCsrf(); return result },
   me: () => api<User>('/auth/me'),
   logout: async () => { await post('/auth/logout'); clearCsrf() },
   profile: (displayName: string, phone: string) => put('/auth/profile', { displayName, phone }),
@@ -96,10 +101,17 @@ export const managementApi = {
   deletePlugin: (id: string) => remove(`/plugins/${segment(id)}`),
   exportPluginUrl: (id: string) => apiUrl(`/plugins/${segment(id)}/export`),
   channels: (query?: Query, signal?: AbortSignal) => list<Channel>('/channels', query, signal),
-  updateChannel: (id: number, data: ChannelUpdateInput) => put<Channel>(`/channels/${id}`, data),
+  channel: (id: number, signal?: AbortSignal) => api<Channel>(`/channels/${id}`, { signal }),
+  updateChannel: (id: number, data: { alias?: string | null; unitId?: number | null; ip?: string | null; username?: string | null; password?: string | null; remark?: string | null; terminalBoxId?: number | null; onuDeviceId?: number | null; networkPort?: number | null; isSwitchPort?: boolean | null; portLabel?: string | null; clearNetworkBinding?: boolean | null }) => put<Channel>(`/channels/${id}`, data),
   assign: (channelIds: number[], unitId: number | null) => put('/channels/assignment', { channelIds, unitId }),
+  batchSetNetworkBindings: (data: BatchChannelNetworkBindingRequest) => put('/channels/batch-network-bindings', data),
+  batchClaimChannels: (data: BatchClaimChannelsRequest) => post('/channels/batch-claim', data),
+  unassignedChannels: () => api<Channel[]>('/channels/unassigned'),
   sortChannels: (unitId: number, channelIds: number[]) => put('/channels/sort', { unitId, channelIds }),
+  availableNvrChannels: () => api<NvrAvailableChannelDto[]>('/nvr/available-channels'),
+  addCamera: (data: AddCameraRequest) => post<Channel>('/organization/channels/add-camera', data),
   organization: () => api<Organization>('/organization'),
+  organizationStats: () => api<OrganizationStats>('/organization/stats'),
   saveNode: (kind: OrganizationKind, id: number | null, data: Omit<OrganizationNode, 'id'>) => id ? put(`/organization/${kind}/${id}`, data) : post(`/organization/${kind}`, data),
   deleteNode: (kind: OrganizationKind, id: number) => remove(`/organization/${kind}/${id}`),
   users: (query?: Query, signal?: AbortSignal) => list<User>('/users', query, signal),
@@ -116,10 +128,10 @@ export const managementApi = {
   settings: () => api<Settings>('/settings'), saveSettings: (data: Settings) => put('/settings', data),
 }
 export const mediaApi = {
-  live: (channelId: number, streamType: 1 | 2) => post<LiveSession>('/live-sessions', { channelId, streamType, profile: 'browser' } satisfies components['schemas']['LiveRequest']),
+  live: (channelId: number, streamType: 1 | 2, consumerId?: string) => post<LiveSession>('/live-sessions', { channelId, streamType, profile: 'browser', consumerId } satisfies components['schemas']['LiveRequest']),
   renewLive: (id: string) => post<LiveSession>(`/live-sessions/${segment(id)}/renew`), stopLive: (id: string, keepalive = false) => remove(`/live-sessions/${segment(id)}`, keepalive),
   recordings: (channelId: number, start: string, end: string) => post<Recording[]>('/recordings/search', { channelId, start, end }),
-  playback: (channelId: number, start: string, end: string) => post<PlaybackSession>('/playback-sessions', { channelId, start, end, streamType: 1, profile: 'browser' } satisfies components['schemas']['PlaybackRequest']),
+  playback: (channelId: number, start: string, end: string, consumerId?: string) => post<PlaybackSession>('/playback-sessions', { channelId, start, end, profile: 'browser', streamType: 1, consumerId } satisfies components['schemas']['PlaybackRequest']),
   getPlayback: (id: string) => api<PlaybackSession>(`/playback-sessions/${segment(id)}`),
   renewPlayback: (id: string) => post<PlaybackSession>(`/playback-sessions/${segment(id)}/renew`),
   stopPlayback: (id: string, keepalive = false) => remove(`/playback-sessions/${segment(id)}`, keepalive),
@@ -134,12 +146,13 @@ export const workflowApi = {
   alarms: (query?: Query, signal?: AbortSignal) => list<Alarm>('/alarms', query, signal),
   alarm: (id: number) => api<AlarmDetail>(`/alarms/${id}`), alarmImage: (id: number) => apiUrl(`/alarms/${id}/image`),
   alarmAction: (id: number, action: 'claim' | 'note' | 'close' | 'reopen', note?: string) => post(`/alarms/${id}/actions`, { action, note }),
+  batchAlarmActions: (data: { ids?: number[]; action: 'claim' | 'close'; note?: string; allMatching?: boolean; filter?: Record<string, any> }) => post<{ count: number }>('/alarms/batch-actions', data),
   exports: (query?: Query, signal?: AbortSignal) => list<ExportJob>('/exports', query, signal),
   createExport: (channelId: number, start: string, end: string) => post<ExportJob>('/exports', { channelId, start, end }),
   cancelExport: (id: string) => post(`/exports/${segment(id)}/cancel`), retryExport: (id: string) => post(`/exports/${segment(id)}/retry`),
   exportUrl: (id: string) => apiUrl(`/exports/${segment(id)}/download`),
   releases: (query?: Query, signal?: AbortSignal) => list<Release>('/releases', query, signal),
-  latest: (packageType?: 'zip' | 'msi') => api<PublicRelease | undefined>(`/public/releases/latest${queryString({ packageType })}`),
+  latest: (packageType?: 'zip' | 'msi' | 'patch') => api<PublicRelease | undefined>(`/public/releases/latest${queryString({ packageType })}`),
   publicReleases: () => api<PublicRelease[]>('/public/releases'),
   uploadRelease: (data: FormData) => api<Release>('/releases', { method: 'POST', body: data }),
   updateRelease: (id: number, data: { version?: string; minimumVersion?: string; forceUpdate?: boolean; releaseNotes?: string }) => put<Release>(`/releases/${id}`, data),
@@ -166,6 +179,95 @@ export const sslApi = {
   downloadCertUrl: (id: number) => apiUrl(`/ssl/certificates/${id}/download`),
   nginxConfig: () => api<NginxConfig>('/ssl/nginx-config'),
 }
+export const ponApi = {
+  statistics: () => api<PonStatisticsDto>('/pon/statistics'),
+  onus: (query?: Query, signal?: AbortSignal) => list<OnuDeviceDto>('/pon/onus', query, signal),
+  onu: (id: number) => api<OnuDeviceDto>(`/pon/onus/${id}`),
+  updateOnu: (id: number, data: OnuUpdateRequest) => put<OnuDeviceDto>(`/pon/onus/${id}`, data),
+  diagnoseOnu: (id: number) => api<OnuDiagnosisDto>(`/pon/onus/${id}/diagnosis`),
+  rebootOnu: (id: number) => post<{ success: boolean; message: string }>(`/pon/onus/${id}/reboot`),
+  syncEsight: () => post<{ success: boolean; count: number }>('/pon/sync'),
+  terminalBoxes: (signal?: AbortSignal) => api<TerminalBoxDto[]>('/terminal-boxes', { signal }),
+  terminalBox: (id: number) => api<TerminalBoxDto>(`/terminal-boxes/${id}`),
+  saveTerminalBox: (id: number | null, data: TerminalBoxRequest) => id ? put<TerminalBoxDto>(`/terminal-boxes/${id}`, data) : post<TerminalBoxDto>('/terminal-boxes', data),
+  deleteTerminalBox: (id: number) => remove(`/terminal-boxes/${id}`),
+  terminalBoxTopologyTree: (signal?: AbortSignal) => api<TerminalBoxTopologyDto[]>('/terminal-boxes/topology-tree', { signal }),
+  terminalBoxTopology: (id: number, signal?: AbortSignal) => api<TerminalBoxTopologyDto>(`/terminal-boxes/${id}/topology`, { signal }),
+  kanban: (signal?: AbortSignal) => api<PonKanbanResponseDto>('/pon/dashboard/kanban', { signal }),
+  offlineHistory: (query?: Query, signal?: AbortSignal) => list<DeviceOfflineHistoryDto>('/pon/dashboard/history', query, signal),
+  olts: (signal?: AbortSignal) => api<OltDeviceDto[]>('/pon/olts', { signal }),
+  healthIndex: (signal?: AbortSignal) => api<OpticalHealthIndexDto>('/pon/health-index', { signal }),
+  autoDiscoverTopology: (signal?: AbortSignal) => post<AutoTopologyDiscoverResultDto>('/pon/bindings/auto-discover', {}, signal),
+  applyTopologyCorrections: (data: ApplyTopologyCorrectionRequest) => post<{ success: boolean; appliedCount: number }>('/pon/bindings/apply', data),
+}
+
+export const computerApi = {
+  batchUpdate: (data: ComputerBatchUpdate) => post<components['schemas']['AssetBatchResultDto']>('/computers/batch-update', data),
+  list: (query?: Query, signal?: AbortSignal) => list<Computer>('/computers', query, signal),
+  get: (id: number) => api<Computer>(`/computers/${id}`),
+  save: (id: number | null, data: ComputerInput) => id ? put<Computer>(`/computers/${id}`, data) : post<Computer>('/computers', data),
+  delete: (id: number) => remove(`/computers/${id}`),
+  probe: (id: number) => post<ComputerProbeResult>(`/computers/${id}/probe`),
+  probeAll: () => post<ComputerProbeResult[]>('/computers/probe-all'),
+}
+
+export const assetApi = {
+  search: (query?: Query, signal?: AbortSignal) => list<Asset>('/assets/search', query, signal),
+  summary: (query?: Query, signal?: AbortSignal) => api<AssetSummary>(`/assets/summary${queryString(query)}`, { signal }),
+  context: (type: string, id: number, signal?: AbortSignal) => api<AssetContext>(`/assets/${segment(type)}/${id}/context`, { signal }),
+}
+
+export const ipPoolApi = {
+  list: (signal?: AbortSignal) => api<IpPool[]>('/ip-pools', { signal }),
+  get: (id: number) => api<IpPool>(`/ip-pools/${id}`),
+  save: (id: number | null, data: IpPoolInput) => id ? put<IpPool>(`/ip-pools/${id}`, data) : post<IpPool>('/ip-pools', data),
+  delete: (id: number) => remove(`/ip-pools/${id}`),
+  detail: (id: number, signal?: AbortSignal) => api<IpPoolDetail>(`/ip-pools/${id}/detail`, { signal }),
+  scan: (id: number, subnetSlice?: string | null) => post<IpPoolScanResult>(`/ip-pools/${id}/scan${queryString({ subnetSlice })}`),
+  checkIp: (ip: string, excludeType?: string, excludeId?: number) => api<IpConflictCheckResultDto>(`/ip-pools/check-ip?ip=${encodeURIComponent(ip)}${excludeType ? `&excludeType=${excludeType}` : ''}${excludeId ? `&excludeId=${excludeId}` : ''}`),
+  recommendIp: (workshopId?: number | null, poolId?: number | null) => api<IpRecommendResultDto>(`/ip-pools/recommend-ip?${workshopId ? `workshopId=${workshopId}` : ''}${poolId ? `&poolId=${poolId}` : ''}`),
+}
+
+export const networkDeviceApi = {
+  list: (query?: Query, signal?: AbortSignal) => list<NetworkDevice>('/network-devices', query, signal),
+  get: (id: number) => api<NetworkDevice>(`/network-devices/${id}`),
+  save: (id: number | null, data: NetworkDeviceInput) => id ? put<NetworkDevice>(`/network-devices/${id}`, data) : post<NetworkDevice>('/network-devices', data),
+  delete: (id: number) => remove(`/network-devices/${id}`),
+  probe: (id: number) => post<NetworkDeviceProbeResult>(`/network-devices/${id}/probe`),
+  probeAll: () => post<NetworkDeviceProbeResult[]>('/network-devices/probe-all'),
+}
+
+export const devicePortApi = {
+  list: (deviceType: string, deviceId: number, signal?: AbortSignal) => api<DevicePort[]>(`/devices/${deviceType}/${deviceId}/ports`, { signal }),
+  batchGenerate: (deviceType: string, deviceId: number, data: BatchGeneratePortsInput) => post<DevicePort[]>(`/devices/${deviceType}/${deviceId}/ports/batch-generate`, data),
+  create: (deviceType: string, deviceId: number, data: DevicePortInput) => post<DevicePort>(`/devices/${deviceType}/${deviceId}/ports`, data),
+  update: (id: number, data: DevicePortInput) => put<DevicePort>(`/device-ports/${id}`, data),
+  delete: (id: number) => remove(`/device-ports/${id}`),
+  connect: (data: ConnectLinkInput) => post<DeviceLink>('/device-links/connect', data),
+  disconnect: (id: number) => remove(`/device-links/${id}`),
+  candidates: (query?: { search?: string; deviceType?: string }, signal?: AbortSignal) => api<PortCandidate[]>(`/device-ports/candidates${queryString(query || {})}`, { signal }),
+}
+
+export const virtualMachineApi = {
+  list: (hostDeviceId: number, signal?: AbortSignal) => api<VirtualMachine[]>(`/network-devices/${hostDeviceId}/vms`, { signal }),
+  create: (hostDeviceId: number, data: VirtualMachineInput) => post<VirtualMachine>(`/network-devices/${hostDeviceId}/vms`, data),
+  update: (id: number, data: VirtualMachineInput) => put<VirtualMachine>(`/virtual-machines/${id}`, data),
+  delete: (id: number) => remove(`/virtual-machines/${id}`),
+}
+
+export const digitalTwinApi = {
+  scenes: (signal?: AbortSignal) => api<DigitalTwinSceneDto[]>('/digital-twin/scenes', { signal }),
+  sceneDetail: (id: number, signal?: AbortSignal) => api<DigitalTwinSceneDetailDto>(`/digital-twin/scenes/${id}`, { signal }),
+  candidates: (id: number, signal?: AbortSignal) => api<CandidateNodeDto[]>(`/digital-twin/scenes/${id}/candidates`, { signal }),
+  saveCoordinate: (sceneId: number, data: SaveCoordinateRequest) => post<DigitalTwinNodeDto>(`/digital-twin/scenes/${sceneId}/coordinates`, data),
+  batchSaveCoordinates: (sceneId: number, data: { items: SaveCoordinateRequest[] }) => post<{ count: number }>(`/digital-twin/scenes/${sceneId}/coordinates/batch`, data),
+  deleteCoordinate: (id: number) => remove(`/digital-twin/coordinates/${id}`),
+  createCable: (sceneId: number, data: SaveCablePathRequest) => post<DigitalTwinCableDto>(`/digital-twin/scenes/${sceneId}/cables`, data),
+  updateCable: (sceneId: number, cableId: number, data: SaveCablePathRequest) => put<DigitalTwinCableDto>(`/digital-twin/scenes/${sceneId}/cables/${cableId}`, data),
+  deleteCable: (cableId: number) => remove(`/digital-twin/cables/${cableId}`),
+  autoAlignCad: (sceneId: number) => post<{ count: number }>(`/digital-twin/scenes/${sceneId}/auto-align`),
+}
+
 
 
 export async function allPages<T>(loader: (query: Query) => Promise<Page<T>>, query: Query = {}): Promise<T[]> {

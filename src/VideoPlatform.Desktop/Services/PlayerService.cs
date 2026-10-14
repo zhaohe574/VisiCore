@@ -36,27 +36,52 @@ public sealed record PlayerOptions(bool HardwareDecoding = true, int NetworkCach
 public sealed class VlcPlayerFactory : IConfigurablePlayerFactory, IDisposable
 {
     private readonly object _sync = new();
-    private LibVLC? _vlc;
+    private sealed class Engine(LibVLC native)
+    {
+        public LibVLC Native { get; } = native;
+        public int References;
+        public bool Retired;
+    }
+    private Engine? _engine;
+    private bool _disposed;
     private PlayerOptions _options = new();
 
     public void Configure(PlayerOptions options)
     {
         lock (_sync)
         {
-            if (_vlc is not null && options.HardwareDecoding != _options.HardwareDecoding) { _vlc.Dispose(); _vlc = null; }
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_engine is not null && options.HardwareDecoding != _options.HardwareDecoding) RetireEngine();
             _options = options;
         }
     }
 
     public IVideoPlayer Create()
     {
-        LibVLC vlc;
         lock (_sync)
         {
-            _vlc ??= BuildEngine(_options);
-            vlc = _vlc;
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var engine = _engine ??= new(BuildEngine(_options));
+            engine.References++;
+            try { return new VlcVideoPlayer(engine.Native, _options, () => Release(engine)); }
+            catch { Release(engine); throw; }
         }
-        return new VlcVideoPlayer(vlc, _options);
+    }
+
+    private void RetireEngine()
+    {
+        var engine = _engine;
+        _engine = null;
+        if (engine is null) return;
+        engine.Retired = true;
+        if (engine.References == 0) engine.Native.Dispose();
+    }
+    private void Release(Engine engine)
+    {
+        lock (_sync)
+        {
+            if (--engine.References == 0 && engine.Retired) engine.Native.Dispose();
+        }
     }
 
     private static LibVLC BuildEngine(PlayerOptions options)
@@ -87,8 +112,8 @@ public sealed class VlcPlayerFactory : IConfigurablePlayerFactory, IDisposable
     {
         lock (_sync)
         {
-            _vlc?.Dispose();
-            _vlc = null;
+            _disposed = true;
+            RetireEngine();
         }
     }
 }
@@ -98,10 +123,11 @@ public sealed class VlcVideoPlayer : IVideoPlayer
     private readonly LibVLC _vlc;
     private readonly PlayerOptions _options;
     private bool _muted = true;
+    private Action? _release;
     public MediaPlayer? NativePlayer { get; private set; }
     public event Action<string>? Failed;
     public event Action? Connected;
-    public VlcVideoPlayer(LibVLC vlc, PlayerOptions? options = null)
+    public VlcVideoPlayer(LibVLC vlc, PlayerOptions? options = null, Action? release = null)
     {
         _vlc = vlc;
         _options = options ?? new PlayerOptions();
@@ -109,6 +135,7 @@ public sealed class VlcVideoPlayer : IVideoPlayer
         NativePlayer.EncounteredError += EncounteredError;
         NativePlayer.EndReached += EndReached;
         NativePlayer.Playing += Playing;
+        _release = release;
     }
     private string? _aspectRatio;
     public string? AspectRatio
@@ -197,7 +224,8 @@ public sealed class VlcVideoPlayer : IVideoPlayer
         player.EndReached -= EndReached;
         player.Playing -= Playing;
         // VLC 停止会等待原生解码线程，不能占用 WPF 调度线程。
-        await Task.Run(() => { player.Stop(); player.Dispose(); });
+        try { await Task.Run(() => { try { player.Stop(); } finally { player.Dispose(); } }); }
+        finally { Interlocked.Exchange(ref _release, null)?.Invoke(); }
     }
     private void EncounteredError(object? sender, EventArgs e) => Failed?.Invoke("视频连接中断，正在重新连接。");
     private void EndReached(object? sender, EventArgs e) => Failed?.Invoke("视频流已结束，正在核对会话状态。");

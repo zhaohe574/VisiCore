@@ -181,6 +181,10 @@ def main():
                     raise RuntimeError("本地 API 健康检查超时。")
                 time.sleep(0.2)
             print(f"本地 API 已就绪：{api_url}；IntegrationTests 模拟适配器将使用 {adapter_url}。", flush=True)
+            # 保存本轮正式路由生成的接口描述，客户端生成无需修改或依赖生产服务。
+            with urllib.request.urlopen(api_url + "/api/v2/openapi/v2.json", timeout=30) as response:
+                (directory / "openapi.source.json").write_bytes(response.read())
+            summary["openapi"] = str(directory / "openapi.source.json")
             summary["results"]["integration"] = run_suite("integration", dotnet, env, directory, secrets)
             api.close()
             api = None

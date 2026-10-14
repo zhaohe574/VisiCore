@@ -36,7 +36,7 @@ public partial class WorkspaceView : UserControl
         {
             if (DataContext is WorkspaceViewModel)
             {
-                MainWindow.SyncAllVideoOverlays(IsVisible);
+                MainWindow.SyncVideoOverlays(Window.GetWindow(this), IsVisible);
                 _ = ApplyLayoutTiersAsync();
             }
             if (!IsVisible) HideFullscreenControls();
@@ -53,17 +53,18 @@ public partial class WorkspaceView : UserControl
                 _subscribedVm.PropertyChanged -= WorkspacePropertyChanged;
                 _subscribedVm = null;
             }
-            VideoPlatform.Desktop.Services.VideoMouseHook.IsOverFullscreenToolbar = null;
+            VideoPlatform.Desktop.Services.VideoMouseHook.FullscreenToolbarHitTest -= IsOverFullscreenToolbar;
             VideoPlatform.Desktop.Services.VideoMouseHook.MouseMoved -= OnGlobalMouseMoved;
             HideFullscreenControls();
-            MainWindow.SyncAllVideoOverlays(false);
+            MainWindow.SyncVideoOverlays(Window.GetWindow(this), false);
             if (DataContext is WorkspaceViewModel vm) await vm.StopPtzAsync();
         };
     }
 
     private void WindowLoaded(object sender, RoutedEventArgs e)
     {
-        VideoPlatform.Desktop.Services.VideoMouseHook.IsOverFullscreenToolbar = IsOverFullscreenToolbar;
+        VideoPlatform.Desktop.Services.VideoMouseHook.FullscreenToolbarHitTest -= IsOverFullscreenToolbar;
+        VideoPlatform.Desktop.Services.VideoMouseHook.FullscreenToolbarHitTest += IsOverFullscreenToolbar;
         VideoPlatform.Desktop.Services.VideoMouseHook.MouseMoved -= OnGlobalMouseMoved;
         VideoPlatform.Desktop.Services.VideoMouseHook.MouseMoved += OnGlobalMouseMoved;
         if (Window.GetWindow(this) is Window win)

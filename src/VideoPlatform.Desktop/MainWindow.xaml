@@ -89,6 +89,8 @@
                                 <Setter Property="TextOptions.TextFormattingMode" Value="Display"/>
                             </Style>
                         </StackPanel.Resources>
+                        <Button Content="独立工作区" Command="{Binding OpenWorkspaceCommand}" CommandParameter="live" Margin="0,0,8,0"/>
+                        <Button Content="一键恢复播放" Command="{Binding Workspace.RestorePlaybackCommand}" Margin="0,0,8,0"/>
                         <RadioButton GroupName="Module" Style="{StaticResource TabButton}"
                                      IsChecked="{Binding Module, Converter={StaticResource Match}, ConverterParameter=live, Mode=OneWay}"
                                      Command="{Binding SwitchModuleCommand}" CommandParameter="live">

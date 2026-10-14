@@ -1,0 +1,295 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3840 2160" width="100%" height="100%">
+  <defs>
+    <radialGradient id="bgGlow" cx="50%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#0c1626" />
+      <stop offset="60%" stop-color="#070c14" />
+      <stop offset="100%" stop-color="#04070c" />
+    </radialGradient>
+    <linearGradient id="gridGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e3a5f" stop-opacity="0.2" />
+      <stop offset="50%" stop-color="#0284c7" stop-opacity="0.35" />
+      <stop offset="100%" stop-color="#1e3a5f" stop-opacity="0.2" />
+    </linearGradient>
+    <linearGradient id="pipeGlow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0284c7" />
+      <stop offset="100%" stop-color="#0369a1" />
+    </linearGradient>
+    <linearGradient id="pulseFiber" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#a855f7" />
+      <stop offset="100%" stop-color="#38bdf8" />
+    </linearGradient>
+    <filter id="neon" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="8" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Deep space backdrop -->
+  <rect width="3840" height="2160" fill="url(#bgGlow)" />
+  <rect width="3840" height="2160" fill="none" stroke="#1e293b" stroke-width="2" />
+
+  <!-- 2.5D Isometric Grid Layer -->
+  <g opacity="0.25">
+    <line x1="1920.0" y1="-500.0" x2="-851.28" y2="1100.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="2058.56" y1="-420.0" x2="-712.72" y2="1180.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="2197.13" y1="-340.0" x2="-574.15" y2="1260.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="2335.69" y1="-260.0" x2="-435.59" y2="1340.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="2474.26" y1="-180.0" x2="-297.03" y2="1420.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="2612.82" y1="-100.0" x2="-158.46" y2="1500.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="2751.38" y1="-20.0" x2="-19.9" y2="1580.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="2889.95" y1="60.0" x2="118.67" y2="1660.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="3028.51" y1="140.0" x2="257.23" y2="1740.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="3167.08" y1="220.0" x2="395.8" y2="1820.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="3305.64" y1="300.0" x2="534.36" y2="1900.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="3444.2" y1="380.0" x2="672.92" y2="1980.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="3582.77" y1="460.0" x2="811.49" y2="2060.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="3721.33" y1="540.0" x2="950.05" y2="2140.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="3859.9" y1="620.0" x2="1088.62" y2="2220.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="3998.46" y1="700.0" x2="1227.18" y2="2300.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="4137.03" y1="780.0" x2="1365.74" y2="2380.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="4275.59" y1="860.0" x2="1504.31" y2="2460.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="4414.15" y1="940.0" x2="1642.87" y2="2540.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="4552.72" y1="1020.0" x2="1781.44" y2="2620.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="4691.28" y1="1100.0" x2="1920.0" y2="2700.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="1920.0" y1="-500.0" x2="4691.28" y2="1100.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="1781.44" y1="-420.0" x2="4552.72" y2="1180.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="1642.87" y1="-340.0" x2="4414.15" y2="1260.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="1504.31" y1="-260.0" x2="4275.59" y2="1340.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="1365.74" y1="-180.0" x2="4137.03" y2="1420.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="1227.18" y1="-100.0" x2="3998.46" y2="1500.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="1088.62" y1="-20.0" x2="3859.9" y2="1580.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="950.05" y1="60.0" x2="3721.33" y2="1660.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="811.49" y1="140.0" x2="3582.77" y2="1740.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="672.92" y1="220.0" x2="3444.2" y2="1820.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="534.36" y1="300.0" x2="3305.64" y2="1900.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="395.8" y1="380.0" x2="3167.08" y2="1980.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="257.23" y1="460.0" x2="3028.51" y2="2060.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="118.67" y1="540.0" x2="2889.95" y2="2140.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="-19.9" y1="620.0" x2="2751.38" y2="2220.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="-158.46" y1="700.0" x2="2612.82" y2="2300.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="-297.03" y1="780.0" x2="2474.26" y2="2380.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="-435.59" y1="860.0" x2="2335.69" y2="2460.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="-574.15" y1="940.0" x2="2197.13" y2="2540.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="-712.72" y1="1020.0" x2="2058.56" y2="2620.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+    <line x1="-851.28" y1="1100.0" x2="1920.0" y2="2700.0" stroke="#38bdf8" stroke-width="0.8" vector-effect="non-scaling-stroke" />
+  </g>
+
+  <!-- Factory Perimeter Boundary -->
+  <polygon points="1920.0,-350.0 4431.47,1100.0 1920.0,2550.0 -591.47,1100.0" fill="#0b1320" fill-opacity="0.4" stroke="#0ea5e9" stroke-width="2" stroke-dasharray="12,6" vector-effect="non-scaling-stroke" />
+
+  <!-- Industrial Road Network -->
+  <g opacity="0.6">
+    <polygon points="586.32,470.0 3011.19,1870.0 2907.27,1930.0 482.4,530.0" fill="#111c2e" stroke="#1e293b" stroke-width="1.5" />
+    <line x1="534.36" y1="500.0" x2="2959.23" y2="1900.0" stroke="#0284c7" stroke-width="1.5" stroke-dasharray="16,16" opacity="0.7" />
+    <polygon points="2915.93,275.0 491.06,1675.0 577.66,1725.0 3002.53,325.0" fill="#111c2e" stroke="#1e293b" stroke-width="1.5" />
+    <line x1="2959.23" y1="300.0" x2="534.36" y2="1700.0" stroke="#0284c7" stroke-width="1.5" stroke-dasharray="16,16" opacity="0.7" />
+    <polygon points="135.99,830.0 2387.65,2130.0 2318.37,2170.0 66.71,870.0" fill="#111c2e" stroke="#1e293b" stroke-width="1.5" />
+    <line x1="101.35" y1="850.0" x2="2353.01" y2="2150.0" stroke="#0284c7" stroke-width="1.5" stroke-dasharray="16,16" opacity="0.7" />
+  </g>
+
+  <!-- Zone 1: 总控机房 (Core Data Center) -->
+
+    <g opacity="0.9">
+      <polygon points="110.01,1095.0 387.14,1255.0 387.14,1115.0 110.01,955.0" fill="#0369a1" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="594.98,1135.0 387.14,1255.0 387.14,1115.0 594.98,995.0" fill="#075985" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="317.85,835.0 594.98,995.0 387.14,1115.0 110.01,955.0" fill="#0284c7" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+
+    <g opacity="0.9">
+      <polygon points="213.93,1105.0 369.81,1195.0 369.81,975.0 213.93,885.0" fill="#0891b2" stroke="#67e8f9" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="491.06,1125.0 369.81,1195.0 369.81,975.0 491.06,905.0" fill="#0e7490" stroke="#67e8f9" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="335.17,815.0 491.06,905.0 369.81,975.0 213.93,885.0" fill="#06b6d4" stroke="#67e8f9" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+    <line x1="387.14" y1="945.0" x2="387.14" y2="745.0" stroke="#38bdf8" stroke-width="3" filter="url(#softGlow)" />
+    <circle cx="387.14" cy="745.0" r="6" fill="#38bdf8" filter="url(#neon)" />
+    <circle cx="387.14" cy="745.0" r="18" fill="none" stroke="#38bdf8" stroke-width="1.5" opacity="0.6">
+      <animate attributeName="r" values="6;24;6" dur="2.4s" repeatCount="indefinite" />
+      <animate attributeName="opacity" values="0.8;0;0.8" dur="2.4s" repeatCount="indefinite" />
+    </circle>
+
+  <!-- Zone 2: 综合办公楼 (Office Building) -->
+
+    <g opacity="0.9">
+      <polygon points="343.83,860.0 690.24,1060.0 690.24,880.0 343.83,680.0" fill="#0f172a" stroke="#60a5fa" stroke-width="1.8" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="880.77,950.0 690.24,1060.0 690.24,880.0 880.77,770.0" fill="#334155" stroke="#60a5fa" stroke-width="1.8" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="534.36,570.0 880.77,770.0 690.24,880.0 343.83,680.0" fill="#1e293b" stroke="#60a5fa" stroke-width="1.8" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+
+    <g opacity="0.9">
+      <polygon points="413.12,870.0 672.92,1020.0 672.92,760.0 413.12,610.0" fill="#1d4ed8" stroke="#93c5fd" stroke-width="1.8" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="811.49,940.0 672.92,1020.0 672.92,760.0 811.49,680.0" fill="#1e40af" stroke="#93c5fd" stroke-width="1.8" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="551.68,530.0 811.49,680.0 672.92,760.0 413.12,610.0" fill="#2563eb" stroke="#93c5fd" stroke-width="1.8" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+
+  <!-- Zone 3: 制管车间 (Pipe Making Workshop) -->
+
+    <g opacity="0.9">
+      <polygon points="1530.29,1025.0 2266.41,1450.0 2266.41,1290.0 1530.29,865.0" fill="#1e293b" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2699.42,1200.0 2266.41,1450.0 2266.41,1290.0 2699.42,1040.0" fill="#0284c7" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="1963.3,615.0 2699.42,1040.0 2266.41,1290.0 1530.29,865.0" fill="#0f172a" stroke="#38bdf8" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+
+    <g opacity="0.85">
+      <polygon points="1746.79,1100.0 1902.68,1190.0 1902.68,980.0 1746.79,890.0" fill="#075985" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2249.09,990.0 1902.68,1190.0 1902.68,980.0 2249.09,780.0" fill="#0c4a6e" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2093.21,690.0 2249.09,780.0 1902.68,980.0 1746.79,890.0" fill="#0369a1" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+
+    <g opacity="0.85">
+      <polygon points="1963.3,1225.0 2119.19,1315.0 2119.19,1105.0 1963.3,1015.0" fill="#075985" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2465.6,1115.0 2119.19,1315.0 2119.19,1105.0 2465.6,905.0" fill="#0c4a6e" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2309.71,815.0 2465.6,905.0 2119.19,1105.0 1963.3,1015.0" fill="#0369a1" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+
+    <g opacity="0.85">
+      <polygon points="2162.49,1340.0 2318.37,1430.0 2318.37,1220.0 2162.49,1130.0" fill="#075985" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2664.78,1230.0 2318.37,1430.0 2318.37,1220.0 2664.78,1020.0" fill="#0c4a6e" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2508.9,930.0 2664.78,1020.0 2318.37,1220.0 2162.49,1130.0" fill="#0369a1" stroke="#38bdf8" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+
+    <g opacity="0.9">
+      <polygon points="2266.41,1350.0 2422.29,1440.0 2422.29,1350.0 2266.41,1260.0" fill="#0f2744" stroke="#0ea5e9" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2682.1,1290.0 2422.29,1440.0 2422.29,1350.0 2682.1,1200.0" fill="#1e293b" stroke="#0ea5e9" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2526.22,1110.0 2682.1,1200.0 2422.29,1350.0 2266.41,1260.0" fill="#1e3a5f" stroke="#0ea5e9" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+
+  <!-- Zone 4: 热镀车间 (Hot Dip Workshop) -->
+
+    <g opacity="0.9">
+      <polygon points="1963.3,1755.0 2526.22,2080.0 2526.22,1930.0 1963.3,1605.0" fill="#1f2937" stroke="#06b6d4" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2941.91,1840.0 2526.22,2080.0 2526.22,1930.0 2941.91,1690.0" fill="#0891b2" stroke="#06b6d4" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2378.99,1365.0 2941.91,1690.0 2526.22,1930.0 1963.3,1605.0" fill="#111827" stroke="#06b6d4" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+    <line x1="2552.2" y1="1535.0" x2="2552.2" y2="1365.0" stroke="#06b6d4" stroke-width="8" stroke-linecap="round" />
+    <circle cx="2552.2" cy="1365.0" r="8" fill="#22d3ee" filter="url(#neon)" />
+    <line x1="2725.4" y1="1635.0" x2="2725.4" y2="1465.0" stroke="#06b6d4" stroke-width="8" stroke-linecap="round" />
+    <circle cx="2725.4" cy="1465.0" r="8" fill="#22d3ee" filter="url(#neon)" />
+
+  <!-- Zone 5: 螺旋车间 (Spiral Pipe Workshop) -->
+
+    <g opacity="0.9">
+      <polygon points="1660.19,400.0 2179.81,700.0 2179.81,560.0 1660.19,260.0" fill="#1e293b" stroke="#818cf8" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2656.12,425.0 2179.81,700.0 2179.81,560.0 2656.12,285.0" fill="#6366f1" stroke="#818cf8" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="2136.51,-15.0 2656.12,285.0 2179.81,560.0 1660.19,260.0" fill="#090d16" stroke="#818cf8" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+    <line x1="2119.19" y1="-5.0" x2="2586.84" y2="265.0" stroke="#818cf8" stroke-width="4" stroke-dasharray="8,4" />
+
+  <!-- Zone 6: 外围设施 (Security Gate & Weighbridges) -->
+
+    <g opacity="0.9">
+      <polygon points="75.37,815.0 179.29,875.0 179.29,805.0 75.37,745.0" fill="#0f172a" stroke="#94a3b8" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="265.89,825.0 179.29,875.0 179.29,805.0 265.89,755.0" fill="#475569" stroke="#94a3b8" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="161.97,695.0 265.89,755.0 179.29,805.0 75.37,745.0" fill="#1e293b" stroke="#94a3b8" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+
+    <g opacity="0.9">
+      <polygon points="638.28,590.0 759.53,660.0 759.53,600.0 638.28,530.0" fill="#0f172a" stroke="#f59e0b" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="828.81,620.0 759.53,660.0 759.53,600.0 828.81,560.0" fill="#475569" stroke="#f59e0b" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+      <polygon points="707.56,490.0 828.81,560.0 759.53,600.0 638.28,530.0" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+    </g>
+    <line x1="1660.19" y1="1350.0" x2="1677.51" y2="1400.0" stroke="#0284c7" stroke-width="5" stroke-linecap="round" opacity="0.75" />
+    <line x1="1582.25" y1="1395.0" x2="1599.57" y2="1445.0" stroke="#0284c7" stroke-width="5" stroke-linecap="round" opacity="0.75" />
+    <line x1="1504.31" y1="1440.0" x2="1521.63" y2="1490.0" stroke="#0284c7" stroke-width="5" stroke-linecap="round" opacity="0.75" />
+    <line x1="1746.79" y1="1400.0" x2="1764.12" y2="1450.0" stroke="#0284c7" stroke-width="5" stroke-linecap="round" opacity="0.75" />
+    <line x1="1668.85" y1="1445.0" x2="1686.17" y2="1495.0" stroke="#0284c7" stroke-width="5" stroke-linecap="round" opacity="0.75" />
+    <line x1="1590.91" y1="1490.0" x2="1608.23" y2="1540.0" stroke="#0284c7" stroke-width="5" stroke-linecap="round" opacity="0.75" />
+    <line x1="1833.4" y1="1450.0" x2="1850.72" y2="1500.0" stroke="#0284c7" stroke-width="5" stroke-linecap="round" opacity="0.75" />
+    <line x1="1755.46" y1="1495.0" x2="1772.78" y2="1545.0" stroke="#0284c7" stroke-width="5" stroke-linecap="round" opacity="0.75" />
+    <line x1="1677.51" y1="1540.0" x2="1694.83" y2="1590.0" stroke="#0284c7" stroke-width="5" stroke-linecap="round" opacity="0.75" />
+    <line x1="1920.0" y1="1500.0" x2="1937.32" y2="1550.0" stroke="#0284c7" stroke-width="5" stroke-linecap="round" opacity="0.75" />
+    <line x1="1842.06" y1="1545.0" x2="1859.38" y2="1595.0" stroke="#0284c7" stroke-width="5" stroke-linecap="round" opacity="0.75" />
+    <line x1="1764.12" y1="1590.0" x2="1781.44" y2="1640.0" stroke="#0284c7" stroke-width="5" stroke-linecap="round" opacity="0.75" />
+
+  <!-- 3D Spatial Zone Labels -->
+  <g>
+
+    <!-- Label: 总控机房 / 核心数据中心 -->
+    <g transform="translate(335.17, 805.0)">
+      <line x1="0" y1="0" x2="0" y2="-45" stroke="#38bdf8" stroke-width="1.8" />
+      <circle cx="0" cy="0" r="4" fill="#38bdf8" filter="url(#neon)" />
+      <rect x="-140" y="-85" width="280" height="40" rx="6" fill="#080f1d" fill-opacity="0.9" stroke="#38bdf8" stroke-width="1.5" filter="url(#softGlow)" />
+      <rect x="-135" y="-80" width="46" height="16" rx="3" fill="#38bdf8" fill-opacity="0.25" />
+      <text x="-112" y="-68" fill="#38bdf8" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">CORE-DC</text>
+      <text x="-80" y="-69" fill="#f8fafc" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="bold">总控机房 / 核心数据中心</text>
+      <text x="-130" y="-51" fill="#94a3b8" font-family="system-ui, -apple-system, sans-serif" font-size="10">Core DC · NeoSight POL / 华为核心网元</text>
+    </g>
+
+    <!-- Label: 综合办公大楼 -->
+    <g transform="translate(560.34, 545.0)">
+      <line x1="0" y1="0" x2="0" y2="-45" stroke="#60a5fa" stroke-width="1.8" />
+      <circle cx="0" cy="0" r="4" fill="#60a5fa" filter="url(#neon)" />
+      <rect x="-140" y="-85" width="280" height="40" rx="6" fill="#080f1d" fill-opacity="0.9" stroke="#60a5fa" stroke-width="1.5" filter="url(#softGlow)" />
+      <rect x="-135" y="-80" width="46" height="16" rx="3" fill="#60a5fa" fill-opacity="0.25" />
+      <text x="-112" y="-68" fill="#60a5fa" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">OFFICE</text>
+      <text x="-80" y="-69" fill="#f8fafc" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="bold">综合办公大楼</text>
+      <text x="-130" y="-51" fill="#94a3b8" font-family="system-ui, -apple-system, sans-serif" font-size="10">Headquarters · 10.37.20.1 核心交换机</text>
+    </g>
+
+    <!-- Label: 制管车间 (先行试点) -->
+    <g transform="translate(2145.17, 810.0)">
+      <line x1="0" y1="0" x2="0" y2="-45" stroke="#38bdf8" stroke-width="1.8" />
+      <circle cx="0" cy="0" r="4" fill="#38bdf8" filter="url(#neon)" />
+      <rect x="-140" y="-85" width="280" height="40" rx="6" fill="#080f1d" fill-opacity="0.9" stroke="#38bdf8" stroke-width="1.5" filter="url(#softGlow)" />
+      <rect x="-135" y="-80" width="46" height="16" rx="3" fill="#38bdf8" fill-opacity="0.25" />
+      <text x="-112" y="-68" fill="#38bdf8" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">HG-WORKSHOP</text>
+      <text x="-80" y="-69" fill="#f8fafc" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="bold">制管车间 (先行试点)</text>
+      <text x="-130" y="-51" fill="#94a3b8" font-family="system-ui, -apple-system, sans-serif" font-size="10">30 台终端箱 · 188 台 ONU · 机器视觉监控</text>
+    </g>
+
+    <!-- Label: 热镀车间 -->
+    <g transform="translate(2439.62, 1530.0)">
+      <line x1="0" y1="0" x2="0" y2="-45" stroke="#22d3ee" stroke-width="1.8" />
+      <circle cx="0" cy="0" r="4" fill="#22d3ee" filter="url(#neon)" />
+      <rect x="-140" y="-85" width="280" height="40" rx="6" fill="#080f1d" fill-opacity="0.9" stroke="#22d3ee" stroke-width="1.5" filter="url(#softGlow)" />
+      <rect x="-135" y="-80" width="46" height="16" rx="3" fill="#22d3ee" fill-opacity="0.25" />
+      <text x="-112" y="-68" fill="#22d3ee" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">RD-WORKSHOP</text>
+      <text x="-80" y="-69" fill="#f8fafc" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="bold">热镀车间</text>
+      <text x="-130" y="-51" fill="#94a3b8" font-family="system-ui, -apple-system, sans-serif" font-size="10">34 台终端箱 · 环保酸洗/排管打包</text>
+    </g>
+
+    <!-- Label: 螺旋管车间 -->
+    <g transform="translate(2136.51, 165.0)">
+      <line x1="0" y1="0" x2="0" y2="-45" stroke="#a5b4fc" stroke-width="1.8" />
+      <circle cx="0" cy="0" r="4" fill="#a5b4fc" filter="url(#neon)" />
+      <rect x="-140" y="-85" width="280" height="40" rx="6" fill="#080f1d" fill-opacity="0.9" stroke="#a5b4fc" stroke-width="1.5" filter="url(#softGlow)" />
+      <rect x="-135" y="-80" width="46" height="16" rx="3" fill="#a5b4fc" fill-opacity="0.25" />
+      <text x="-112" y="-68" fill="#a5b4fc" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">LX-WORKSHOP</text>
+      <text x="-80" y="-69" fill="#f8fafc" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="bold">螺旋管车间</text>
+      <text x="-130" y="-51" fill="#94a3b8" font-family="system-ui, -apple-system, sans-serif" font-size="10">11 台终端箱 · X光射线探伤/机组</text>
+    </g>
+
+    <!-- Label: 西大门保卫处 / 磅房 -->
+    <g transform="translate(205.27, 670.0)">
+      <line x1="0" y1="0" x2="0" y2="-45" stroke="#f59e0b" stroke-width="1.8" />
+      <circle cx="0" cy="0" r="4" fill="#f59e0b" filter="url(#neon)" />
+      <rect x="-140" y="-85" width="280" height="40" rx="6" fill="#080f1d" fill-opacity="0.9" stroke="#f59e0b" stroke-width="1.5" filter="url(#softGlow)" />
+      <rect x="-135" y="-80" width="46" height="16" rx="3" fill="#f59e0b" fill-opacity="0.25" />
+      <text x="-112" y="-68" fill="#f59e0b" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="bold" text-anchor="middle">SECURITY</text>
+      <text x="-80" y="-69" fill="#f8fafc" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="bold">西大门保卫处 / 磅房</text>
+      <text x="-130" y="-51" fill="#94a3b8" font-family="system-ui, -apple-system, sans-serif" font-size="10">安防门禁 · 车牌识别 · 货运地磅</text>
+    </g>
+  </g>
+
+  <!-- Digital Twin HUD Compass & Scale -->
+  <g transform="translate(180, 180)">
+    <circle cx="0" cy="0" r="60" fill="#080f1d" fill-opacity="0.8" stroke="#0ea5e9" stroke-width="1.5" />
+    <circle cx="0" cy="0" r="48" fill="none" stroke="#0369a1" stroke-width="1" stroke-dasharray="4,4" />
+    <line x1="0" y1="-45" x2="0" y2="45" stroke="#38bdf8" stroke-width="1.5" />
+    <line x1="-45" y1="0" x2="45" y2="0" stroke="#0369a1" stroke-width="1" />
+    <polygon points="0,-45 -8,-25 0,-30 8,-25" fill="#38bdf8" />
+    <text x="0" y="-48" fill="#38bdf8" font-size="12" font-weight="bold" text-anchor="middle">N</text>
+    <text x="0" y="24" fill="#94a3b8" font-size="9" text-anchor="middle">2.5D AXON</text>
+  </g>
+
+</svg>

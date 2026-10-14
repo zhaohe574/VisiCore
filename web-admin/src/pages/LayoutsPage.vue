@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useActivePage } from '../composables/useActivePage'
 import {
   ArrowDown,
   ArrowUp,
@@ -45,8 +46,11 @@ const form = reactive<Omit<Layout, 'id'>>({
 
 const available = computed(() => channels.value.filter(channel => !form.channelIds.includes(channel.id)))
 const canShare = computed(() => auth.can('layout.share'))
+const lifecycle = useActivePage(load)
 
 async function load() {
+  const ticket = lifecycle.ticket()
+  if (ticket === undefined) return
   loading.value = true
   error.value = ''
   try {
@@ -55,13 +59,14 @@ async function load() {
       mediaApi.favorites(),
       allPages(managementApi.channels)
     ])
+    if (!lifecycle.current(ticket)) return
     layouts.value = data[0]
     favorites.value = data[1]
     channels.value = data[2]
   } catch (e) {
-    error.value = errorMessage(e)
+    if (lifecycle.current(ticket)) error.value = errorMessage(e)
   } finally {
-    loading.value = false
+    if (lifecycle.current(ticket)) loading.value = false
   }
 }
 
@@ -261,9 +266,7 @@ onBeforeUnmount(unsubscribe)
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
             <div class="table-tools">
-              <router-link :to="{ path: '/app/live', query: { layoutId: row.id } }">
-                <el-button link type="primary" :icon="VideoPlay">载入</el-button>
-              </router-link>
+              <span class="muted">桌面端载入</span>
               <template v-if="!row.shared || canShare">
                 <el-button link type="primary" :icon="Edit" @click="edit(row as Layout)">编辑</el-button>
                 <el-button link type="danger" :icon="Delete" :disabled="busy" @click="remove(row as Layout)">删除</el-button>

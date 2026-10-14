@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onActivated, onDeactivated, ref, shallowRef, watch } from 'vue'
 import { Camera, Close, FullScreen, Microphone, Mute, Refresh, VideoCamera, VideoPause, VideoPlay } from '@element-plus/icons-vue'
 import { ApiError, type Channel, type LiveSession, type PlaybackControl, type PlaybackSession } from '../api'
 import { MediaLease } from '../lib/mediaLease'
@@ -12,6 +12,7 @@ const emit = defineEmits<{ select: []; close: []; dropChannel: [id: number]; cha
 const root = ref<HTMLElement>(), video = ref<HTMLVideoElement>(), session = shallowRef<LiveSession | PlaybackSession | null>(null), error = ref(''), busy = ref(false), muted = ref(true), ready = ref(false), localPaused = ref(false), retryCount = ref(0)
 let player: ReturnType<typeof Mpegts.createPlayer> | undefined, playerGeneration = 0, generation = 0, disposed = false, renewAt = Date.now(), retryTimer: ReturnType<typeof setTimeout> | undefined, timer: ReturnType<typeof setInterval> | undefined
 const lease = new MediaLease(value => { session.value = value; emit('changed', value) })
+let active = true
 const playback = computed(() => props.mode === 'playback' ? session.value as PlaybackSession | null : null)
 const segments = computed(() => playback.value ? timelineSegments(playback.value.segments || [], playback.value.start, playback.value.end) : [])
 const statusText = computed(() => ({ starting: '连接中', paused: '已暂停', gap: '当前时间没有录像', completed: '回放已结束', failed: '媒体会话失败', stopped: '已停止' }[session.value?.state || ''] || ''))
@@ -61,6 +62,7 @@ function scheduleRetry() {
   retryTimer = setTimeout(() => { if (!disposed && props.channel) void start(false, resumePos) }, Math.min(10000, retryCount.value * 2000))
 }
 async function start(resetRetry = true, resumePosition?: string) {
+  if (!active || disposed) return
   const current = ++generation
   clearTimeout(retryTimer); destroyPlayer(); error.value = ''; busy.value = true
   if (resetRetry) retryCount.value = 0
@@ -169,6 +171,8 @@ const stopEvent = () => void stop()
 const hideEvent = () => void stop(true)
 watch(() => [props.channel?.id, props.mode, props.streamType, props.range?.start, props.range?.end], () => void start())
 onMounted(() => { void start(); timer = setInterval(() => void refresh(), 3000); window.addEventListener('pagehide', hideEvent); window.addEventListener('platform-media-stop', stopEvent); window.addEventListener('platform-access-changed', stopEvent) })
+onDeactivated(() => { active = false; clearInterval(timer); void stop() })
+onActivated(() => { if (!active) { active = true; void start(); timer = setInterval(() => void refresh(), 3000) } })
 onBeforeUnmount(() => { disposed = true; clearInterval(timer); void stop(); window.removeEventListener('pagehide', hideEvent); window.removeEventListener('platform-media-stop', stopEvent); window.removeEventListener('platform-access-changed', stopEvent) })
 defineExpose({ control, stop, retry: start })
 </script>

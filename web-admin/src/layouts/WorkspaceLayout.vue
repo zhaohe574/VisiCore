@@ -3,10 +3,11 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Bell,
+  Box,
   Camera,
-  Collection,
   Connection,
   Cpu,
+  DataLine,
   Download,
   Expand,
   Fold,
@@ -16,22 +17,26 @@ import {
   List,
   Lock,
   Monitor,
+  OfficeBuilding,
+  Platform,
   Search,
   Setting,
   SwitchButton,
   User,
-  VideoCamera,
-  VideoPlay,
   Right
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAuth } from '../stores/auth'
 import { useEvents } from '../stores/events'
+import { useTabsStore } from '../stores/tabs'
 import { errorMessage } from '../lib/format'
-import { workflowApi } from '../api'
+import { assetApi, workflowApi, type Asset } from '../api'
+import { workspaceGroups, workspacePages } from '../navigation'
+import WorkspaceTabs from '../components/layout/WorkspaceTabs.vue'
 
 const auth = useAuth()
 const events = useEvents()
+const tabsStore = useTabsStore()
 const route = useRoute()
 const router = useRouter()
 
@@ -45,52 +50,52 @@ const pendingAlarmCount = ref(0)
 // 全局快速搜索弹窗状态
 const searchDialogOpen = ref(false)
 const searchKeyword = ref('')
+const assetResults = ref<Asset[]>([])
+const assetSearchError = ref('')
+let assetSearchTimer: ReturnType<typeof setTimeout> | undefined
+let assetSearchController: AbortController | undefined
+watch([searchKeyword, searchDialogOpen], () => {
+  clearTimeout(assetSearchTimer)
+  assetSearchController?.abort()
+  assetResults.value = []
+  assetSearchError.value = ''
+  if (!searchDialogOpen.value || !searchKeyword.value.trim() || (!auth.can('channel.read') && !auth.can('device.read') && !auth.can('computer.read') && !auth.can('pon.read'))) return
+  assetSearchTimer = setTimeout(async () => {
+    const controller = assetSearchController = new AbortController()
+    try {
+      const result = await assetApi.search({ search: searchKeyword.value.trim(), pageSize: 12 }, controller.signal)
+      if (!controller.signal.aborted) assetResults.value = result.items
+    } catch (e) { if (!controller.signal.aborted) assetSearchError.value = errorMessage(e) }
+  }, 250)
+})
+function openAsset(asset: Asset) {
+  searchDialogOpen.value = false
+  if (asset.ref.type === 'channel') {
+    void router.push({ path: '/app/organization', query: { channelId: String(asset.ref.id) } })
+  } else if (asset.ref.type === 'terminal_box') {
+    void router.push({ path: '/app/terminal-boxes', query: { boxId: String(asset.ref.id) } })
+  } else if (asset.ref.type === 'computer') {
+    void router.push({ path: '/app/computers', query: { computerId: String(asset.ref.id) } })
+  } else if (asset.ref.type === 'network_device') {
+    void router.push({ path: '/app/network-devices', query: { deviceId: String(asset.ref.id) } })
+  } else if (asset.ref.type === 'device') {
+    void router.push({ path: '/app/devices', query: { deviceId: String(asset.ref.id) } })
+  } else {
+    void router.push({ path: '/app/organization' })
+  }
+}
 
 function toggleCollapse() {
   isCollapsed.value = !isCollapsed.value
   localStorage.setItem('visicore-sidebar-collapsed', String(isCollapsed.value))
 }
 
-const sections = [
-  {
-    name: '值守中心',
-    links: [
-      { path: '/app', title: '运行总览', icon: House, permission: 'statistics.read' },
-      { path: '/app/live', title: '实时预览', icon: VideoCamera, permission: 'live.view' },
-      { path: '/app/playback', title: '录像回放', icon: VideoPlay, permission: 'playback.view' },
-      { path: '/app/alarms', title: '报警中心', icon: Bell, permission: 'alarm.read', badge: () => pendingAlarmCount.value },
-      { path: '/app/exports', title: '录像导出', icon: Download, permission: 'export.create' },
-      { path: '/app/layouts', title: '收藏与轮巡', icon: Collection, permission: 'live.view' }
-    ]
-  },
-  {
-    name: '平台管理',
-    links: [
-      { path: '/app/devices', title: '设备管理', icon: Camera, permission: 'device.read' },
-      { path: '/app/plugins', title: '插件管理', icon: Cpu, permission: 'plugin.read' },
-      { path: '/app/organization', title: '组织与通道', icon: FolderOpened, permission: 'area.read' },
-      { path: '/app/accounts', title: '账号与角色', icon: User, permission: 'user.read' },
-      { path: '/app/sessions', title: '在线会话', icon: Connection, permission: 'session.manage' },
-      { path: '/app/audit', title: '操作审计', icon: List, permission: 'audit.read' },
-      { path: '/app/releases', title: '版本发布', icon: Monitor, permission: 'desktop.release.manage' },
-      { path: '/app/ssl', title: 'SSL管控', icon: Lock, permission: 'ssl.read' },
-      { path: '/app/settings', title: '系统设置', icon: Setting, permission: 'settings.manage' }
-    ]
-  }
-]
-
-const visibleSections = computed(() =>
-  sections
-    .map(section => ({
-      ...section,
-      links: section.links.filter(link =>
-        link.path === '/app/accounts'
-          ? auth.can('user.read') || auth.can('role.read')
-          : auth.can(link.permission)
-      )
-    }))
-    .filter(section => section.links.length > 0)
-)
+const visibleSections = computed(() => workspaceGroups.map(name => ({
+  name,
+  links: workspacePages.filter(page => page.group === name && auth.canRoute(page)).map(page => ({
+    ...page, badge: page.path === '/app/alarms' ? () => pendingAlarmCount.value : undefined
+  }))
+})).filter(section => section.links.length > 0))
 
 // 获取待处理报警数量
 async function refreshPendingAlarms() {
@@ -169,6 +174,13 @@ const unsubscribers = [
   })
 ]
 
+// 初始化当前页签状态（仅保留运行总览及当前页面）
+tabsStore.initTabs(route)
+
+watch(() => route.fullPath, () => {
+  tabsStore.addTab(route)
+})
+
 watch(() => auth.authenticated, loggedIn => {
   if (!loggedIn) {
     void events.stop()
@@ -183,6 +195,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  clearTimeout(assetSearchTimer)
+  assetSearchController?.abort()
   unsubscribers.forEach(fn => fn())
   void events.stop()
   window.removeEventListener('keydown', handleGlobalKeydown)
@@ -241,6 +255,7 @@ onBeforeUnmount(() => {
       <!-- 现代化顶部导航栏 -->
       <header class="workspace-topbar">
         <div class="topbar-left">
+
           <div class="topbar-breadcrumb">
             <el-icon style="font-size: 14px;"><House /></el-icon>
             <span>工作区</span>
@@ -301,11 +316,19 @@ onBeforeUnmount(() => {
         </div>
       </header>
 
+      <!-- 多页签导航栏 -->
+      <WorkspaceTabs />
+
       <!-- 主要路由视口 -->
       <main class="workspace-content">
-        <router-view v-slot="{ Component }">
+        <router-view v-slot="{ Component, route: currentRoute }">
           <transition name="fade-transform" mode="out-in">
-            <component :is="Component" :key="route.path" />
+            <keep-alive :include="tabsStore.cachedViews">
+              <component
+                :is="Component"
+                :key="tabsStore.getComponentKey(currentRoute)"
+              />
+            </keep-alive>
           </transition>
         </router-view>
       </main>
@@ -322,7 +345,7 @@ onBeforeUnmount(() => {
       <div style="margin-bottom: 16px;">
         <el-input
           v-model="searchKeyword"
-          placeholder="输入页面功能关键词快速跳转..."
+          placeholder="搜索资产名称、编号、IP 或页面功能"
           :prefix-icon="Search"
           size="large"
           clearable
@@ -331,7 +354,11 @@ onBeforeUnmount(() => {
       </div>
 
       <div style="max-height: 360px; overflow-y: auto;">
-        <div v-if="!filteredNavOptions.length" class="muted" style="text-align: center; padding: 24px;">
+        <el-alert v-if="assetSearchError" :title="assetSearchError" type="error" :closable="false" />
+        <div v-for="asset in assetResults" :key="asset.ref.type + asset.ref.id" class="channel-entry" style="padding: 12px; cursor: pointer;" @click="openAsset(asset)">
+          <strong>{{ asset.name }}</strong><span class="muted" style="margin-left: 10px;">{{ asset.ip || asset.code }} · {{ asset.ref.type }}</span>
+        </div>
+        <div v-if="!filteredNavOptions.length && !assetResults.length" class="muted" style="text-align: center; padding: 24px;">
           未搜索到匹配的功能模块
         </div>
         <div
@@ -353,6 +380,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+
+
 .fade-transform-leave-active,
 .fade-transform-enter-active {
   transition: all 0.18s ease-out;

@@ -202,6 +202,16 @@
                         </Border>
 
                         <TextBlock Text="网络与传输策略" Style="{StaticResource PanelHeaderText}" Margin="0,10,0,8"/>
+                        <Border Style="{StaticResource PanelCard}" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock Text="跨网段源地址绑定" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                                <TextBlock Text="本机源 IP，留空使用系统路由" FontSize="11"/>
+                                <TextBox Text="{Binding SourceAddress, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,10"/>
+                                <TextBlock Text="适用目标主机前缀，留空适用所有连接" FontSize="11"/>
+                                <TextBox Text="{Binding SourceHostPrefix, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,10"/>
+                                <Button Content="保存绑定策略" Command="{Binding SaveSourceBindingCommand}" HorizontalAlignment="Left"/>
+                            </StackPanel>
+                        </Border>
                         <Border Style="{StaticResource PanelCard}">
                             <StackPanel>
                                 <DockPanel Margin="0,0,0,6">

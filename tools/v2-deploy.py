@@ -15,15 +15,15 @@ def main():
     parser.add_argument("--switch", action="store_true")
     parser.add_argument("--release")
     parser.add_argument("--config-only", action="store_true")
-    parser.add_argument("--artifact-root", type=Path, help="服务端候选产物根目录，默认使用 artifacts/v2")
+    parser.add_argument("--password")
+    parser.add_argument("--bind-ip")
     args = parser.parse_args()
-    release = args.release or ("2.1.1-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
+    release = args.release or ("2.2.0-" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
     if any(c not in "0123456789.-" for c in release): raise RuntimeError("版本目录名无效")
-    artifact_root = (args.artifact_root or (ROOT / "artifacts/v2")).resolve()
     client=paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     sock = None
-    bind_ip = os.environ.get("VIDEO_PLATFORM_BIND_IP", "10.37.6.210" if os.name == "nt" else None)
+    bind_ip = args.bind_ip or os.environ.get("VIDEO_PLATFORM_BIND_IP", "10.37.6.210" if os.name == "nt" else None)
     if bind_ip:
         import socket
         try:
@@ -33,35 +33,40 @@ def main():
             sock = s
         except Exception:
             sock = None
-    client.connect("10.37.200.74",username="liteware",password=os.environ["VIDEO_PLATFORM_SSH_PASSWORD"],sock=sock,timeout=15,look_for_keys=False,allow_agent=False)
+    ssh_password = args.password or os.environ.get("VIDEO_PLATFORM_SSH_PASSWORD"))
+    client.connect("10.37.200.74",username="liteware",password=ssh_password,sock=sock,timeout=15,look_for_keys=False,allow_agent=False)
     remote = "/opt/video-platform-v2/releases/" + release
     def sudo(command):
         stdin,out,err=client.exec_command("sudo -S -p '' " + command,timeout=180)
-        stdin.write(os.environ["VIDEO_PLATFORM_SSH_PASSWORD"]+"\n");stdin.flush();stdin.channel.shutdown_write()
+        stdin.write(ssh_password+"\n");stdin.flush();stdin.channel.shutdown_write()
         output=out.read().decode("utf-8","replace");error=err.read().decode("utf-8","replace")
         if out.channel.recv_exit_status(): raise RuntimeError("部署操作失败："+error[-5000:]+output[-1000:])
         if output.strip(): print(output.strip(),flush=True)
     try:
         sudo("install -d -o liteware -g liteware -m 755 " + remote)
+        import tarfile, tempfile
+        tar_path = Path(tempfile.gettempdir()) / f"release-{release}.tar.gz"
+        print("正在打包部署产物...", flush=True)
+        with tarfile.open(tar_path, "w:gz") as tar:
+            if not args.config_only:
+                for part in ["api", "worker", "adapter"]:
+                    source = ROOT / "artifacts/v2" / part
+                    if not source.is_dir(): raise RuntimeError("缺少发布产物：" + str(source))
+                    tar.add(str(source), arcname=part)
+                    print("已归档 " + part, flush=True)
+                tar.add(str(ROOT / "web-admin/dist"), arcname="web")
+                print("已归档 web-admin", flush=True)
+            tar.add(str(ROOT / "deploy/v2-install.py"), arcname="deploy/v2-install.py")
+            tar.add(str(ROOT / "deploy/nginx-v2.conf"), arcname="deploy/nginx-v2.conf")
+        print("打包完成，正在上传至服务器...", flush=True)
         with client.open_sftp() as sftp:
-            def mkdir(path):
-                try: sftp.stat(path)
-                except FileNotFoundError:
-                    mkdir(posixpath.dirname(path));sftp.mkdir(path)
-            def upload_tree(local, dest):
-                for path in local.rglob("*"):
-                    if path.is_file():
-                        target=dest+"/"+path.relative_to(local).as_posix()
-                        mkdir(posixpath.dirname(target));sftp.put(str(path),target)
-            for part in ([] if args.config_only else ["api","worker","adapter"]):
-                source=artifact_root/part
-                if not source.is_dir(): raise RuntimeError("缺少发布产物："+str(source))
-                upload_tree(source,remote+"/"+part)
-                print("已上传 "+part,flush=True)
-            if not args.config_only: upload_tree(ROOT/"web-admin/dist",remote+"/web")
-            mkdir(remote+"/deploy")
-            for name in ["v2-install.py","nginx-v2.conf"]:
-                sftp.put(str(ROOT/"deploy"/name),remote+"/deploy/"+name)
+            sftp.put(str(tar_path), f"/tmp/release-{release}.tar.gz")
+        print("上传成功，正在解压...", flush=True)
+        sudo(f"tar -xzf /tmp/release-{release}.tar.gz -C {remote}")
+        sudo(f"chown -R liteware:liteware {remote}")
+        sudo(f"rm -f /tmp/release-{release}.tar.gz")
+        tar_path.unlink(missing_ok=True)
+        print("解压完成，正在执行安装与切换...", flush=True)
         sudo("python3 "+remote+"/deploy/v2-install.py "+remote+(" --switch" if args.switch else ""))
         if not args.switch:
             import ipaddress

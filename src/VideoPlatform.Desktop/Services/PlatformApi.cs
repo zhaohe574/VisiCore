@@ -33,9 +33,9 @@ public sealed class PlatformApi(SessionService session) : IPlatformApi
         {
             ["auth", "me"] => ClientModelMapping.From(await client.GetCurrentUserAsync(ct)),
             ["channels", var id, "stream-probe"] => ClientModelMapping.From(await client.ProbeChannelStreamAsync(Id(id), new Generated.StreamProbeRequest { StreamType = route.Integer("streamType") ?? 2 }, cancellationToken: ct)),
-            ["channels"] => ClientModelMapping.From(await client.ListChannelsAsync(route.Long("deviceId"), route.Long("unitId"),
-                route.Long("areaId"), route.Long("workshopId"), route.Boolean("online"), route.Boolean("assigned"),
-                route.Integer("page"), route.Integer("pageSize"), route.Text("search"), ct)),
+            ["channels"] => ClientModelMapping.From(await client.ListChannelsAsync(deviceId: route.Long("deviceId"), unitId: route.Long("unitId"),
+                areaId: route.Long("areaId"), workshopId: route.Long("workshopId"), online: route.Boolean("online"), assigned: route.Boolean("assigned"),
+                page: route.Integer("page"), pageSize: route.Integer("pageSize"), search: route.Text("search"), cancellationToken: ct)),
             ["favorites"] => (await client.GetFavoritesAsync(ct)).Select(ClientModelMapping.From).ToArray(),
             ["layouts"] => (await client.GetLayoutsAsync(ct)).Select(ClientModelMapping.From).ToArray(),
             ["organization"] => ClientModelMapping.From(await client.GetOrganizationAsync(ct)),
@@ -57,9 +57,9 @@ public sealed class PlatformApi(SessionService session) : IPlatformApi
         var value = await session.SendAuthorizedAsync<object>(async (client, ct) => (route.Parts, body) switch
         {
             (["live-sessions"], LiveRequest request) => ClientModelMapping.From(await client.StartLiveAsync(new Generated.LiveRequest
-                { ChannelId = request.ChannelId, StreamType = request.StreamType, Profile = request.Profile }, cancellationToken: ct)),
+                { ChannelId = request.ChannelId, StreamType = request.StreamType, Profile = request.Profile, ConsumerId = request.ConsumerId }, cancellationToken: ct)),
             (["playback-sessions"], PlaybackRequest request) => ClientModelMapping.From(await client.StartPlaybackAsync(new Generated.PlaybackRequest
-                { ChannelId = request.ChannelId, Start = request.Start, End = request.End, Profile = request.Profile, StreamType = request.StreamType }, cancellationToken: ct)),
+                { ChannelId = request.ChannelId, Start = request.Start, End = request.End, Profile = request.Profile, StreamType = request.StreamType, ConsumerId = request.ConsumerId }, cancellationToken: ct)),
             (["recordings", "search"], RecordingRequest request) => (await client.SearchRecordingsAsync(new Generated.RecordingRequest
                 { ChannelId = request.ChannelId, Start = request.Start, End = request.End }, cancellationToken: ct)).Select(ClientModelMapping.From).ToArray(),
             (["layouts"], LayoutRequest request) => ClientModelMapping.From(await client.CreateLayoutAsync(ClientModelMapping.To(request), cancellationToken: ct)),

@@ -14,7 +14,7 @@ import {
   Warning
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { managementApi, type Channel, type Device, type DeviceInput, type DevicePlugin } from '../api'
+import { managementApi, ponApi, type Channel, type Device, type DeviceInput, type DevicePlugin, type TerminalBoxDto, type OnuDeviceDto } from '../api'
 import { dateTime } from '../lib/format'
 import { usePaged } from '../composables/usePaged'
 import { useAction } from '../composables/useAction'
@@ -47,6 +47,58 @@ const detailChannelsLoading = ref(false)
 const plugins = ref<DevicePlugin[]>([])
 const selectedDevices = ref<Device[]>([])
 
+const terminalBoxes = ref<TerminalBoxDto[]>([])
+const boxOnus = ref<OnuDeviceDto[]>([])
+const loadingBoxOnus = ref(false)
+
+async function loadTerminalBoxes() {
+  if (terminalBoxes.value.length === 0) {
+    try {
+      terminalBoxes.value = await ponApi.terminalBoxes()
+    } catch {}
+  }
+}
+
+async function onBoxChange(boxId?: number | null) {
+  form.onuDeviceId = null
+  form.portNumber = null
+  form.portLabel = ''
+  boxOnus.value = []
+  if (boxId) {
+    await loadBoxOnus(boxId)
+  }
+}
+
+async function loadBoxOnus(boxId: number) {
+  loadingBoxOnus.value = true
+  try {
+    const res = await ponApi.onus({ terminalBoxId: boxId, pageSize: 50 })
+    boxOnus.value = res.items || []
+  } catch {} finally {
+    loadingBoxOnus.value = false
+  }
+}
+
+function onOnuChange(onuId?: number | null) {
+  if (!onuId) {
+    form.portNumber = null
+    form.portLabel = ''
+    return
+  }
+  const onu = boxOnus.value.find(o => o.id === onuId)
+  if (onu) {
+    if (onu.hasSubSwitch) {
+      form.isSwitchPort = true
+      form.portNumber = 1
+      form.portLabel = 'SW-P1'
+    } else {
+      form.isSwitchPort = false
+      form.portNumber = 1
+      form.portLabel = 'LAN1'
+    }
+  }
+}
+
 const form = reactive<DeviceInput>({
   name: '',
   host: '',
@@ -54,7 +106,12 @@ const form = reactive<DeviceInput>({
   username: '',
   password: '',
   enabled: true,
-  pluginId: 'hikvision'
+  pluginId: 'hikvision',
+  terminalBoxId: null,
+  onuDeviceId: null,
+  portNumber: null,
+  isSwitchPort: false,
+  portLabel: ''
 })
 
 // KPI 统计
@@ -82,9 +139,20 @@ function edit(device?: Device) {
     username: device?.username || '',
     password: '',
     enabled: device?.enabled ?? true,
-    pluginId: device?.pluginId || 'hikvision'
+    pluginId: device?.pluginId || 'hikvision',
+    terminalBoxId: device?.terminalBoxId ?? null,
+    onuDeviceId: device?.onuDeviceId ?? null,
+    portNumber: device?.networkPort ?? null,
+    isSwitchPort: device?.isSwitchPort ?? false,
+    portLabel: device?.portLabel ?? ''
   })
   void loadPlugins()
+  void loadTerminalBoxes()
+  if (device?.terminalBoxId) {
+    void loadBoxOnus(device.terminalBoxId)
+  } else {
+    boxOnus.value = []
+  }
   dialog.value = true
 }
 
@@ -104,7 +172,12 @@ async function save() {
         host: form.host.trim(),
         username: form.username.trim(),
         password: form.password || undefined,
-        pluginId: form.pluginId || 'hikvision'
+        pluginId: form.pluginId || 'hikvision',
+        terminalBoxId: form.terminalBoxId || undefined,
+        onuDeviceId: form.onuDeviceId || undefined,
+        portNumber: form.portNumber || undefined,
+        isSwitchPort: form.isSwitchPort ?? false,
+        portLabel: form.portLabel?.trim() || undefined
       })
       await load()
     }, '设备已保存')
@@ -309,6 +382,31 @@ onMounted(() => {
           </template>
         </el-table-column>
 
+        <el-table-column label="承载网络与端口" min-width="190">
+          <template #default="{ row }">
+            <div v-if="row.terminalBoxCode || row.onuAlias || row.portLabel || row.networkPort" style="display: flex; flex-direction: column; gap: 3px;">
+              <div style="display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
+                <el-tag v-if="row.terminalBoxCode || row.terminalBoxName" size="small" type="primary" effect="plain" style="font-weight: 600;">
+                  {{ row.terminalBoxCode || row.terminalBoxName }}
+                </el-tag>
+                <el-tag v-if="row.portLabel || row.networkPort" size="small" :type="row.isSwitchPort ? 'warning' : 'success'" effect="dark" style="font-weight: 600;">
+                  {{ row.portLabel || (row.isSwitchPort ? `SW-P${row.networkPort}` : `LAN${row.networkPort}`) }}
+                </el-tag>
+              </div>
+              <div v-if="row.onuAlias || row.onuName" style="font-size: 11px; color: #64748b; display: flex; align-items: center; gap: 4px;">
+                <el-icon style="color: #0284c7; font-size: 12px;"><Connection /></el-icon>
+                <span class="text-truncate" style="max-width: 130px;" :title="row.onuAlias || row.onuName">
+                  {{ row.onuAlias || row.onuName }}
+                </span>
+                <span v-if="row.onuRxPower !== null && row.onuRxPower !== undefined" :style="{ color: row.onuRxPower < -24 ? '#d97706' : '#10b981', marginLeft: 'auto', fontWeight: 500 }">
+                  {{ row.onuRxPower }} dBm
+                </span>
+              </div>
+            </div>
+            <span v-else class="text-muted">—</span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="驱动插件" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">
             <el-tag size="small" type="info">{{ row.pluginName || '海康威视驱动' }}</el-tag>
@@ -429,6 +527,40 @@ onMounted(() => {
           </el-form-item>
         </div>
 
+        <div style="margin-top: 12px; margin-bottom: 12px; padding: 12px; background: var(--el-fill-color-light); border-radius: var(--radius-md);">
+          <div style="font-weight: 600; font-size: 13px; margin-bottom: 8px; color: var(--el-text-color-primary); display: flex; align-items: center; gap: 6px;">
+            <el-icon style="color: #0284c7;"><Connection /></el-icon>
+            承载网络与端口（物理位置）
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 12px;">
+            <el-form-item label="所属终端箱">
+              <el-select v-model="form.terminalBoxId" clearable filterable placeholder="选择终端箱" style="width: 100%;" @change="onBoxChange">
+                <el-option
+                  v-for="b in terminalBoxes"
+                  :key="b.id"
+                  :label="`${b.code} - ${b.name}`"
+                  :value="b.id"
+                />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="承载 ONU">
+              <el-select v-model="form.onuDeviceId" clearable filterable :placeholder="form.terminalBoxId ? '选择箱内 ONU' : '请先选箱体'" :disabled="!form.terminalBoxId" :loading="loadingBoxOnus" style="width: 100%;" @change="onOnuChange">
+                <el-option
+                  v-for="o in boxOnus"
+                  :key="o.id"
+                  :label="o.alias || o.onuName || o.sn"
+                  :value="o.id"
+                />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="网口 / 端口标识">
+              <el-input v-model="form.portLabel" placeholder="如 LAN1 或 SW-P1" clearable />
+            </el-form-item>
+          </div>
+        </div>
+
         <el-form-item label="启用该设备">
           <el-switch v-model="form.enabled" active-text="启用连接" inactive-text="暂停接入" />
         </el-form-item>
@@ -459,6 +591,14 @@ onMounted(() => {
         <dl class="data-list" style="margin-bottom: 24px;">
           <div><dt>驱动插件</dt><dd><el-tag size="small" type="info">{{ detail.pluginName || '默认驱动' }}</el-tag></dd></div>
           <div><dt>网络地址</dt><dd class="hash">{{ detail.host }}:{{ detail.port }}</dd></div>
+          <div><dt>承载网络与端口</dt><dd>
+            <span v-if="detail.terminalBoxCode || detail.portLabel || detail.onuAlias">
+              <el-tag v-if="detail.terminalBoxCode" size="small" type="primary" effect="plain" style="margin-right: 4px;">{{ detail.terminalBoxCode }}</el-tag>
+              <el-tag v-if="detail.portLabel" size="small" :type="detail.isSwitchPort ? 'warning' : 'success'" effect="dark" style="margin-right: 4px;">{{ detail.portLabel }}</el-tag>
+              <span v-if="detail.onuAlias" class="muted">({{ detail.onuAlias }})</span>
+            </span>
+            <span v-else class="muted">—</span>
+          </dd></div>
           <div><dt>序列号</dt><dd class="hash">{{ detail.serialNumber || '—' }}</dd></div>
           <div><dt>在线通道</dt><dd>{{ detail.onlineChannels }} / {{ detail.channelCount }}</dd></div>
           <div><dt>最近在线心跳</dt><dd>{{ dateTime(detail.lastSeenAt) }}</dd></div>

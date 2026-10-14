@@ -431,4 +431,9 @@ async function revoke(group: VersionGroup) {
   align-items: center;
   gap: 6px;
 }
+@media (max-width: 767px) {
+  .package-details-grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

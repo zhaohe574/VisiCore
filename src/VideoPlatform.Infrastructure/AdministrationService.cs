@@ -29,7 +29,7 @@ public sealed record DiskInfoDto(string Name, string? Label, long? TotalBytes, l
 public sealed record HostInfoDto(string OsDescription, string OsArchitecture, string Framework, string MachineName, long SystemUptimeSeconds, DateTimeOffset ServerTime);
 public sealed record SystemStatisticsDto(double? CpuPercent, long? MemoryTotalBytes, long? MemoryUsedBytes, long? DiskTotalBytes, long? DiskFreeBytes, long UptimeSeconds, IReadOnlyList<ServiceHealthDto> Services, MediaStatisticsDto Media, string Version, NetworkMetricsDto? Network = null, ServerPerformanceDto? Performance = null, IReadOnlyList<DiskInfoDto>? Disks = null, HostInfoDto? Host = null);
 
-public sealed class AdministrationService(Database db, AccessService access, MediaService media, ISettingsStore settings, PlatformOptions options, IDeviceAdapter adapter, IHttpClientFactory httpClients)
+public sealed partial class AdministrationService(Database db, AccessService access, MediaService media, ISettingsStore settings, PlatformOptions options, IDeviceAdapter adapter, IHttpClientFactory httpClients, Nvr.INvrChannelManager? nvrManager = null)
 {
     // 授权写入共用事务锁，防止两个请求同时撤掉最后管理员或绕过范围校验。
     private const long AdministrationLock = 72002010;
@@ -72,157 +72,6 @@ public sealed class AdministrationService(Database db, AccessService access, Med
             or exists(select 1 from grants g where g.type='workshop' and g.scope_id=w.id)
         )
         """;
-
-    public async Task<OrganizationTreeDto> OrganizationAsync(Actor actor, CancellationToken ct = default)
-    {
-        await access.DemandAsync(actor, "area.read", ct);
-        var rows = await db.QueryAsync(ScopeCte + """
-            select 'workshop' as type,id,name,code,status,null::bigint as parent_id from visible_workshops
-            union all select 'area',id,name,code,status,parent_id from visible_areas
-            union all select 'unit',id,name,code,status,parent_id from visible_units order by name,id
-            """, new { userId = actor.UserId }, ct);
-        OrganizationNodeDto[] Nodes(string type) => rows.Where(r => r.Text("type") == type).Select(ToNode).ToArray();
-        return new(Nodes("workshop"), Nodes("area"), Nodes("unit"));
-    }
-
-    public async Task<OrganizationNodeDto> SaveOrganizationAsync(Actor actor, string kind, long? id, OrganizationRequest request, string? ip, CancellationToken ct = default)
-    {
-        var table = OrganizationTable(kind);
-        var name = Rules.Text(request.Name, "组织名称");
-        var code = Rules.Text(request.Code, "组织编码", 64);
-        ValidateStatus(request.Status);
-        Rules.Require(kind == "workshops" ? request.ParentId is null : request.ParentId is > 0, "组织父级不正确");
-        var result = await WriteAsync(actor, "area.manage", async tx =>
-        {
-            JsonObject? previous = null;
-            if (id is not null)
-            {
-                previous = await RequiredAsync(tx, table, id.Value, ct);
-                await DemandNodeScopeAsync(tx, actor.UserId, kind, id.Value, ct);
-            }
-            else if (kind == "workshops") await DemandFullScopeAsync(tx, actor.UserId, ct);
-            if (request.ParentId is { } parentId)
-            {
-                var parentKind = kind == "areas" ? "workshops" : "areas";
-                var parent = await RequiredAsync(tx, parentKind, parentId, ct);
-                Rules.Require(parent.Text("status") == "active", "父级组织已停用", "organization.disabled", 409);
-                if (previous is null || previous.Id("parentId") != parentId)
-                    await DemandNodeScopeAsync(tx, actor.UserId, parentKind, parentId, ct);
-            }
-            var args = new { id, name, code, request.Status, request.ParentId };
-            var sql = id is null
-                ? $"insert into {table}(name,code,status{(kind == "workshops" ? "" : ",parent_id")}) values(@name,@code,@status{(kind == "workshops" ? "" : ",@parentId")}) returning *"
-                : $"update {table} set name=@name,code=@code,status=@status{(kind == "workshops" ? "" : ",parent_id=@parentId")} where id=@id returning *";
-            var row = (await tx.OneAsync(sql, args, ct))!;
-            await AuditAsync(tx, actor, id is null ? "organization.create" : "organization.update", $"{kind}/{row.Id()}", $"组织：{name}，状态：{request.Status}", ip, ct);
-            var changed = previous is not null && (previous.Text("status") != request.Status || previous.Id("parentId") != (request.ParentId ?? 0));
-            var affected = changed ? await UsersWithInaccessibleResourcesAsync(tx, ct) : [];
-            if (changed) await AccessChangedAsync(tx, await AllUserIdsAsync(tx, ct), ct);
-            return (Node: ToNode(row), Affected: affected);
-        }, ct: ct);
-        await RevokeUsersAsync(result.Affected);
-        return result.Node;
-    }
-
-    public Task DeleteOrganizationAsync(Actor actor, string kind, long id, string? ip, CancellationToken ct = default)
-    {
-        var table = OrganizationTable(kind);
-        var scopeType = kind switch { "workshops" => "workshop", "areas" => "area", _ => "unit" };
-        return WriteAsync(actor, "area.manage", async tx =>
-        {
-            var row = await RequiredAsync(tx, table, id, ct);
-            await DemandNodeScopeAsync(tx, actor.UserId, kind, id, ct);
-            var childSql = kind switch
-            {
-                "workshops" => "exists(select 1 from areas where parent_id=@id)",
-                "areas" => "exists(select 1 from units where parent_id=@id)",
-                _ => "exists(select 1 from channels where unit_id=@id)"
-            };
-            var refs = await tx.OneAsync($"select {childSql} or exists(select 1 from user_scopes where type=@scopeType and scope_id=@id) or exists(select 1 from role_scopes where type=@scopeType and scope_id=@id) as referenced", new { id, scopeType }, ct);
-            Rules.Require(!refs.Flag("referenced"), "组织仍有子级、通道或授权范围引用，不能删除", "organization.referenced", 409);
-            await tx.ExecuteAsync($"delete from {table} where id=@id", new { id }, ct);
-            await AuditAsync(tx, actor, "organization.delete", $"{kind}/{id}", $"删除组织：{row.Text("name")}", ip, ct);
-            return true;
-        }, ct: ct);
-    }
-
-    public async Task AssignChannelsAsync(Actor actor, AssignmentRequest request, string? ip, CancellationToken ct = default)
-    {
-        var ids = ValidateIds(request.ChannelIds, 1000, false);
-        Rules.Require(request.UnitId is null or > 0, "目标单元无效");
-        var affected = await WriteAsync(actor, "channel.assign", async tx =>
-        {
-            await DemandChannelsAsync(tx, actor.UserId, ids, false, ct);
-            if (request.UnitId is { } unitId)
-            {
-                var unit = await RequiredAsync(tx, "units", unitId, ct);
-                Rules.Require(unit.Text("status") == "active", "目标单元已停用", "organization.disabled", 409);
-                await DemandNodeScopeAsync(tx, actor.UserId, "units", unitId, ct);
-            }
-            var before = await tx.QueryAsync("select id,unit_id from channels where id=any(@ids) order by id for update", new { ids }, ct);
-            await tx.ExecuteAsync("update channels set unit_id=@unitId,updated_at=now() where id=any(@ids)", new { request.UnitId, ids }, ct);
-            // 每条变更都保留来源和目标，批量操作回滚时审计一并回滚。
-            foreach (var row in before)
-                await AuditAsync(tx, actor, "channel.assign", $"channels/{row.Id()}", $"单元：{row.Text("unitId", "未分配")} → {request.UnitId?.ToString(CultureInfo.InvariantCulture) ?? "未分配"}", ip, ct);
-            var changed = before.Any(r => r.Id("unitId") != (request.UnitId ?? 0));
-            var users = changed ? await UsersWithInaccessibleResourcesAsync(tx, ct) : [];
-            if (changed) await AccessChangedAsync(tx, await AllUserIdsAsync(tx, ct), ct);
-            return users;
-        }, ct: ct);
-        await RevokeUsersAsync(affected);
-    }
-
-    public async Task SortChannelsAsync(Actor actor, ChannelSortRequest request, string? ip, CancellationToken ct = default)
-    {
-        var ids = ValidateIds(request.ChannelIds, 1000, false);
-        Rules.Require(request.UnitId > 0, "目标单元无效");
-        await WriteAsync(actor, "channel.assign", async tx =>
-        {
-            var unit = await RequiredAsync(tx, "units", request.UnitId, ct);
-            Rules.Require(unit.Text("status") == "active", "目标单元已停用", "organization.disabled", 409);
-            await DemandNodeScopeAsync(tx, actor.UserId, "units", request.UnitId, ct);
-            await DemandChannelsAsync(tx, actor.UserId, ids, false, ct);
-            for (var i = 0; i < ids.Length; i++)
-            {
-                await tx.ExecuteAsync("update channels set sort_order=@sortOrder,updated_at=now() where id=@id and unit_id=@unitId", new { sortOrder = i + 1, id = ids[i], unitId = request.UnitId }, ct);
-            }
-            await AuditAsync(tx, actor, "channel.sort", $"units/{request.UnitId}/channels", $"更新单元通道排序：{string.Join(",", ids)}", ip, ct);
-            await AccessChangedAsync(tx, await AllUserIdsAsync(tx, ct), ct);
-            return (long[])[];
-        }, ct: ct);
-    }
-
-    public async Task<ChannelDto> UpdateChannelAsync(Actor actor, long id, ChannelUpdateRequest request, string? ip, CancellationToken ct = default)
-    {
-        Rules.Require(request.Alias is null || request.Alias.Length <= 256, "别名长度超出限制");
-        Rules.Require(request.Ip is null || request.Ip.Length <= 253, "IP地址长度超出限制");
-        Rules.Require(request.Username is null || request.Username.Length <= 128, "账号长度超出限制");
-        Rules.Require(request.Password is null || request.Password.Length <= 256, "密码长度超出限制");
-        Rules.Require(request.UnitId is null or > 0, "目标单元无效");
-        return await WriteAsync(actor, "channel.assign", async tx =>
-        {
-            await DemandChannelsAsync(tx, actor.UserId, [id], false, ct);
-            if (request.UnitId is { } unitId)
-            {
-                var unit = await RequiredAsync(tx, "units", unitId, ct);
-                Rules.Require(unit.Text("status") == "active", "目标单元已停用", "organization.disabled", 409);
-                await DemandNodeScopeAsync(tx, actor.UserId, "units", unitId, ct);
-            }
-            var before = await RequiredAsync(tx, "channels", id, ct);
-            var alias = request.Alias is null ? before["alias"]?.ToString() : string.IsNullOrWhiteSpace(request.Alias) ? null : request.Alias.Trim();
-            var channelIp = request.Ip is null ? before["ip"]?.ToString() : string.IsNullOrWhiteSpace(request.Ip) ? null : request.Ip.Trim();
-            var username = request.Username is null ? before["username"]?.ToString() : string.IsNullOrWhiteSpace(request.Username) ? null : request.Username.Trim();
-            var password = request.ClearPassword ? null : request.Password is null || string.IsNullOrWhiteSpace(request.Password) ? before["password"]?.ToString() : request.Password.Trim();
-            var remark = request.Remark is null ? before["remark"]?.ToString() : string.IsNullOrWhiteSpace(request.Remark) ? null : request.Remark.Trim();
-            if (request.UnitId.HasValue)
-                await tx.ExecuteAsync("update channels set alias=@alias,unit_id=@unitId,ip=@channelIp,username=@username,password=@password,remark=@remark,updated_at=now() where id=@id", new { id, alias, unitId = request.UnitId.Value, channelIp, username, password, remark }, ct);
-            else
-                await tx.ExecuteAsync("update channels set alias=@alias,ip=@channelIp,username=@username,password=@password,remark=@remark,updated_at=now() where id=@id", new { id, alias, channelIp, username, password, remark }, ct);
-            await AuditAsync(tx, actor, "channel.update", $"channels/{id}", $"别名：{before["alias"]?.ToString() ?? "无"} → {alias ?? "无"}", ip, ct);
-            var row = await tx.OneAsync($"select {AccessService.ChannelColumns} from {AccessService.ChannelFrom} where c.id=@id", new { id }, ct);
-            return ToChannel(row!);
-        }, ct: ct);
-    }
 
     public async Task<PagedResponse<UserDto>> UsersAsync(Actor actor, int page, int pageSize, string? search, CancellationToken ct = default)
     {
@@ -469,7 +318,7 @@ public sealed class AdministrationService(Database db, AccessService access, Med
     public async Task<IReadOnlyList<ChannelDto>> FavoritesAsync(Actor actor, CancellationToken ct = default)
     {
         await access.DemandAsync(actor, "channel.read", ct);
-        var rows = await db.QueryAsync($"select {AccessService.ChannelColumns} from favorites f join channels c on c.id=f.channel_id join devices d on d.id=c.device_id left join device_plugins dp on dp.id=d.plugin_id left join units un on un.id=c.unit_id left join areas ar on ar.id=un.parent_id where f.user_id=@userId and d.enabled and c.status<>'disabled' and ({AccessService.ChannelPredicate}) order by f.sort_order,c.id", new { userId = actor.UserId }, ct);
+        var rows = await db.QueryAsync($"select {AccessService.ChannelColumns} from {AccessService.ChannelFrom} join favorites f on f.channel_id=c.id where f.user_id=@userId and d.enabled and c.status<>'disabled' and ({AccessService.ChannelPredicate}) order by f.sort_order,c.id", new { userId = actor.UserId }, ct);
         return rows.Select(ToChannel).ToArray();
     }
 
@@ -608,8 +457,9 @@ public sealed class AdministrationService(Database db, AccessService access, Med
         var performance = AdministrationHostMetrics.Performance();
         var disks = AdministrationHostMetrics.Disks(options.DataPath);
         var host = AdministrationHostMetrics.Host();
+        var version = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "unknown";
         return new(cpu, memoryTotal, memoryUsed, diskTotal, diskFree, uptime, services,
-            new(row.Id("liveSessions"), row.Id("playbackSessions"), row.Id("transcodes")), typeof(AdministrationService).Assembly.GetName().Version?.ToString(3) ?? "unknown",
+            new(row.Id("liveSessions"), row.Id("playbackSessions"), row.Id("transcodes")), version,
             network, performance, disks, host);
     }
 
@@ -671,7 +521,7 @@ public sealed class AdministrationService(Database db, AccessService access, Med
         { throw new PlatformException(409, "resource.referenced", "资源仍被引用或关联资源已变化，请刷新后重试"); }
     }
 
-    private static async Task DemandTransactionAsync(DbSession tx, Actor actor, string permission, bool administrator, CancellationToken ct)
+    internal static async Task DemandTransactionAsync(DbSession tx, Actor actor, string permission, bool administrator, CancellationToken ct)
     {
         var state = await tx.OneAsync("""
             select exists(select 1 from sessions s join users u on u.id=s.user_id where s.id=@sessionId and s.user_id=@userId
@@ -722,7 +572,7 @@ public sealed class AdministrationService(Database db, AccessService access, Med
         Rules.Require(row.Flag("allowed"), "此操作需要全部通道范围授权", "scope.denied", 403);
     }
 
-    private static async Task DemandNodeScopeAsync(DbSession tx, long userId, string kind, long id, CancellationToken ct)
+    internal static async Task DemandNodeScopeAsync(DbSession tx, long userId, string kind, long id, CancellationToken ct)
     {
         var predicate = kind switch
         {
@@ -819,30 +669,79 @@ public sealed class AdministrationService(Database db, AccessService access, Med
     private static OrganizationNodeDto ToNode(JsonObject row) => new(row.Id(), row.Text("name"), row.Text("code"), row.Text("status"), NullableId(row, "parentId"));
     private static UserDto ToUser(JsonObject row) => new(row.Id(), row.Text("username"), row["displayName"]?.ToString(), row["phone"]?.ToString(), row.Text("status"), Array<string>(row, "permissions"), Array<long>(row, "roleIds"));
     private static AdministrationRoleDto ToRole(JsonObject row) => new(row.Id(), row.Text("name"), row.Text("code"), row.Text("status"), Array<string>(row, "permissionCodes"), row.Id("userCount"));
-    private static ChannelDto ToChannel(JsonObject row) => new(
-        row.Id(),
-        row.Id("deviceId"),
-        row.Text("deviceName"),
-        (int)row.Id("deviceChannel"),
-        row.Text("name"),
-        row["alias"]?.ToString(),
-        row["model"]?.ToString(),
-        row.Text("status"),
-        NullableId(row, "unitId"),
-        row.Flag("ptzCapable"),
-        row["codec"]?.ToString(),
-        row["ip"]?.ToString(),
-        row["username"]?.ToString(),
-        row.Flag("hasPassword"),
-        row["remark"]?.ToString(),
-        row["deviceModel"]?.ToString(),
-        row["deviceHost"]?.ToString(),
-        NullableId(row, "devicePort") is { } p ? (int)p : null,
-        row["deviceSerial"]?.ToString(),
-        row["pluginId"]?.ToString(),
-        row["pluginName"]?.ToString(),
-        row["firmwareVersion"]?.ToString(),
-        (int)row.Id("sortOrder"));
+    public async Task<ChannelDto> ChannelAsync(Actor actor, long id, CancellationToken ct = default)
+        => ToChannel(await access.ChannelAsync(actor, id, "channel.read", ct));
+
+    private static ChannelDto ToChannel(JsonObject row)
+    {
+        var boxId = NullableId(row, "terminalBoxId");
+        var onuId = NullableId(row, "onuDeviceId");
+        var onuHealthStatus = row["onuHealthStatus"]?.ToString();
+        var onuRootCause = row["onuRootCause"]?.ToString();
+        decimal? onuRxPower = row["onuRxPower"] is not null ? row.Decimal("onuRxPower") : null;
+        var onuIfDesc = row["onuIfDesc"]?.ToString();
+        var networkPort = NullableId(row, "networkPort") is { } np ? (int?)np : null;
+        var portLabel = row["portLabel"]?.ToString();
+        var onuStatus = row["onuStatus"] is null ? null : (row.Text("onuStatus") is "1" or "online" ? "online" : "offline");
+
+        OpticalLinkInfoDto? opticalLink = (boxId is not null || onuId is not null)
+            ? new OpticalLinkInfoDto(
+                boxId,
+                row["terminalBoxName"]?.ToString(),
+                row["terminalBoxCode"]?.ToString(),
+                onuId,
+                row["onuName"]?.ToString(),
+                row["onuAlias"]?.ToString(),
+                onuHealthStatus ?? (onuStatus == "online" ? "healthy" : (onuStatus == "offline" ? "fiber_cut" : null)),
+                onuRootCause,
+                onuRxPower,
+                onuIfDesc,
+                networkPort,
+                portLabel
+            )
+            : null;
+
+        return new(
+            row.Id(),
+            row.Id("deviceId"),
+            row.Text("deviceName"),
+            (int)row.Id("deviceChannel"),
+            row.Text("name"),
+            row["alias"]?.ToString(),
+            row["model"]?.ToString(),
+            row.Text("status"),
+            NullableId(row, "unitId"),
+            row.Flag("ptzCapable"),
+            row["codec"]?.ToString(),
+            row["ip"]?.ToString(),
+            row["username"]?.ToString(),
+            row.Flag("hasPassword"),
+            row["remark"]?.ToString(),
+            row["deviceModel"]?.ToString(),
+            row["deviceHost"]?.ToString(),
+            NullableId(row, "devicePort") is { } p ? (int)p : null,
+            row["deviceSerial"]?.ToString(),
+            row["pluginId"]?.ToString(),
+            row["pluginName"]?.ToString(),
+            row["firmwareVersion"]?.ToString(),
+            (int)row.Id("sortOrder"),
+            boxId,
+            row["terminalBoxName"]?.ToString(),
+            row["terminalBoxCode"]?.ToString(),
+            onuId,
+            row["onuName"]?.ToString(),
+            row["onuAlias"]?.ToString(),
+            onuStatus,
+            networkPort,
+            row["isSwitchPort"] is null ? null : row.Flag("isSwitchPort"),
+            portLabel,
+            onuHealthStatus,
+            onuRootCause,
+            onuRxPower,
+            onuIfDesc,
+            opticalLink
+        );
+    }
     private static AdministrationLayoutDto ToLayout(JsonObject row) => new(row.Id(), row.Text("name"), row.Text("kind"), row.Flag("shared"), (int)row.Id("layout"), (int)row.Id("intervalSeconds"), Array<long?>(row, "channelIds"));
 }
 

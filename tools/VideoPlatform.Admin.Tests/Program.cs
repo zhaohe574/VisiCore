@@ -15,6 +15,7 @@ using VideoPlatform.Application;
 using VideoPlatform.Contracts;
 using VideoPlatform.Domain;
 using VideoPlatform.Infrastructure;
+using VideoPlatform.Infrastructure.Nvr;
 
 var databaseUrl = Environment.GetEnvironmentVariable("ADMIN_TEST_DATABASE_URL");
 if (string.IsNullOrWhiteSpace(databaseUrl))
@@ -49,6 +50,8 @@ try
     builder.Services.AddSingleton(NpgsqlDataSource.Create(connection.ConnectionString));
     builder.Services.AddSingleton<Database>();
     builder.Services.AddSingleton<AccessService>();
+    builder.Services.AddSingleton<IAccessService>(provider => provider.GetRequiredService<AccessService>());
+    builder.Services.AddSingleton<SslService>();
     builder.Services.AddSingleton<SessionStore>();
     builder.Services.AddSingleton<AuditStore>();
     builder.Services.AddSingleton<ISettingsStore, SettingsStore>();
@@ -137,6 +140,41 @@ internal sealed class AdministrationTests(IServiceProvider services, HttpClient 
         var c2 = (await db.OneAsync("insert into channels(device_id,device_channel,name,status,unit_id) values(@d2,1,'同号异设备通道','offline',@unit) returning id", new { d2, unit = u2.Id })).Id();
         var operatorUser = await admin.SaveUserAsync(actor, null, new("operator1", Password, "值守员", "", "active", [operatorRole.Id]), Ip);
         var (operatorActor, operatorToken) = await LoginAsync(operatorUser.Username);
+
+        await CheckAsync("录像机拒绝更新时资产、审计和事件一起回滚", async () =>
+        {
+            var nvr = new FakeNvr { Fail = true };
+            var before = await db.OneAsync("select * from channels where id=@c1", new { c1 });
+            var auditBefore = (await db.OneAsync("select count(*) as count from audit_logs")).Id("count");
+            var eventsBefore = (await db.OneAsync("select count(*) as count from outbox")).Id("count");
+            await ExpectAsync(502, () => admin.UpdateChannelAsync(actor, c1, new("物理拒绝的更名", Ip: "127.0.9.11", Password: "新密码"), Ip, nvr: nvr));
+            var after = await db.OneAsync("select * from channels where id=@c1", new { c1 });
+            Assert(JsonNode.DeepEquals(before, after), "录像机失败仍修改了平台通道");
+            Assert((await db.OneAsync("select count(*) as count from audit_logs")).Id("count") == auditBefore, "失败更新留下成功审计");
+            Assert((await db.OneAsync("select count(*) as count from outbox")).Id("count") == eventsBefore, "失败更新发布了资产事件");
+            Assert(nvr.Calls == 1, "未执行录像机确认路径");
+        });
+        await CheckAsync("摄像头增量更新保留凭据，显式清除密码传递空字符串", async () =>
+        {
+            await db.ExecuteAsync("update channels set ip='127.0.9.12',username='ipc-user',password='原密码',remark='原备注' where id=@c1", new { c1 });
+            var nvr = new FakeNvr();
+            await admin.UpdateChannelAsync(actor, c1, new(null, Remark: "新备注", Password: ""), Ip, nvr: nvr);
+            var row = await db.OneAsync("select * from channels where id=@c1", new { c1 });
+            Assert(row!.Text("password") == "原密码" && row.Text("username") == "ipc-user" && row.Text("ip") == "127.0.9.12", "增量更新误清空凭据");
+            Assert(nvr.Calls == 0, "仅改备注触发了录像机写入");
+            await admin.UpdateChannelAsync(actor, c1, new(null, ClearPassword: true), Ip, nvr: nvr);
+            Assert((await db.OneAsync("select password from channels where id=@c1", new { c1 }))!["password"] is null, "显式密码清除未入库");
+            Assert(nvr.Calls == 1 && nvr.LastPassword == "", "密码清除没有传递物理设备的清除语义");
+        });
+        await CheckAsync("摄像头新增先校验，录像机失败不建档", async () =>
+        {
+            var before = (await db.OneAsync("select count(*) as count from channels")).Id("count");
+            var nvr = new FakeNvr { Fail = true };
+            await ExpectAsync(409, () => admin.AddCameraDirectAsync(actor, new(d1, 99, "冲突摄像头", "127.0.9.12", UnitId: u1.Id), nvr, Ip));
+            Assert(nvr.Calls == 0, "IP 冲突校验前已操作录像机");
+            await ExpectAsync(502, () => admin.AddCameraDirectAsync(actor, new(d1, 99, "新增失败", "127.0.9.13", UnitId: u1.Id), nvr, Ip));
+            Assert(nvr.Calls == 1 && (await db.OneAsync("select count(*) as count from channels")).Id("count") == before, "失败新增仍建立平台记录");
+        });
 
         await CheckAsync("未配置范围默认拒绝，area.read 仅返回授权树", async () =>
         {
@@ -502,6 +540,30 @@ internal sealed class AdministrationTests(IServiceProvider services, HttpClient 
     private static void Assert(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+}
+
+internal sealed class FakeNvr : INvrChannelManager
+{
+    public bool Fail { get; set; }
+    public int Calls { get; private set; }
+    public string? LastPassword { get; private set; }
+    public Task<IReadOnlyList<NvrAvailableChannelDto>> GetAvailableChannelsAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<NvrAvailableChannelDto>>([]);
+    public Task<int> AddIpcChannelAsync(long nvrDeviceId, int? channelNumber, string ipcHost, int ipcPort, string ipcUsername, string ipcPassword, string protocolType, string channelName, CancellationToken ct = default)
+    {
+        Confirm(ipcPassword);
+        return Task.FromResult(channelNumber ?? 99);
+    }
+    public Task UpdateIpcChannelAsync(long nvrDeviceId, int channelNumber, string? ipcHost, int? ipcPort, string? ipcUsername, string? ipcPassword, string? protocolType, string? channelName, CancellationToken ct = default)
+    {
+        Confirm(ipcPassword);
+        return Task.CompletedTask;
+    }
+    private void Confirm(string? password)
+    {
+        Calls++; LastPassword = password;
+        if (Fail) throw new PlatformException(502, "nvr.test_rejected", "模拟录像机拒绝配置");
     }
 }
 

@@ -2,6 +2,7 @@ using System.Globalization;
 using VideoPlatform.Contracts;
 using VideoPlatform.Domain;
 using VideoPlatform.Infrastructure;
+using VideoPlatform.Infrastructure.Nvr;
 
 namespace VideoPlatform.Api.Modules;
 
@@ -15,6 +16,8 @@ public static class AdministrationEndpoints
 
         group.MapGet("/organization", async Task<IResult> (HttpContext context) => Results.Ok(await service.OrganizationAsync(ApiSupport.Actor(context), context.RequestAborted)))
             .Produces<OrganizationTreeDto>().WithName("GetOrganization");
+        group.MapGet("/organization/stats", async Task<IResult> (HttpContext context) => Results.Ok(await service.OrganizationStatsAsync(ApiSupport.Actor(context), context.RequestAborted)))
+            .Produces<OrganizationStatsDto>().WithName("GetOrganizationStats");
         group.MapPost("/organization/{kind}", async (string kind, OrganizationRequest request, HttpContext context) =>
         {
             var result = await service.SaveOrganizationAsync(ApiSupport.Actor(context), kind, null, request, ApiSupport.Ip(context), context.RequestAborted);
@@ -33,6 +36,19 @@ public static class AdministrationEndpoints
             await service.AssignChannelsAsync(ApiSupport.Actor(context), request, ApiSupport.Ip(context), context.RequestAborted);
             return Results.NoContent();
         }).WithName("AssignChannels");
+        group.MapPut("/channels/batch-network-bindings", async (BatchChannelNetworkBindingRequest request, HttpContext context) =>
+        {
+            await service.BatchSetNetworkBindingsAsync(ApiSupport.Actor(context), request, ApiSupport.Ip(context), context.RequestAborted);
+            return Results.NoContent();
+        }).Produces(204).WithName("BatchSetNetworkBindings");
+        group.MapPost("/channels/batch-claim", async (BatchClaimChannelsRequest request, HttpContext context) =>
+        {
+            await service.BatchClaimChannelsAsync(ApiSupport.Actor(context), request, ApiSupport.Ip(context), context.RequestAborted);
+            return Results.NoContent();
+        }).Produces(204).WithName("BatchClaimChannels");
+        group.MapGet("/channels/unassigned", async Task<IResult> (HttpContext context) =>
+            Results.Ok(await service.GetUnassignedChannelsAsync(ApiSupport.Actor(context), context.RequestAborted)))
+            .Produces<IReadOnlyList<ChannelDto>>().WithName("GetUnassignedChannels");
         group.MapPut("/channels/sort", async (ChannelSortRequest request, HttpContext context) =>
         {
             await service.SortChannelsAsync(ApiSupport.Actor(context), request, ApiSupport.Ip(context), context.RequestAborted);

@@ -15,6 +15,10 @@ public static class ApiContractCatalog
         var values = new Dictionary<string, ApiResponseContract>
         {
             ["GetCsrfToken"] = new(200, typeof(CsrfTokenResponse)),
+            ["SearchAssets"] = new(200, typeof(PagedResponse<AssetDto>), "PagedAssetResponse"),
+            ["GetAssetSummary"] = new(200, typeof(AssetSummaryDto)),
+            ["GetAssetContext"] = new(200, typeof(AssetContextDto)),
+            ["BatchUpdateComputers"] = new(200, typeof(AssetBatchResultDto)),
             ["GetPreferences"] = new(200, typeof(UserPreferencesDto)), ["UpdatePreferences"] = new(200, typeof(UserPreferencesDto)),
             ["ListDevices"] = new(200, typeof(PagedResponse<DeviceDto>), "PagedDeviceResponse"),
             ["CreateDevice"] = new(201, typeof(ResourceCreatedResponse)),
@@ -37,10 +41,10 @@ public static class ApiContractCatalog
             ["GetAlarmImage"] = new(200, null, ContentTypes: ["image/jpeg", "image/png"]),
             ["ListPlugins"] = new(200, typeof(DevicePluginDto[])),
             ["UpdatePluginStatus"] = new(200, typeof(DevicePluginDto)),
-            ["GetPluginHealth"] = new(200, null),
+            ["GetPluginHealth"] = new(200, typeof(System.Text.Json.JsonElement)),
             ["InstallPluginPackage"] = new(201, typeof(DevicePluginDto)),
             ["RegisterPlugin"] = new(201, typeof(DevicePluginDto)),
-            ["ProbePlugin"] = new(200, null),
+            ["ProbePlugin"] = new(200, typeof(System.Text.Json.JsonElement)),
             ["ExportPlugin"] = new(200, null, ContentTypes: ["application/zip"]),
             ["GetSslOverview"] = new(200, typeof(SslOverviewDto)),
             ["GetSslDomains"] = new(200, typeof(SslDomainDto[])),
@@ -70,6 +74,8 @@ public static class ApiContractCatalog
         ApiQueryContract[] page = [new("page", typeof(int), 1, 1, 100000), new("pageSize", typeof(int), 50, 1, 200)];
         var result = new Dictionary<string, ApiQueryContract[]>();
         foreach (var id in new[] { "GetUsers", "GetSessions", "ListDevices", "ListChannels", "ListAlarms" }) result[id] = [.. page, new("search", typeof(string))];
+        result["SearchAssets"] = [.. page, new("search", typeof(string)), new("type", typeof(string)),
+            new("workshopId", typeof(long)), new("areaId", typeof(long)), new("unitId", typeof(long)), new("status", typeof(string))];
         foreach (var id in new[] { "GetSslDomains", "GetSslCertificates" }) result[id] = [new("search", typeof(string))];
         foreach (var id in new[] { "ListExports", "ListReleases" }) result[id] = page;
         result["GetAudit"] = [.. page, new("search", typeof(string)), new("action", typeof(string)), new("from", typeof(DateTimeOffset)), new("to", typeof(DateTimeOffset))];

@@ -48,14 +48,14 @@ public sealed class VisualSmokeTests(WpfTestHost host)
                     var logicalWidth = width / scale; var logicalHeight = height / scale;
                     // 主预览按四等分渲染；同时覆盖 1+7 聚焦档位，确保大屏 + 小屏网格在不同 DPI 下不越界。
                     workspace.IsPlayback = false;
-                    Render(new WorkspaceView { DataContext = workspace }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"live-{width}-{scale:0.0}.png"));
+                    await RenderAsync(new WorkspaceView { DataContext = workspace }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"live-{width}-{scale:0.0}.png"));
                     await workspace.SetLayoutCommand.ExecuteAsync("1+7");
-                    Render(new WorkspaceView { DataContext = workspace }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"focus-{width}-{scale:0.0}.png"));
+                    await RenderAsync(new WorkspaceView { DataContext = workspace }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"focus-{width}-{scale:0.0}.png"));
                     await workspace.SetLayoutCommand.ExecuteAsync("4");
                     workspace.IsPlayback = true;
-                    Render(new WorkspaceView { DataContext = workspace }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"playback-{width}-{scale:0.0}.png"));
-                    Render(new AlarmsView { DataContext = alarms }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"alarms-{width}-{scale:0.0}.png"));
-                    Render(new ExportsView { DataContext = exports }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"exports-{width}-{scale:0.0}.png"));
+                    await RenderAsync(new WorkspaceView { DataContext = workspace }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"playback-{width}-{scale:0.0}.png"));
+                    await RenderAsync(new AlarmsView { DataContext = alarms }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"alarms-{width}-{scale:0.0}.png"));
+                    await RenderAsync(new ExportsView { DataContext = exports }, logicalWidth, logicalHeight, scale, Path.Combine(output, $"exports-{width}-{scale:0.0}.png"));
                 }
                 Assert.Empty(bindingLog.Errors);
             }
@@ -66,16 +66,27 @@ public sealed class VisualSmokeTests(WpfTestHost host)
             }
         }, TimeSpan.FromSeconds(30));
     }
-    private static void Render(FrameworkElement view, double width, double height, double scale, string path)
+    private static async Task RenderAsync(FrameworkElement view, double width, double height, double scale, string path)
     {
         view.MinWidth = 1000; view.MinHeight = 650;
         var viewport = new ScrollViewer { Content = view, Width = width, Height = height, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        var window = new Window { Content = viewport, Width = width, Height = height, WindowStyle = WindowStyle.None, ShowInTaskbar = false };
+        window.Show();
+        await Dispatcher.CurrentDispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+        try
+        {
         viewport.Measure(new Size(width, height)); viewport.Arrange(new Rect(0, 0, width, height)); viewport.UpdateLayout();
         Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.DataBind);
+        // 数据绑定可能重新触发布局，截图前完成第二次布局，避免捕获尚未绘制的离屏树。
+        viewport.UpdateLayout();
+        Dispatcher.CurrentDispatcher.Invoke(() => { }, DispatcherPriority.Render);
         var bitmap = new RenderTargetBitmap((int)(width * scale), (int)(height * scale), 96 * scale, 96 * scale, PixelFormats.Pbgra32); bitmap.Render(viewport);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap)); using var stream = File.Create(path); encoder.Save(stream);
         var pixels = new byte[bitmap.PixelWidth * bitmap.PixelHeight * 4]; bitmap.CopyPixels(pixels, bitmap.PixelWidth * 4, 0);
-        Assert.True(pixels.Where((_, i) => i % 4 != 3).Distinct().Count() > 15, "界面渲染必须包含可见内容。");
+        Assert.True(pixels.Where((_, i) => i % 4 != 3).Distinct().Count() > 15,
+            $"界面渲染必须包含可见内容：{view.GetType().Name}，可见 {view.IsVisible}，尺寸 {view.ActualWidth}×{view.ActualHeight}，视口 {viewport.ActualWidth}×{viewport.ActualHeight}，子元素 {VisualTreeHelper.GetChildrenCount(view)}，颜色数 {pixels.Distinct().Count()}。");
+        }
+        finally { window.Content = null; window.Close(); }
     }
     private sealed class BindingLog : TraceListener
     {

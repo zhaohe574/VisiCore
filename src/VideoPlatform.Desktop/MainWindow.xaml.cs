@@ -56,13 +56,13 @@ public partial class MainWindow : Window
         catch { }
     }
 
-    public static void SyncAllVideoOverlays(bool visible)
+    public static void SyncVideoOverlays(Window? owner, bool visible)
     {
         try
         {
             foreach (Window win in Application.Current.Windows)
             {
-                if (win.GetType().Name.Contains("ForegroundWindow", StringComparison.OrdinalIgnoreCase))
+                if (owner is not null && win.GetType().Name.Contains("ForegroundWindow", StringComparison.OrdinalIgnoreCase) && ReferenceEquals(win.Owner, owner))
                 {
                     win.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
                 }
@@ -93,7 +93,7 @@ public partial class MainWindow : Window
             if (args.PropertyName == nameof(ShellViewModel.Module))
             {
                 bool isMedia = _viewModel.Module is "live" or "playback";
-                SyncAllVideoOverlays(isMedia);
+                SyncVideoOverlays(this, isMedia);
             }
         };
         // 用户中心按钮左键弹出下拉菜单（iVMS-4200 顶部用户菜单逻辑；不在 XAML 挂事件以免布局测试解析失败）
@@ -152,6 +152,7 @@ public partial class MainWindow : Window
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        if (msg == 0x007e) Dispatcher.BeginInvoke(() => Services.WindowPlacement.EnsureVisible(this));
         if (msg == WM_ERASEBKGND)
         {
             handled = true;
@@ -179,7 +180,7 @@ public partial class MainWindow : Window
     private async void DeactivatedWindow(object? sender, EventArgs e)
     {
         VideoPlatform.Desktop.Services.VideoMouseHook.ClearHoveredTile();
-        if (WindowState == WindowState.Minimized) SyncAllVideoOverlays(false);
+        if (WindowState == WindowState.Minimized) SyncVideoOverlays(this, false);
         await _viewModel.Workspace.StopPtzAsync();
     }
 
@@ -187,7 +188,7 @@ public partial class MainWindow : Window
     {
         if (WindowState != WindowState.Minimized && _viewModel.Module is "live" or "playback")
         {
-            SyncAllVideoOverlays(true);
+            SyncVideoOverlays(this, true);
         }
         await _viewModel.Workspace.StopPtzAsync();
     }
@@ -201,7 +202,7 @@ public partial class MainWindow : Window
         VideoPlatform.Desktop.Services.VideoMouseHook.Uninstall();
         ShowInTaskbar = false;
         Hide();
-        SyncAllVideoOverlays(false);
+        SyncVideoOverlays(this, false);
         try { await _viewModel.CloseAsync(); }
         catch { }
         finally { _closed = true; Close(); Application.Current?.Shutdown(); }

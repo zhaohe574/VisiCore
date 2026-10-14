@@ -37,8 +37,13 @@ public static class Passwords
 public sealed class SecretStore(IDataProtectionProvider provider)
 {
     private readonly IDataProtector _protector = provider.CreateProtector("VideoPlatform.v2.secrets");
-    public string Protect(string text) => _protector.Protect(text);
-    public string Unprotect(string text) => _protector.Unprotect(text);
+    public string Protect(string? text) => _protector.Protect(text ?? "");
+    public string Unprotect(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        try { return _protector.Unprotect(text); }
+        catch { return text; }
+    }
 }
 
 public sealed class AccessService(Database db) : IAccessService
@@ -51,8 +56,8 @@ public sealed class AccessService(Database db) : IAccessService
           or exists(select 1 from role_scopes s join user_roles ur on ur.role_id=s.role_id join roles r on r.id=s.role_id where ur.user_id=au.id and r.status='active' and ((s.type='channel' and s.scope_id=c.id) or(s.type='unit' and s.scope_id=c.unit_id) or(s.type='area' and s.scope_id=un.parent_id) or(s.type='workshop' and s.scope_id=ar.parent_id)))
         ))
         """;
-    public const string ChannelFrom = "channels c join devices d on d.id=c.device_id left join device_plugins dp on dp.id=d.plugin_id left join units un on un.id=c.unit_id left join areas ar on ar.id=un.parent_id";
-    public const string ChannelColumns = "c.id,c.device_id,d.name as device_name,c.device_channel,c.name,c.alias,c.model,c.status,c.unit_id,c.ptz_capable,c.codec,c.ip,c.username,(c.password is not null and c.password <> '') as has_password,c.remark,d.model as device_model,d.host as device_host,d.port as device_port,d.serial_number as device_serial,d.plugin_id,coalesce(dp.name, d.plugin_id) as plugin_name,coalesce(dp.version, '2.1.0') as firmware_version,coalesce(c.sort_order, 0) as sort_order";
+    public const string ChannelFrom = "channels c join devices d on d.id=c.device_id left join device_plugins dp on dp.id=d.plugin_id left join units un on un.id=c.unit_id left join areas ar on ar.id=un.parent_id left join channel_network_bindings cnb on cnb.channel_id=c.id left join terminal_boxes tb on tb.id=cnb.terminal_box_id left join onu_devices od on od.id=cnb.onu_device_id";
+    public const string ChannelColumns = "c.id,c.device_id,d.name as device_name,c.device_channel,c.name,c.alias,c.model,c.status,c.unit_id,c.ptz_capable,c.codec,c.ip,c.username,(c.password is not null and c.password <> '') as has_password,c.remark,d.model as device_model,d.host as device_host,d.port as device_port,d.serial_number as device_serial,d.plugin_id,coalesce(dp.name, d.plugin_id) as plugin_name,coalesce(dp.version, '2.1.0') as firmware_version,coalesce(c.sort_order, 0) as sort_order,cnb.terminal_box_id,tb.name as terminal_box_name,tb.code as terminal_box_code,cnb.onu_device_id,od.onu_name,od.alias as onu_alias,case when od.id is null then null when od.status in ('1', 'online') then 'online' else 'offline' end as onu_status,cnb.port_number as network_port,cnb.is_switch_port,cnb.port_label,od.health_status as onu_health_status,od.root_cause as onu_root_cause,od.rx_power as onu_rx_power,od.if_desc as onu_if_desc";
 
     public async Task<bool> HasPermissionAsync(long userId, string permission, CancellationToken ct = default)
         => (await db.OneAsync("select exists(select 1 from users u join user_roles ur on ur.user_id=u.id join roles r on r.id=ur.role_id join role_permissions p on p.role_id=r.id where u.id=@userId and u.status='active' and r.status='active' and p.permission_code=@permission) as allowed", new { userId, permission }, ct)).Flag("allowed");

@@ -1,5 +1,5 @@
 import { ApiError, mediaApi, type LiveSession, type PlaybackControl, type PlaybackSession } from '../api'
-export interface MediaRequest { channelId: number; streamType: 1 | 2; mode: 'live' | 'playback'; start?: string; end?: string }
+export interface MediaRequest { channelId: number; streamType: 1 | 2; mode: 'live' | 'playback'; start?: string; end?: string; consumerId?: string }
 type Session = LiveSession | PlaybackSession
 export interface MediaTransport {
   start(request: MediaRequest): Promise<Session>
@@ -9,7 +9,7 @@ export interface MediaTransport {
   control(id: string, control: PlaybackControl): Promise<PlaybackSession>
 }
 const transport: MediaTransport = {
-  start: request => request.mode === 'live' ? mediaApi.live(request.channelId, request.streamType) : mediaApi.playback(request.channelId, request.start!, request.end!),
+  start: request => request.mode === 'live' ? mediaApi.live(request.channelId, request.streamType, request.consumerId) : mediaApi.playback(request.channelId, request.start!, request.end!, request.consumerId),
   stop: (session, mode, keepalive) => mode === 'live' ? mediaApi.stopLive(session.id, keepalive) : mediaApi.stopPlayback(session.id, keepalive),
   renew: (session, mode) => mode === 'live' ? mediaApi.renewLive(session.id) : mediaApi.renewPlayback(session.id),
   getPlayback: mediaApi.getPlayback, control: mediaApi.control,
@@ -17,6 +17,7 @@ const transport: MediaTransport = {
 
 // 启动请求返回时再次核对代次，避免快速换台或离开页面后泄漏远端会话。
 export class MediaLease {
+  readonly consumerId = crypto.randomUUID()
   private generation = 0
   private active: { session: Session; request: MediaRequest } | null = null
   private refreshing = false
@@ -32,6 +33,7 @@ export class MediaLease {
     }
   }
   async open(request: MediaRequest) {
+    request = { ...request, consumerId: this.consumerId }
     const generation = ++this.generation
     const previous = this.active; this.active = null; this.changed(null)
     if (previous) await this.stop(previous.session, previous.request.mode)

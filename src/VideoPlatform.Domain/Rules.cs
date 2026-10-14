@@ -29,7 +29,7 @@ public static class Rules
     {
         "claim" when state == "new" => "processing",
         "note" when state is "new" or "processing" or "closed" => state,
-        "close" when state == "processing" => "closed",
+        "close" when state is "new" or "processing" => "closed",
         "reopen" when state == "closed" => "new",
         _ => throw new PlatformException(409, "alarm.transition", "报警状态已变化，请刷新后重试")
     };
@@ -38,7 +38,7 @@ public static class Rules
         new Dictionary<string, (string, string[])>
         {
             ["admin"] = ("系统管理员", []),
-            ["operator"] = ("值班员", ["channel.read", "device.read", "area.read", "live.view", "playback.view", "alarm.read", "alarm.ack", "export.create"])
+            ["operator"] = ("值班员", ["channel.read", "device.read", "area.read", "live.view", "playback.view", "alarm.read", "alarm.ack", "export.create", "pon.read", "computer.read", "ip.read", "network_device.read", "map.read"])
         };
 
     public static readonly IReadOnlyDictionary<string, string> Permissions = new Dictionary<string, string>
@@ -50,7 +50,13 @@ public static class Rules
         ["ptz.control"] = "云台控制", ["alarm.read"] = "查看报警", ["alarm.ack"] = "处理报警", ["statistics.read"] = "查看统计",
         ["audit.read"] = "查看审计", ["session.manage"] = "管理在线会话", ["settings.manage"] = "管理系统配置",
         ["layout.share"] = "发布共享轮巡", ["export.create"] = "导出录像", ["export.manage"] = "管理导出任务", ["desktop.release.manage"] = "管理客户端版本",
-        ["ssl.read"] = "查看SSL与域名", ["ssl.manage"] = "管理SSL与域名"
+        ["ssl.read"] = "查看SSL与域名", ["ssl.manage"] = "管理SSL与域名",
+        ["pon.read"] = "查看光网与终端箱", ["pon.manage"] = "管理光网与终端箱",
+        ["computer.read"] = "查看电脑台账", ["computer.manage"] = "管理电脑台账",
+        ["ip.read"] = "查看IP池", ["ip.manage"] = "管理IP池",
+        ["network_device.read"] = "查看网络设备", ["network_device.manage"] = "管理网络设备",
+        ["device_port.manage"] = "管理设备端口与跳线", ["virtual_machine.manage"] = "管理虚拟机台账",
+        ["map.read"] = "查看数字孪生大屏", ["map.manage"] = "管理数字孪生空间标定与光缆"
     };
 
     public static string Domain(string? value)

@@ -7,8 +7,21 @@ namespace VideoPlatform.Infrastructure;
 
 public sealed class Database(NpgsqlDataSource source)
 {
+    private readonly AsyncLocal<DbSession?> _applicationSession = new();
+
+    /// <summary>资产应用服务显式共享事务，兼容旧仓储和审计入口。</summary>
+    public Task<T> InApplicationTransactionAsync<T>(Func<DbSession, Task<T>> action, CancellationToken ct = default)
+        => TransactionAsync(async tx =>
+        {
+            var previous = _applicationSession.Value;
+            _applicationSession.Value = tx;
+            try { return await action(tx); }
+            finally { _applicationSession.Value = previous; }
+        }, ct);
+
     public async Task<List<JsonObject>> QueryAsync(string sql, object? args = null, CancellationToken ct = default)
     {
+        if (_applicationSession.Value is { } session) return await session.QueryAsync(sql, args, ct);
         await using var connection = await source.OpenConnectionAsync(ct);
         return await new DbSession(connection).QueryAsync(sql, args, ct);
     }
@@ -18,12 +31,14 @@ public sealed class Database(NpgsqlDataSource source)
 
     public async Task<int> ExecuteAsync(string sql, object? args = null, CancellationToken ct = default)
     {
+        if (_applicationSession.Value is { } session) return await session.ExecuteAsync(sql, args, ct);
         await using var connection = await source.OpenConnectionAsync(ct);
         return await new DbSession(connection).ExecuteAsync(sql, args, ct);
     }
 
     public async Task<T> TransactionAsync<T>(Func<DbSession, Task<T>> action, CancellationToken ct = default)
     {
+        if (_applicationSession.Value is { } session) return await action(session);
         await using var connection = await source.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         var result = await action(new DbSession(connection, transaction));
@@ -109,4 +124,11 @@ public static class JsonDefaults
     public static long Id(this JsonNode? row, string key = "id") => long.TryParse(row.Text(key), out var id) ? id : 0;
     public static bool Flag(this JsonNode? row, string key) => bool.TryParse(row.Text(key), out var value) && value;
     public static DateTimeOffset Time(this JsonNode? row, string key) => DateTimeOffset.Parse(row.Text(key), System.Globalization.CultureInfo.InvariantCulture);
+    public static decimal? Decimal(this JsonNode? row, string key) => decimal.TryParse(row.Text(key), System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : null;
+    public static int? NullableInt(this JsonNode? row, string key) => int.TryParse(row.Text(key), out var v) ? v : null;
+    public static DateTimeOffset? NullableTime(this JsonNode? row, string key)
+    {
+        var text = row?[key]?.ToString();
+        return DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, out var t) ? t : null;
+    }
 }

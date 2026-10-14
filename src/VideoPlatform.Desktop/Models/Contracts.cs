@@ -11,12 +11,13 @@ public sealed record User(long Id, string Username, string DisplayName, string? 
     public bool Can(string permission) => Permissions.Contains(permission, StringComparer.Ordinal);
     public string Label => string.IsNullOrWhiteSpace(DisplayName) ? Username : DisplayName;
 }
-public sealed record LoginRequest(string Username, string Password, string ClientType = "desktop", string ClientVersion = "2.1.6");
+public sealed record LoginRequest(string Username, string Password, string ClientType = "desktop", string ClientVersion = "2.0.0");
 public sealed record LoginResponse(User User, string? AccessToken, DateTimeOffset ExpiresAt);
 public sealed record SavedSession(string Server, string AccessToken, DateTimeOffset ExpiresAt);
 public sealed record ClientSettings(string Server = "", string? RequiredVersion = null, bool PreferRtsp = false,
     string Theme = "light", bool PreferSubStreamInGrid = true, bool HardwareDecoding = true, int NetworkCachingMs = 800, bool ShowDiagnostics = false,
-    string? SnapshotPath = null, string? ExportPath = null, string SnapshotFormat = "PNG")
+    string? SnapshotPath = null, string? ExportPath = null, string SnapshotFormat = "PNG",
+    string? SourceAddress = null, string? SourceHostPrefix = null)
 {
     /// <summary>把本机设置转换成平台偏好，用于登录后回写。</summary>
     public Preferences ToPreferences() => new(Theme, PreferSubStreamInGrid, HardwareDecoding, NetworkCachingMs, ShowDiagnostics);
@@ -54,8 +55,8 @@ public sealed record Channel(long Id, long DeviceId, string DeviceName, int Devi
 }
 public sealed record OrganizationNode(long Id, string Name, string? Code, string Status, long? ParentId);
 public sealed record Organization(OrganizationNode[] Workshops, OrganizationNode[] Areas, OrganizationNode[] Units);
-public sealed record LiveRequest(long ChannelId, int StreamType = 2, string Profile = "native");
-public sealed record PlaybackRequest(long ChannelId, DateTimeOffset Start, DateTimeOffset End, string Profile = "native", int StreamType = 1);
+public sealed record LiveRequest(long ChannelId, int StreamType = 2, string Profile = "native", Guid? ConsumerId = null);
+public sealed record PlaybackRequest(long ChannelId, DateTimeOffset Start, DateTimeOffset End, string Profile = "native", int StreamType = 1, Guid? ConsumerId = null);
 public sealed record RecordingRequest(long ChannelId, DateTimeOffset Start, DateTimeOffset End);
 public sealed record PlaybackControl(string Action, DateTimeOffset? Position = null, double? Speed = null);
 public record MediaSession(string Id, long ChannelId, int StreamType, string State, DateTimeOffset ExpiresAt,

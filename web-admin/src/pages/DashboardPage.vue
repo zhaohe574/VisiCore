@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onDeactivated, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   Bell,
   BottomLeft,
@@ -38,6 +38,8 @@ const memHistory = ref<number[]>([])
 const showNicsDialog = ref(false)
 
 let disposed = false
+let active = true
+let generation = 0
 let timer: ReturnType<typeof setInterval> | null = null
 
 function updateHistory(rx: number, tx: number, cpu: number, mem: number) {
@@ -49,7 +51,8 @@ function updateHistory(rx: number, tx: number, cpu: number, mem: number) {
 }
 
 async function load() {
-  if (loading.value) return
+  if (!active || loading.value) return
+  const current = ++generation
   loading.value = true
   error.value = ''
   const results = await Promise.allSettled([
@@ -57,7 +60,7 @@ async function load() {
     managementApi.system(),
     auth.can('alarm.read') ? workflowApi.alarms({ page: 1, pageSize: 6, state: 'new' }) : Promise.resolve(null)
   ])
-  if (!disposed) {
+  if (!disposed && active && current === generation) {
     if (results[0].status === 'fulfilled') stats.value = results[0].value
     if (results[1].status === 'fulfilled') {
       system.value = results[1].value
@@ -81,7 +84,7 @@ function resetTimer() {
     clearInterval(timer)
     timer = null
   }
-  if (refreshInterval.value > 0) {
+  if (active && refreshInterval.value > 0) {
     timer = setInterval(() => void load(), refreshInterval.value)
   }
 }
@@ -100,12 +103,14 @@ const channelOnlineRate = computed(() => {
   return Math.round((stats.value.onlineChannels / stats.value.channels) * 100)
 })
 
-const unsubscribe = useEvents().subscribe(['alarm.changed', 'device.changed', 'media.changed', 'reconnected'], load)
+const unsubscribe = useEvents().subscribe(['alarm.changed', 'device.changed', 'asset.changed', 'reconnected'], load)
 
 onMounted(() => {
   void load()
   resetTimer()
 })
+onDeactivated(() => { active = false; generation++; loading.value = false; resetTimer() })
+onActivated(() => { if (!active) { active = true; void load(); resetTimer() } })
 
 onBeforeUnmount(() => {
   disposed = true
@@ -551,4 +556,9 @@ onBeforeUnmount(() => {
 .perf-stats-list span { color: var(--text-muted); }
 .perf-stats-list strong { color: var(--text-regular); font-weight: 500; }
 
+@media (max-width: 1024px) {
+  .shortcuts-row {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+}
 </style>

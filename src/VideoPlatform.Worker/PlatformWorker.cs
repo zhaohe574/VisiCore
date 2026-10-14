@@ -1,19 +1,23 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using VideoPlatform.Infrastructure;
 using VideoPlatform.Infrastructure.Jobs;
+using VideoPlatform.Infrastructure.Pon;
 
 namespace VideoPlatform.Worker;
 
 public sealed class PlatformWorker(DeviceSyncJob devices, AlarmIngestionJob alarms, MediaMaintenanceJob media,
-    ExportProcessingJob exports, RetentionJob retention, JobHealth health, ILogger<PlatformWorker> logger) : BackgroundService
+    ExportProcessingJob exports, RetentionJob retention, PonSyncJob ponSync, IpPoolService ipPools, JobHealth health, ILogger<PlatformWorker> logger) : BackgroundService
 {
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
         => Task.WhenAll(
             LoopAsync("devices", TimeSpan.FromSeconds(30), devices.RunAsync, stoppingToken),
+            LoopAsync("pon", TimeSpan.FromSeconds(60), ponSync.RunAsync, stoppingToken),
             LoopAsync("alarms", TimeSpan.FromSeconds(2), alarms.RunAsync, stoppingToken),
             LoopAsync("media", TimeSpan.FromSeconds(5), media.RunAsync, stoppingToken),
             LoopAsync("reconciliation", TimeSpan.FromSeconds(30), media.ReconcileAsync, stoppingToken),
             LoopAsync("exports", TimeSpan.FromSeconds(2), exports.RunAsync, stoppingToken),
+            LoopAsync("ip-scan", TimeSpan.FromMinutes(10), ipPools.AutoScanAllAsync, stoppingToken),
             LoopAsync("retention", TimeSpan.FromMinutes(5), retention.RunAsync, stoppingToken),
             LoopAsync("heartbeat", TimeSpan.FromSeconds(5), health.BeatAsync, stoppingToken));
 

@@ -16,10 +16,17 @@ HCNetSDK*/
 .wix/
 tools/wix/
 tools/wix6/
-
 # 专有 SDK 与现场 CAD 资料只保留在内网工作区，不进入源码提交。
 JovisionClentSDK.zip
 docs/cad/
+
+# 现场数据与点位台账（包含真实生产网络IP和拓扑信息）
+docs/field-data/
+*.xls
+*.xlsx
+
+# 本地临时调试与排查脚本
+scratch/
 
 # 本机配置、密钥、数据库备份和验收产物不进入源码仓库。
 .vs/
@@ -43,3 +50,4 @@ tools/VideoPlatform.Desktop.Tests/安装包产物一致性.md
 **/v2-test.json
 docs/VisiCore-账号凭据-20260908-165426.md
 docs/VisiCore-开发进度与环境交接-20260908.md
+*.zip

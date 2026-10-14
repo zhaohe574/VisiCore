@@ -6,7 +6,6 @@ using Microsoft.Extensions.Options;
 using VideoPlatform.Application;
 using VideoPlatform.Domain;
 using VideoPlatform.Infrastructure;
-using VideoPlatform.Contracts;
 
 namespace VideoPlatform.Api;
 
@@ -30,10 +29,10 @@ public static class ApiSupport
         var size = int.TryParse(context.Request.Query["pageSize"], out var s) ? Math.Clamp(s, 1, 200) : 50;
         return (page, size, (page - 1) * size);
     }
-    public static PagedResponse<JsonObject> Page(HttpContext context, IReadOnlyList<JsonObject> items, long total)
+    public static object Page(HttpContext context, IReadOnlyList<JsonObject> items, long total)
     {
         var (page, size, _) = Pagination(context);
-        return new(items, total, page, size);
+        return new { items, total, page, pageSize = size };
     }
     public static string Search(HttpContext context) => context.Request.Query["search"].ToString().Trim();
 }

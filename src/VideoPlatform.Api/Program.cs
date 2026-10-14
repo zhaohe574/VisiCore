@@ -108,8 +108,7 @@ app.UseAuthorization();
 app.MapGet("/health", async (Database db) =>
 {
     await db.OneAsync("select 1 as ok");
-    var version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown";
-    return Results.Ok(new { status = "ok", service = "video-platform-api", version });
+    return Results.Ok(new { status = "ok", service = "video-platform-api", version = typeof(Program).Assembly.GetName().Version?.ToString(3) ?? "unknown" });
 }).WithName("Health");
 app.MapOpenApi("/api/v2/openapi/{documentName}.json");
 app.MapAuthEndpoints();
@@ -121,6 +120,14 @@ app.MapReleaseEndpoints();
 app.MapAdministrationEndpoints();
 app.MapPluginEndpoints();
 app.MapSslEndpoints();
+app.MapPonEndpoints();
+app.MapComputerEndpoints();
+app.MapAssetEndpoints();
+app.MapIpPoolEndpoints();
+app.MapNetworkDeviceEndpoints();
+app.MapDevicePortEndpoints();
+app.MapVirtualMachineEndpoints();
+app.MapDigitalTwinEndpoints();
 app.MapHub<EventHub>("/hubs/v2/events").RequireAuthorization();
 app.Run();
 

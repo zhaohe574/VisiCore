@@ -1,6 +1,6 @@
 # 生成并接入第二版客户端
 
-从真实 `/api/v2/openapi/v2.json` 生成当前 84 个操作的 Web TypeScript 类型和桌面 C# 客户端。C# 代码使用 NSwag 14.7.1 自动生成，Web 类型使用 openapi-typescript 7.13.0 自动生成，Web HTTP 调用使用 openapi-fetch 0.17.0。版本由 `package-lock.json` 固定；每次接口变更必须以服务端导出的 OpenAPI 重新生成并通过漂移门禁。
+从真实 `/api/v2/openapi/v2.json` 生成 72 个操作的 Web TypeScript 类型和桌面 C# 客户端。C# 代码使用 NSwag 14.7.1 自动生成，Web 类型使用 openapi-typescript 7.13.0 自动生成，Web HTTP 调用使用 openapi-fetch 0.17.0。版本由 `package-lock.json` 固定。
 
 ## 服务端接入
 
@@ -77,10 +77,10 @@ using var http = new HttpClient(handler) { BaseAddress = new Uri("https://10.37.
 var api = new VideoPlatformClient(http);
 var login = await api.LoginAsync(new LoginRequest
 {
-    Username = username, Password = password, ClientType = "desktop", ClientVersion = "2.1.6"
+    Username = username, Password = password, ClientType = "desktop", ClientVersion = "2.0.0"
 }, cancellationToken: cancellationToken);
 token = login.AccessToken;
-var latest = await api.GetLatestReleaseOrDefaultAsync("2.1.6", PackageType.Msi, cancellationToken);
+var latest = await api.GetLatestReleaseOrDefaultAsync("2.0.0", PackageType.Msi, cancellationToken);
 ```
 
 令牌由调用方使用 DPAPI 安全保存；`SessionTokenHandler` 每次请求读取最新令牌，客户端不关闭传入的 `HttpClient`。调用方按自己的生命周期处置 HTTP 客户端与下载返回的 `FileResponse`。所有异步方法支持 `CancellationToken`，建议使用具名 `cancellationToken:` 传入，避免与可选 CSRF 请求头参数混淆。

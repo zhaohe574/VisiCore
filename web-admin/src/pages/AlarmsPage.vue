@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, onDeactivated, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Bell,
@@ -18,6 +18,7 @@ import { allPages, managementApi, workflowApi, type Alarm, type AlarmDetail, typ
 import { dateTime, errorMessage } from '../lib/format'
 import { usePaged } from '../composables/usePaged'
 import { useAction } from '../composables/useAction'
+import { useActivePage } from '../composables/useActivePage'
 import { useEvents } from '../stores/events'
 import { useAuth } from '../stores/auth'
 import PageHeader from '../components/PageHeader.vue'
@@ -73,6 +74,7 @@ function playAlarmBeep() {
     gain.connect(ctx.destination)
     osc.start()
     osc.stop(ctx.currentTime + 0.3)
+    osc.onended = () => { void ctx.close() }
   } catch {}
 }
 
@@ -86,6 +88,7 @@ const imageFailed = ref(false)
 let sequence = 0
 
 async function open(id: number) {
+  if (!lifecycle.isActive()) return
   const current = ++sequence
   detailId.value = id
   detailLoading.value = true
@@ -160,16 +163,26 @@ function resetFilters() {
   void load(true)
 }
 
-const stats = computed(() => {
-  const all = items.value as Alarm[]
-  const pending = all.filter(a => a.state === 'new').length
-  const processing = all.filter(a => a.state === 'processing').length
-  const closed = all.filter(a => a.state === 'closed').length
-  return { pending, processing, closed }
+const stats = ref({ pending: 0, processing: 0, closed: 0 })
+const lifecycle = useActivePage(async () => {
+  await loadStats()
+  if (detailId.value) await open(detailId.value)
 })
+async function loadStats() {
+  const ticket = lifecycle.ticket('statistics')
+  if (!ticket) return
+  const query = { search: search.value, deviceId: deviceId.value, channelId: channelId.value,
+    eventType: eventType.value || undefined, from: range.value?.[0].toISOString(), to: range.value?.[1].toISOString(), page: 1, pageSize: 1 }
+  try {
+    const [pending, processing, closed] = await Promise.all(['new', 'processing', 'closed'].map(state => workflowApi.alarms({ ...query, state })))
+    if (lifecycle.current(ticket)) stats.value = { pending: pending!.total, processing: processing!.total, closed: closed!.total }
+  } catch (e) { if (lifecycle.current(ticket)) ElMessage.error(errorMessage(e)) }
+}
+watch(items, () => { void loadStats() })
 
-const unsubscribe = useEvents().subscribe(['alarm.changed', 'reconnected'], async () => {
-  playAlarmBeep()
+const unsubscribe = useEvents().subscribe(['alarm.changed', 'reconnected'], async (event) => {
+  if (!lifecycle.isActive()) return
+  if (event) playAlarmBeep()
   if (detailId.value) await open(detailId.value)
 })
 
@@ -186,6 +199,7 @@ onBeforeUnmount(() => {
   sequence++
   unsubscribe()
 })
+onDeactivated(() => { sequence++; detailLoading.value = false })
 
 const actions: Record<string, string> = {
   claim: '认领报警',

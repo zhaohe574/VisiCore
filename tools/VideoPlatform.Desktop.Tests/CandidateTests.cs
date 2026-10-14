@@ -31,11 +31,13 @@ public sealed class CandidateTests(WpfTestHost host)
     {
         Window? window = null;
         WorkspaceViewModel? workspace = null;
+        WorkspaceViewModel? sibling = null;
+        Window? siblingWindow = null;
         SessionService? session = null;
         VlcPlayerFactory? players = null;
         PtzService? ptz = null;
         Exception? failure = null;
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        using var http = new HttpClient(TransportPolicy.CreateHandler(Environment.GetEnvironmentVariable("VP_CANDIDATE_SOURCE_ADDRESS"))) { Timeout = TimeSpan.FromSeconds(30) };
         var report = new List<string>();
         var output = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../candidate-evidence")); Directory.CreateDirectory(output);
         try
@@ -80,13 +82,33 @@ public sealed class CandidateTests(WpfTestHost host)
                 Assert.True(pixels.Distinct().Count() > 20, "真实视频截图不能是单色空白画面。");
                 report.Add($"通过：全局通道 {selected[i].Id} 原生视频截图 {bitmap.PixelWidth}×{bitmap.PixelHeight}，主码流使用 HTTPS MPEG-TS。");
             }
+            sibling = workspace.CreateSibling();
+            await sibling.SetAccessAsync(session.CurrentUser); await sibling.RefreshAsync();
+            siblingWindow = new Window { Title = "VisiCore（视枢）候选实机验收副工作区", Width = 960, Height = 720, Content = new WorkspaceView { DataContext = sibling } };
+            siblingWindow.Show();
+            await sibling.OpenChannelCoreAsync(selected[0], sibling.Tiles[0]);
+            for (var attempt = 0; attempt < 60 && sibling.Tiles[0].NativePlayer?.IsPlaying != true; attempt++)
+                await Task.Delay(500);
+            Assert.True(sibling.Tiles[0].NativePlayer?.IsPlaying == true);
+            Assert.NotEqual(workspace.Tiles[0].SessionId, sibling.Tiles[0].SessionId);
+            var siblingSession = sibling.Tiles[0].SessionId!;
+            var positionBefore = sibling.Tiles[0].PlaybackPositionMs ?? -1;
             var lease = workspace.Tiles[0].SessionId!;
             await workspace.Tiles[0].StopAsync();
             Assert.Null(workspace.Tiles[0].NativePlayer);
             var ended = await Assert.ThrowsAsync<PlatformException>(() => api.SendAsync(HttpMethod.Post, $"live-sessions/{lease}/renew"));
             Assert.Equal(HttpStatusCode.NotFound, ended.StatusCode);
             Assert.NotNull(workspace.Tiles[1].NativePlayer);
-            report.Add("通过：停止单窗口后原生播放器释放，服务端租约不再可续期，另一窗口保持运行。");
+            await Task.Delay(3000);
+            Assert.True(sibling.Tiles[0].PlaybackPositionMs > positionBefore);
+            await api.SendAsync(HttpMethod.Post, $"live-sessions/{siblingSession}/renew");
+            report.Add("通过：同通道在两个独立工作区播放，停止第一格后副窗口持续解码并可独立续期。");
+            await workspace.SetModeAsync(true);
+            Assert.All(workspace.Tiles, tile => Assert.Null(tile.NativePlayer));
+            Assert.Equal(siblingSession, sibling.Tiles[0].SessionId);
+            Assert.True(sibling.Tiles[0].NativePlayer?.IsPlaying == true);
+            report.Add("通过：主工作区切换回放仅释放本工作区，副工作区实时画面保持运行。");
+            await sibling.DisposeAsync(); sibling = null; siblingWindow.Close(); siblingWindow = null;
             await workspace.StopAllCoreAsync(); Assert.All(workspace.Tiles, tile => Assert.Null(tile.NativePlayer));
             await session.LogoutAsync(); Assert.False(session.IsAuthenticated);
             report.Add("通过：全部停止释放原生播放器，主动退出撤销登录会话。");
@@ -97,13 +119,14 @@ public sealed class CandidateTests(WpfTestHost host)
             try
             {
                 if (workspace is not null) await workspace.ClearAsync();
+                if (sibling is not null) await sibling.DisposeAsync();
                 if (ptz is not null) await ptz.DisposeAsync();
                 if (session is not null) await session.LogoutAsync();
             }
             catch (Exception ex) { report.Add($"清理失败：{ex.Message}"); failure ??= ex; }
             finally
             {
-                window?.Close(); players?.Dispose();
+                siblingWindow?.Close(); window?.Close(); players?.Dispose();
                 await File.WriteAllLinesAsync(Path.Combine(output, "候选实机验收.txt"), report);
             }
         }

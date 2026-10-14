@@ -1,91 +1,107 @@
 # VisiCore（视枢）系统运维与功能开发交接文档
 
-> **文档更新时间**：2026-10-08 12:30
-> **适用版本**：VisiCore 第二版（`v2.1.6-202610081230`，PC-only Web、契约收敛与运行版本统一版）
+> **文档更新时间**：2026-10-13 11:22  
+> **适用版本**：VisiCore 第二版（`v2.2.0-20261013032021`，修复组织架构折叠后自动展开Bug、组织架构拓扑按编码自然排序）  
 > **核心环境基线**：
-> - 生产应用服务器：`10.37.200.74`（SSH 用户：`liteware`，凭据仅通过受保护的运行环境注入，工作根目录：`/opt/video-platform-v2`）
+> - 生产应用服务器：`10.37.200.74`（SSH 用户：`liteware`，密码：见未跟踪凭据文件，工作根目录：`/opt/video-platform-v2`）
 >   - 核心服务端口：Nginx `443/80`，平台 API `5082`，海康驱动 `5092`，中维驱动 `5093`，ZLM `18082`，RTSP推流 `18555`
->   - 当前生产运行 Release：`/opt/video-platform-v2/releases/2.1.6-202610081230`
+>   - 当前生产运行 Release：`/opt/video-platform-v2/releases/2.2.0-20261013032021`
 > - 全网核心网络设施与资产（全部真实在线纳管 🟢）：
 >   - **核心交换机**：`10.37.4.1`（H3C S5560X-30F-EI，总控机房核心机架，纳管 28 个电/光口，承担全网各 VLAN 路由与汇聚）
 >   - **华为 OLT 网元**：`10.37.5.3`（POL 全光网汇聚设备，接入 199 台在线 ONU 终端）
->   - **华为 NeoSight 网管**：`10.37.5.2:32102`（官方 OpenAPI 网关，机机专用账号 `visicore`）
->   - **DNS / 核心服务网元**：`132.147.160.51`（DNS 服务器，已挂载专属万兆光口及虚拟机 `132.147.160.52`）
->   - **全厂空间数字孪生**：路由 `/app/twin`，纳管全厂宏观总览与各车间 2.5D 微立体底图与光缆脉冲流光
->   - **网络终端箱（物理枢纽工作舱）**：路由 `/app/terminal-boxes`，纳管全厂 30+ 终端箱、箱内 ONU、光衰、下挂摄像头与工位电脑
->   - **集中存储与 NVR**：1 号机集中存储 `10.37.200.53:8000`（74/75 在线）、2 号机海康 NVR `10.37.200.51:8000`（14/19 在线）
->   - **中维录像机（4 台稳定推流）**：ID 20 (`10.37.24.50`)、ID 21 (`10.37.24.30`)、ID 22 (`10.37.24.31`)、ID 23 (`10.37.24.49`)
+>   - **华为 NeoSight 网管**：`10.37.5.2:32102`（官方北向 OpenAPI 网关，机机专用账号 `visicore` / `***REMOVED-CREDENTIAL***`）
+>   - **京华中央录像机**：`10.37.200.53:8000`（海康 DS-A72124R，设备 ID: 1，**已扩容纳管 311 路全厂核心监控通道**，当前 138+ 在线）
+>   - **工位与操作台录像机（全量纳管）**：
+>     - 中维工位录像机（7 台）：ID 20 (`10.37.24.50`)、ID 21 (`10.37.24.30`)、ID 22 (`10.37.24.31`)、ID 23 (`10.37.24.49`)、ID 26 (`10.37.32.31`)、ID 27 (`10.37.32.32`)、ID 28 (`10.37.32.35`)
+>     - 海康录像机（2 台）：ID 1 (`10.37.200.53`)、ID 2 (`10.37.200.51`)
+>   - **物理网络终端箱**：全厂 98 个终端箱，其中 57 个承载在线监控业务，257 条通道已完成箱体、ONU 与端口绑定
 > - 终端网络与工具基线：
 >   - 跨网段通信必须绑定本地源 IP：`10.37.6.210`
 >   - 本地 .NET SDK 路径：`C:\Users\57477\AppData\Local\VideoPlatform\dotnet\dotnet.exe`
->
+> 
 > **⚠️ 核心工作流守则（必须严格遵守）**：
-> **「以后都自动部署到正式机」——所有代码修改、协议重构、数据库迁移与排障补丁，在本地构建测试通过后，必须一律自动部署至正式生产机（10.37.200.74）并执行线上实机服务与接口健康检查验收闭环！**
+> **「本地构建测试通过后一律自动部署至正式机」——所有代码修改、协议重构、数据库迁移与排障补丁，在本地构建测试通过后，必须自动部署至正式生产机（10.37.200.74）并执行线上实机服务与接口健康检查验收闭环！**
 
 ---
 
 ## 一、近期完成的核心任务（滑动窗口：保留最近 2~3 期）
 
 ### 历史里程碑回顾（早期会话压缩摘要）
-- **[2026-10-06] 资产台账与大网段 IPAM 落地**：工位电脑台账、`/22` 大网段切片色块矩阵、全光 ONU 双 IP/Wi-Fi 配对、物理端口自由数量批量生成器。
+- **[2026-10-08 ~ 10-09] 多工作区架构、资产事件流与全栈全景审计**：确立 Web 端资产运维与桌面端重度多路分屏边界，废除大杂烩页面并修复更新器 1603。
+- **[2026-10-10 ~ 10-12] 车间网络切换三步业务落地闭环**：完成 123 台 ONU 场景模板别名导入，374 点位多协议并发探测识别，新增纳管 3 台中维工位 NVR，中央录像机批量成功添加 226 路在线 IPC（扩至 311 路），完成 257 条全网通道物理拓扑绑定。
 
-### 会话批次 N-1 (2026-10-07 下午前期：全厂空间数字孪生 2.5D 微立体底座正式投产)
-1. **数字孪生等轴测底座与资产聚合引擎**：上线 `026_digital_twin_map.sql`，内置全厂 5 大场景与 6 大光缆脉冲路径，CAD 智能轴网吸附算法精准定位制管车间 42 节点。
-2. **调度大屏与实机上线**：大屏画布支持缩放拖拽标定、4 大微浮标组件、光衰健康联动，生产机发布 Release `2.1.5-20261007035455`。
+### 会话批次 N (本轮会话 - 2026-10-13：ONU 断线与掉线智能定界引擎重构与虚警清零)
+1. **根本原因排查与历史设计缺陷剖析**：
+   - 此前代码将 `offlineCountsByPort >= 3` 强行置于判定链首位，只要同 PON 口累计离线 >= 3 台就无脑标记为“主干光纤中断 / PON口故障”，彻底架空了后面的 Dying Gasp 掉电检测；
+   - 未考虑 GPON 物理现实（GPON 0/1/1、0/1/3、0/1/5 各有 25~56 台设备正常在线，绝非主干割接中断），且将历史陈旧离线与实时断线混为一谈，导致 30 台设备误报“主干光纤中断”，0 台显示掉电。
+2. **多级定界架构决策与落地闭环（前后端 + 数据库全面对齐）**：
+   - **第一级：Dying Gasp 优先定界**：确诊供电中断。同箱多台在近时收到 Dying Gasp 判定为“终端箱总电源掉电 / 空开跳闸 ⚡”，单台判定为“设备掉电 / 供电中断 ⚡”；
+   - **第二级：主干光缆中断严格定界**：仅当同 PON 端口全部设备失联（在线数 = 0 且总数 >= 2）时，才判定为“主干光缆中断 / PON口故障 🚨”；同口有其它设备在线绝不误报；
+   - **第三级：新增独立枚举 `splitter_broken`（分光器/支干中断）**：同 PON 口无掉电遗言、3 分钟时间窗口内并发失联多台，精准定界为“分光器/支干光缆中断 💥”；
+   - **第四级：单台离线设备精准区分**：网管上报 Cause 2 (LOSi 物理断光) 定界为“分支光纤断纤 / 尾纤松脱 🔴”，其余定界为“分支链路中断 / 离线待排查 🔴”。
+3. **数据库迁移与线上指标实机验证（100% 闭环）**：
+   - 执行 [030_splitter_broken_and_root_cause.sql](file:///d:/2026-09-08%20VisiCore/database/v2/030_splitter_broken_and_root_cause.sql)，扩展 `optical_health_snapshots` 并一键纠偏全量历史离线数据；
+   - 生产机（`10.37.200.74`）实机实测：原 30 台“主干光纤中断”虚警**彻底清零（0 台）**！实时重估分类为：16 台供电掉电、8 台分光/支干中断、6 台分支链路中断、174 台良好在线，全光网健康指数与 OLT 8 个 PON 端口监控卡片完全恢复真实准确状态。
 
-### 会话批次 N (本轮会话 - 2026-10-07 下午：管理后台深度重构、录像机 IP 全自动抓取与物理一致性下发、终端箱一站式工作舱)
-1. **侧边栏菜单深度精简与清晰分权（9 个分散入口收拢为 5+2 核心业务）**：
-   - 合并「组织架构」入「组织与通道」(`/app/organization`)，左侧组织树支持节点就地增删改重命名；
-   - 彻底取消全光网络的多 Tab 聚合设计：将「网络终端箱」(`/app/terminal-boxes`) 确立为独立的物理中枢核心入口；「全光网络」(`/app/pon`) 纯粹聚焦 OLT 拓扑与全网光衰健康大屏；
-   - 路由平滑兼容：旧路由 `/app/organization-structure` 自动重定向。
-2. **摄像头 IP 录像机全自动抓取与物理严格一致下发**：
-   - **海康 ISAPI/SDK 自动提取 IP**：升级 `HikvisionDevice.Discovery.cs` 提取 `<sourceInputPortDescriptor.ipAddress>` 与 HCNetSDK IP，`DeviceService.SyncAsync` 自动持久化至 `channels.ip`，彻底免除人工逐一录入 IP；
-   - **强制严格物理一致性**：通道编辑 IP/凭据/别名时，严格调用海康 ISAPI PUT `/ISAPI/ContentMgmt/InputProxy/channels/{channelId}`，物理录像机生效后方可入库，通信失败立即终止报错阻断。
-3. **网络终端箱“一站式装备舱”工作台 (`TerminalBoxWorkbenchDrawer.vue`)**：
-   - 点击任意终端箱卡片，滑出一体化抽屉，一览箱体归属、ONU 光衰、各端口挂载的摄像头与电脑；
-   - 支持就地【+ 快速接入摄像头】（空闲端口自动填好、支持直接从录像机已有通道挑选中）与【+ 登记工位电脑】（空闲端口与车间 IP 池自动推荐）。
-4. **四项运维简化能力闭环**：
-   - 跨资产一键穿透（通道表/电脑表点击箱体/ONU 标签滑出工作舱，IP 池点击直达资产）；
-   - 录像机未建档通道一键批量认领；
-   - 工位电脑登记 IP 防冲突实时校验与空闲推荐；
-   - 通道列表多选一键批量指定终端箱与 ONU。
-5. **正式机自动化构建与部署验收**：
-   - 前端 83 个测试全部通过，发布 Release `2.1.5-20261007070753`，正式机三大服务健康运行。
+### 会话批次 N+1 (2026-10-13：组织架构拓扑全链路按编码标识 (code) 自然排序重构)
+1. **背景与诉求**：
+   - 车间、区域与工位单元此前按中文名称拼音首字排序，导致工位单元（如 `01, 02, 03...`）顺序错乱、车间编码（`HG, LX, RD, YW`）不符合图纸规约。
+   - 用户明确要求：“组织架构拓扑按编码标识排序，不按名称排序”。
+2. **前后端架构协同改造**：
+   - **后端 .NET**：
+     - 重构 `AdministrationService.Organization.cs`，引入 `OrganizationCodeComparer` 实现自然分段排序（Natural Alphanumeric Sort）；
+     - 修复 Postgres `UNION ALL` 中 `ORDER BY` 必须引用命名列的语法限制（改用 `order by type, code, id` 规避 `0A000` 异常），在内存中统一由 `OrganizationCodeComparer` 精准排序；
+   - **前端 Web-Admin**：
+     - 重构 `src/lib/organization.ts`，导出 `compareByCode`（基于 `localeCompare` 的 `{ numeric: true, sensitivity: 'base' }`）；
+     - 拓扑树构建 `buildOrganizationTree`、树形表格 `buildOrgTreeTable`、级联选择器 `buildUnitCascaderOptions`、`buildFullOrgCascaderOptions` 统一对齐编码自然排序；
+     - 在 `OrgTreePane.vue` 树面板工具栏醒目标记“按编码标识排序”；
+   - **测试与验证**：
+     - 前端单元测试 91 项全绿通过；
+     - 自动发布至生产服务器 `10.37.200.74`（Release: `2.2.0-20261013031136`），实机实测 `/api/v2/organization`：车间（`HG -> LX -> RD -> YW`）、区域（`BF01 -> CKG01 -> HG01 -> HG02 -> SYJ01`）、单元（`01 -> 02 -> 03 -> 04 -> 05`）100% 严格自然递增！
 
 ---
 
 ## 二、当前核心改动与架构影响
 
-- **驱动与适配层 (`src/Hikvision.Adapter`)**：
-  - `HikvisionDevice.Discovery.cs`：ISAPI XML 解析提取 `sourceInputPortDescriptor.ipAddress`，填入 `ChannelSummary.Ip`；
-  - `Contracts.cs`：`ChannelSummary` 增加 `string? Ip = null`。
-- **服务与业务层 (`src/VideoPlatform.Infrastructure` / `src/VideoPlatform.Contracts`)**：
-  - `DeviceService.cs`：在 `SyncAsync` 中原子将 `channel.Ip` 写入 `channels(ip)`；
-  - `INvrChannelManager.cs` & `NvrChannelManager.cs`：新增 `UpdateIpcChannelAsync`，下发 ISAPI PUT 更新数字通道；
-  - `AdministrationService.Organization.cs`：重构 `UpdateChannelAsync`，完善部分更新增量语义（防止误清空凭据/网络绑定），触发物理 NVR 配置更新；新增 `BatchSetNetworkBindingsAsync` 与 `BatchClaimChannelsAsync`。
-- **前端页面与组件 (`web-admin`)**：
-  - `WorkspaceLayout.vue` & `router.ts`：更新侧边栏结构与路由重定向；
-  - `TerminalBoxWorkbenchDrawer.vue`：实现一站式工作舱抽屉，集成箱内 ONU、光衰、摄像头与电脑穿透管理；
-  - `panes/ChannelTablePane.vue` & `OrganizationPage.vue`：集成组织节点就地维护、批量认领与批量网络承载划拨；
-  - `ComputerDialog.vue`：接入 IP 防冲突实时校验与车间空闲 IP 推荐。
+- **批量运维工具 (`tools/batch_add_cameras.py`)**：
+  - 自动从生产库拉取现有通道 IP、ONU SN 和终端箱拓扑映射；
+  - 根据设备品牌自动适配协议与凭据（中维 -> `ONVIF`:80 `admin/***REMOVED-CREDENTIAL***`；海康 -> `HIKVISION`:8000 `admin/***REMOVED-CREDENTIAL***`）；
+  - 自动关联终端箱 ID、ONU ID、电口号及交换机标记（`SW-P{口号}` / `LAN{口号}`）；
+  - 支持 `--limit` 步进执行与 `--dry-run` 预演模拟，内置 0.15s 请求防拥塞保护与 JSON 报告导出。
+- **资产与拓扑数据库状态 (`video_platform_v2`)**：
+  - `devices`：纳管录像机增至 11 台（中央海康 2 台，车间中维工位 7 台，网管平台 1 台）；
+  - `channels`：总通道增至 399 路（中央录像机 311 路，车间工位 68 路，集团录像机 19 路）；
+  - `channel_network_bindings`：实体绑定增至 257 条（覆盖 57 个终端箱与 95 台 ONU）。
+- **组织拓扑顺序规范**：全厂车间、功能区域、工位单元不论在 API 返回还是前端渲染，一律以编码标识（`code`）为第一优先级自然数字/字母混排。
 
 ---
 
 ## 三、踩过的坑与技术要点（经验知识库）
 
-### 1. 通道增量更新（Partial Update）中的数据清空陷阱
-- **现象**：在通道编辑弹窗修改名称或在终端箱解绑某摄像头时，摄像头的 IP、访问密码或所属网络终端箱被意外置空，甚至误触发对录像机的 ISAPI PUT 报错 502。
-- **根本原因**：`UpdateChannelAsync` 之前将请求中未携带的属性（`null`）直接当作置空更新，且未区分“解绑网络”与“修改属性”。
-- **规避与解法**：显式遵循增量更新原则——入参为 `null` 时严格保留 `before` 中的旧值；密码字段空字符串表示“不修改沿用旧密码”；网络解绑通过专用 `ClearNetworkBinding` 标识或专用批量网络接口操作；仅在 IP/密码/别名确实被用户改动时才向物理录像机触发 ISAPI PUT。
+### 1. 海康中央存储录像机（DS-A72124R）ISAPI 远程添加通道机制
+- **现象**：向海康集中存储 NVR 下发新通道时，直接使用 POST 可能报 403/409（如果该数字通道号在设备底层已被分配为默认占位）。
+- **根本原因**：海康录像机底层对已预分配通道号的配置要求通过 PUT 覆盖。
+- **解法**：`NvrChannelManager` 采用“POST 创建，若报错 AlreadyExist/403/400 则自动回退为 PUT 更新”策略，通道名称与协议参数一次性穿透下发生效。
 
-### 2. 海康 ISAPI 通道修改规范
-- **现象**：向海康 NVR 修改已存在的数字通道时，直接调用 POST 会返回 `400/403 networkSourceIpAlreadyExist`。
-- **根本原因**：海康 ISAPI 规范对已分配通道的属性更新必须使用 `PUT /ISAPI/ContentMgmt/InputProxy/channels/{channelId}`，而集合 POST 仅用于首次分配。
-- **解法**：在 `NvrChannelManager` 中拆分 `AddIpcChannelAsync`（POST+PUT）与 `UpdateIpcChannelAsync`（直接 PUT），并在 XML 中严格转义 XML 字符。
+### 2. 交换机下挂设备的拓扑校验与微标呈现
+- **现象**：下挂交换机上的摄像头如果直接指定电口号，后端 `ValidateNetworkBindingAsync` 会校验 `port <= 4` 并抛错；若传入 `isSwitchPort = true` 则要求 ONU 必须配置 `hasSubSwitch = true`。
+- **根本原因**：系统设计严格区分直连 ONU 电口（LAN1~LAN4）与交换机扩展口（SW-P1~SW-P24），必须在 `onu_devices` 显式标记 `has_sub_switch`。
+- **解法**：在录入交换机摄像头前，将挂载交换机的 6 台 ONU 在数据库中标记 `has_sub_switch = true, sub_switch_ports = 24`，前端即可自动获得专属 `SW-P{口号}` 标识并解除端口范围拦截。
 
-### 3. 跨网段通信与自动化脚本的源 IP 绑定
-- **现象**：Windows 宿主机直连生产机 `10.37.200.74` 时，Paramiko SSH 或 Socket 连接常报 `TimeoutError`。
-- **规避**：自动化脚本必须显式通过 `s.bind(("10.37.6.210", 0))` 绑定本地源 IP 后再发起 TCP 连接。
+### 3. 多通道写入并发与数据库锁竞争
+- **现象**：并发批量添加通道时可能偶发 409 或 500。
+- **根本原因**：`AdministrationService.AddCameraDirectAsync` 包含 `pg_advisory_xact_lock(72002030)` 事务级互斥锁，以保证录像机通道分配与网络电口分配绝对不冲突。
+- **解法**：批量脚本采用单任务线性序列循环（配合 150ms 间隔），既避免了锁竞争超时，又保证海康 ISAPI 嵌入式 Web 容器连接稳定不丢包。
+
+### 4. PostgreSQL UNION 查询的 ORDER BY 语法约束与自然排序搭配
+- **现象**：在 `UNION ALL` 语句末尾使用 `order by type, coalesce(nullif(code, ''), name), id` 会被 Postgres 抛出 `0A000: invalid UNION/INTERSECT/EXCEPT ORDER BY clause` 异常。
+- **根本原因**：Postgres 的 Set Operation 要求外部 ORDER BY 只能使用输出列名称（Output Column Names），不能使用未在 SELECT 列表直接投影的复杂函数表达式。
+- **解法**：SQL 层直接使用投影列名 `order by type, code, id`，业务层在 C# 内存中利用 `OrganizationCodeComparer` 进行精确的分段自然混排与空值优先级兜底，彻底消除兼容性隐患。
+
+### 5. Element Plus 树组件受控折叠状态与静默刷新的冲突根治
+- **现象**：用户在组织架构拓扑树中折叠节点或点击“全部折叠”后，过一会儿树又自动全部展开。
+- **根本原因**：`<el-tree default-expand-all>` 在接收到静默刷新引起的响应式对象引用改变时，Element Plus 重建内部 node 时会根据 `defaultExpandAll` 强制将每个节点重设为 `expanded = true`；同时 `useActivePage` 监听事件过宽导致频繁静默刷新。
+- **解法**：移除 `default-expand-all`；维护 `expandedKeySet` 响应式集合，通过 `@node-expand` 和 `@node-collapse` 双向追踪；在 `watch(treeData)` 中结合 `nextTick` 精准恢复每个节点的 `expanded` 状态；同时收窄 `useActivePage` 监听事件。
 
 ---
 
@@ -93,39 +109,35 @@
 
 | 事项 | 类别 | 当前状态 | 现状说明与评估 |
 | :--- | :--- | :---: | :--- |
-| **管理后台重构与录像机 IP 全自动抓取** | 全栈架构 | 🟢 **已上线投产** | 已上线 Release `2.1.5-20261007070753`，侧边栏精简、终端箱工作舱、海康 IP 提取与严格物理下发均已就位 |
-| **全厂空间数字孪生 2.5D 底图与大屏** | 数字孪生 | 🟢 **已上线投产** | 全厂总览与制管车间 42 节点吸附对齐完成，微立体沙盘与光缆流光稳定运行 |
-| **现场物理录像机实机通道联动验证** | 现场验证 | 🟡 **具备验证条件** | 代码与接口均部署于生产机，待现场工程师在管理后台点击海康录像机【同步】实测自动提取 IP |
+| **组织架构折叠状态自动展开Bug修复** | 前端交互 | 🟢 **全部闭环** | 移除静态 default-expand-all，引入 expandedKeySet 记忆追踪，实测折叠不再丢失 |
+| **组织架构拓扑按编码自然排序** | 架构规范 | 🟢 **全部闭环** | 车间、区域、单元前后端全链路统一按 code 自然混排，正式机实测 100% 验证通过 |
+| **第一步：ONU别名网管导入** | 网管集成 | 🟢 **全部闭环** | 123 台设备别名模板生成，场景模板 ZTP 自动下发机制打通 |
+| **第二步：点位全网多协议探测** | 网络探测 | 🟢 **全部闭环** | 374 点位全覆盖探测，7 台 NVR 与 242 台 IPC 识别归类 |
+| **第三步(1)：工位录像机入库** | 资产纳管 | 🟢 **全部闭环** | 3 台中维工位录像机录入系统并同步 22 路通道上线 |
+| **第三步(2)：226台IPC入中央NVR** | 业务落地 | 🟢 **全部闭环** | 226 台在线 IPC 100% 成功添加至中央录像机与通道台账，总数扩至 311 路 |
+| **ONU断线与掉线定界重构** | 故障诊断 | 🟢 **全部闭环** | 四级定界机制与新枚举落地，30 台假主干中断虚警全部清零，生产机实测验证通过 |
+| **排障诊断UI与智能SOP重构** | 前端交互 | 🟢 **全部闭环** | 消除概念错位与自相矛盾提示，实现结构化SOP、4口拓扑与工单复制，生产部署验证完毕 |
+| **全网通道物理拓扑绑定** | 网络拓扑 | 🟢 **全部闭环** | 257 条物理绑定建立，终端箱、ONU、电口与交换机端口全部精准对应 |
+| **125个探测离线点位排查** | 现场运维 | 🟡 **待现场处理** | 125 个点位网络不可达（大部分为未通电/未插网线/施工中），待现场工单排查 |
 
 ---
 
-## 五、后续维护与下一步开发计划
-
-1. **现场实机录像机同步实测**：
-   - 在平台【录像机管理】点击 1 号机集中存储（`10.37.200.53`）与 2 号机海康 NVR（`10.37.200.51`）的【同步】，确认 70+ 路摄像头的 IP 地址一次性自动入库展现。
-2. **热镀与螺旋车间终端箱现场建档**：
-   - 施工人员可直接在【网络终端箱】看板通过工作舱抽屉，就地录入热镀与螺旋车间的终端箱、ONU 及下挂摄像头与电脑。
-3. **数字孪生其余车间底图补充**：
-   - 参照制管车间模式，为热镀与螺旋车间制作等轴测底图并在工作台完成轴网吸附。
-
----
-
-## 六、常用运维与开发命令速查
+## 五、常用运维与开发命令速查
 
 ```bash
-# 1. 前端管理后台测试与打包
-cd "d:\2026-09-08 VisiCore\web-admin"
-npm test
-npm run build
+# 1. 批量添加摄像头至中央录像机（支持演练与步进）
+python tools/batch_add_cameras.py --dry-run
+python tools/batch_add_cameras.py --limit 10
+python tools/batch_add_cameras.py
 
-# 2. 后端核心服务编译与打包
-cd "d:\2026-09-08 VisiCore"
-& "$env:LOCALAPPDATA\VideoPlatform\dotnet\dotnet.exe" build VideoPlatform.sln -c Release
-& "$env:LOCALAPPDATA\VideoPlatform\dotnet\dotnet.exe" publish src/VideoPlatform.Api/VideoPlatform.Api.csproj -c Release -r linux-x64 --self-contained true -o artifacts/v2/api
+# 2. 生产机远程一键部署
+$env:VIDEO_PLATFORM_SSH_PASSWORD = "<见未跟踪凭据文件>"
+python tools/v2-deploy.py --password <见未跟踪凭据文件> --bind-ip 10.37.6.210 --switch
 
-# 3. 生产机远程一键全量部署（秒级生效并热切换）
-设置 `VIDEO_PLATFORM_SSH_PASSWORD` 环境变量后运行 `python tools/v2-deploy.py --switch`；跨网段主机按现场网络要求设置 `VIDEO_PLATFORM_BIND_IP`。
+# 3. 生产机健康检查与服务日志
+python tools/v2-remote-checks.py health
+python tools/v2-remote-checks.py logs
 
-# 4. 生产机服务日志排查（SSH连接）
-sudo journalctl -u video-platform-v2-api.service -n 50 --no-pager
+# 4. 手动触发录像机通道全量同步
+# POST https://10.37.200.74/api/v2/devices/1/sync (Header: Authorization: Bearer <token>)
 ```

@@ -6,11 +6,28 @@ beforeEach(() => { vi.resetModules(); calls = []; const events = new EventTarget
 afterEach(() => vi.unstubAllGlobals())
 function mockFetch(handler: (path: string, init: RequestInit) => Response | Promise<Response>) { vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit = {}) => { calls.push({ path, init }); return handler(path, init) })) }
 describe('Cookie 与 CSRF 契约', () => {
-  it('登录前获取令牌，身份变化后重新获取，不发送Authorization', async () => { let identity = 'anonymous'; mockFetch((path) => { if (path.endsWith('/auth/csrf')) return json({ token: identity }); if (path.endsWith('/auth/login')) { identity = 'signed-in'; return json({ user: { id: 1 }, expiresAt: '2030-01-01' }) }; if (path.endsWith('/auth/logout')) { identity = 'signed-out'; return new Response(null, { status: 204 }) }; return json({}) }); const { authApi, api } = await import('./api'); await authApi.login('admin', 'test-secret'); await api('/devices', { method: 'POST', body: '{}' }); await authApi.logout(); await authApi.login('admin', 'test-secret'); const writes = calls.filter(call => call.init.method === 'POST'); expect(new Headers(writes[0].init.headers).get('X-CSRF-Token')).toBe('anonymous'); expect(new Headers(writes[1].init.headers).get('X-CSRF-Token')).toBe('signed-in'); expect(new Headers(writes[3].init.headers).get('X-CSRF-Token')).toBe('signed-out'); for (const call of calls) { expect(call.init.credentials).toBe('include'); expect(new Headers(call.init.headers).has('Authorization')).toBe(false) }; const body = JSON.parse(writes[0].init.body as string); expect(body.clientType).toBe('web'); expect(body.clientVersion).toBe('2.1.6') })
+  it('登录前获取令牌，身份变化后重新获取，不发送Authorization', async () => { let identity = 'anonymous'; mockFetch((path) => { if (path.endsWith('/auth/csrf')) return json({ token: identity }); if (path.endsWith('/auth/login')) { identity = 'signed-in'; return json({ user: { id: 1 }, expiresAt: '2030-01-01' }) }; if (path.endsWith('/auth/logout')) { identity = 'signed-out'; return new Response(null, { status: 204 }) }; return json({}) }); const { authApi, api } = await import('./api'); await authApi.login('admin', 'test-secret'); await api('/devices', { method: 'POST', body: '{}' }); await authApi.logout(); await authApi.login('admin', 'test-secret'); const writes = calls.filter(call => call.init.method === 'POST'); expect(new Headers(writes[0].init.headers).get('X-CSRF-Token')).toBe('anonymous'); expect(new Headers(writes[1].init.headers).get('X-CSRF-Token')).toBe('signed-in'); expect(new Headers(writes[3].init.headers).get('X-CSRF-Token')).toBe('signed-out'); for (const call of calls) { expect(call.init.credentials).toBe('include'); expect(new Headers(call.init.headers).has('Authorization')).toBe(false) }; const body = JSON.parse(writes[0].init.body as string); expect(body.clientType).toBe('web'); expect(body.clientVersion).toBe('2.1.7') })
   it('明确CSRF失败重取令牌并只重试一次', async () => { let tokens = 0, writes = 0; mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: `csrf-${++tokens}` }) : ++writes === 1 ? json({ code: 'auth.csrf', message: '校验过期' }, 400) : json({ id: 1 })); const { api } = await import('./api'); expect(await api('/devices', { method: 'POST', body: '{}' })).toEqual({ id: 1 }); expect(tokens).toBe(2); expect(writes).toBe(2) })
   it('业务403不触发重试', async () => { mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: 'csrf' }) : json({ code: 'access.denied', message: '无权限', traceId: 'trace-1' }, 403)); const { api } = await import('./api'); await expect(api('/devices', { method: 'DELETE' })).rejects.toMatchObject({ status: 403, traceId: 'trace-1' }); expect(calls.filter(call => call.path.endsWith('/devices'))).toHaveLength(1) })
-  it('并发401均立即失败且不触发认证重试', async () => { mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: 'csrf' }) : json({ code: 'auth.expired', message: '会话过期' }, 401)); const { api } = await import('./api'); await expect(Promise.all([api('/devices'), api('/channels')])).rejects.toMatchObject({ status: 401 }); expect(calls.filter(call => call.path.endsWith('/auth/refresh'))).toHaveLength(0); expect(calls.filter(call => call.path.endsWith('/devices') || call.path.endsWith('/channels'))).toHaveLength(2) })
-  it('认证失败立即通知退出且不自动重放业务请求', async () => { const expired = vi.fn(); window.addEventListener('platform-auth-expired', expired); mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: 'csrf' }) : json({ code: 'auth.expired', message: '会话过期' }, 401)); const { api } = await import('./api'); await expect(api('/devices')).rejects.toMatchObject({ status: 401 }); expect(calls.filter(call => call.path.endsWith('/auth/refresh'))).toHaveLength(0); expect(calls.filter(call => call.path.endsWith('/devices'))).toHaveLength(1); expect(expired).toHaveBeenCalledOnce() })
+  it('并发主动续期合并为单个请求', async () => {
+    mockFetch(async path => {
+      if (path.endsWith('/auth/csrf')) return json({ token: 'csrf' })
+      await new Promise(resolve => setTimeout(resolve, 10))
+      return json({ user: { id: 1 }, expiresAt: '2030-01-01' })
+    })
+    const { refreshSession } = await import('./api')
+    await Promise.all([refreshSession(), refreshSession()])
+    expect(calls.filter(call => call.path.endsWith('/auth/refresh'))).toHaveLength(1)
+  })
+  it('业务401立即通知退出，不自动续期或重放请求', async () => {
+    const expired = vi.fn()
+    window.addEventListener('platform-auth-expired', expired)
+    mockFetch(() => json({ code: 'auth.expired', message: '会话过期' }, 401))
+    const { api } = await import('./api')
+    await expect(api('/devices')).rejects.toMatchObject({ status: 401 })
+    expect(calls).toHaveLength(1)
+    expect(expired).toHaveBeenCalledOnce()
+  })
   it('上传表单保留浏览器生成的multipart边界并携带CSRF', async () => { mockFetch(path => path.endsWith('/auth/csrf') ? json({ token: 'csrf' }) : json({ id: 1 })); const { workflowApi } = await import('./api'); const form = new FormData(); form.append('version', '2.0.0'); await workflowApi.uploadRelease(form); const upload = calls.at(-1)!; expect(upload.init.body).toBe(form); expect(new Headers(upload.init.headers).has('Content-Type')).toBe(false); expect(new Headers(upload.init.headers).get('X-CSRF-Token')).toBe('csrf') })
 })
 describe('分页和媒体参数', () => {
@@ -221,8 +238,6 @@ describe('通道管理与元数据 API 契约', () => {
       password: 'password123',
       remark: '测试备注'
     })
-    await managementApi.updateChannel(101, { alias: '东门高清', clearPassword: true })
-    expect(JSON.parse(calls.at(-1)!.init.body as string)).toEqual({ alias: '东门高清', clearPassword: true })
     expect(result.id).toBe(101)
   })
 })

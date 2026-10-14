@@ -11,7 +11,7 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
     SecretStore secrets, PlatformOptions options, IHttpClientFactory clients, AuditStore audit, ILogger<MediaService> logger)
 {
     public async Task<JsonObject> StartAsync(Actor actor, long channelId, string kind, int streamType, string profile,
-        DateTimeOffset? start = null, DateTimeOffset? end = null, CancellationToken ct = default)
+        DateTimeOffset? start = null, DateTimeOffset? end = null, CancellationToken ct = default, Guid? consumerId = null)
     {
         Rules.Require(kind is "live" or "playback" && streamType is 1 or 2 && profile is "native" or "browser", "媒体参数无效");
         var channel = await access.ChannelAsync(actor, channelId, kind == "live" ? "live.view" : "playback.view", ct);
@@ -29,15 +29,25 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
         var deviceId = channel.Id("deviceId");
         var hasSplit25 = kind == "live" && (await access.IsAdministratorAsync(actor.UserId, ct) || await access.HasPermissionAsync(actor.UserId, "live.split25", ct));
         var liveLimit = hasSplit25 ? Math.Max(settings.LivePerUser, 25) : Math.Min(settings.LivePerUser, 16);
+        Rules.Require(consumerId != Guid.Empty, "播放格位编号无效");
+        var replaced = new List<Guid>();
         await db.TransactionAsync(async tx =>
         {
             await tx.ExecuteAsync("select pg_advisory_xact_lock(72002002)", ct: ct);
-            if (kind == "live")
+            if (consumerId is not null || kind == "live")
             {
-                var duplicates = await tx.QueryAsync("select id from media_sessions where user_id=@userId and channel_id=@channelId and kind='live' and stream_type=@streamType and closed_at is null and expires_at>now()", new { actor.UserId, channelId, streamType }, ct);
+                // 同一格位的重试替换本格位；旧请求按登录会话隔离，避免巡查关闭另一端的画面。
+                var duplicates = await tx.QueryAsync("""
+                    select id from media_sessions where auth_session_id=@authSession and kind=@kind
+                    and closed_at is null and (
+                        (@consumerId::uuid is not null and consumer_id=@consumerId)
+                        or (@consumerId::uuid is null and consumer_id is null and channel_id=@channelId and stream_type=@streamType))
+                    """, new { authSession = actor.SessionId, consumerId, kind, channelId, streamType }, ct);
                 foreach (var dup in duplicates)
                 {
-                    await tx.ExecuteAsync("update media_sessions set closed_at=now(),state='stopped' where id=@id", new { id = Guid.Parse(dup.Text("id")) }, ct);
+                    var previousId = Guid.Parse(dup.Text("id"));
+                    await tx.ExecuteAsync("update media_sessions set closed_at=now(),state='stopping' where id=@id", new { id = previousId }, ct);
+                    replaced.Add(previousId);
                 }
             }
             var counts = await tx.OneAsync("""
@@ -51,11 +61,12 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
                 """, new { actor.UserId, deviceId, kind }, ct);
             Rules.Require(counts.Id("own") < (kind == "live" ? liveLimit : settings.PlaybackPerUser), "已达到个人播放窗口上限", "media.userQuota", 429);
             if (kind == "playback") Rules.Require(counts.Id("device") < settings.PlaybackPerDevice && counts.Id("playback") < settings.PlaybackGlobal, "已达到回放并发上限", "media.playbackQuota", 429);
-            await tx.ExecuteAsync("insert into media_sessions(id,user_id,auth_session_id,device_id,channel_id,kind,stream_type,profile,token_hash,token_cipher,start_at,end_at,expires_at) values(@id,@userId,@authSession,@deviceId,@channelId,@kind,@streamType,@profile,@hash,@cipher,@start,@end,now()+interval '3 minutes')", new { id, actor.UserId, authSession = actor.SessionId, deviceId, channelId, kind, streamType, profile, hash = Passwords.TokenHash(token), cipher = secrets.Protect(token), start, end }, ct);
+            await tx.ExecuteAsync("insert into media_sessions(id,user_id,auth_session_id,consumer_id,device_id,channel_id,kind,stream_type,profile,token_hash,token_cipher,start_at,end_at,expires_at) values(@id,@userId,@authSession,@consumerId,@deviceId,@channelId,@kind,@streamType,@profile,@hash,@cipher,@start,@end,now()+interval '3 minutes')", new { id, actor.UserId, authSession = actor.SessionId, consumerId, deviceId, channelId, kind, streamType, profile, hash = Passwords.TokenHash(token), cipher = secrets.Protect(token), start, end }, ct);
             return true;
         }, ct);
         try
         {
+            foreach (var previousId in replaced) await StopInternalAsync(previousId, CancellationToken.None);
             var payload = kind == "live"
                 ? (object)new { sessionId = id, channel = (int)channel.Id("deviceChannel"), streamType, profile }
                 : new { sessionId = id, userId = actor.UserId, channel = (int)channel.Id("deviceChannel"), start, end, profile, streamType };

@@ -10,6 +10,10 @@ namespace VideoPlatform.Desktop.ViewModels;
 
 public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPlayerFactory playerFactory, IUiDispatcher dispatcher) : ViewModelBase, IAsyncDisposable
 {
+    public Guid ConsumerId { get; } = Guid.NewGuid();
+    private bool _paused;
+    public TileState? CaptureState() => Channel is { } channel ? new(Index, channel.Id, StreamType,
+        _session?.Start, _session?.End, CurrentTime, Speed, _paused, IsMuted, _manualStreamOverride) : null;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private IVideoPlayer? _player;
     private MediaSession? _session;
@@ -158,8 +162,8 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
             try
             {
                 response = playback
-                    ? await api.PostAsync<MediaSession>(path, new PlaybackRequest(channel.Id, start, end, StreamType: streamType))
-                    : await api.PostAsync<MediaSession>(path, new LiveRequest(channel.Id, streamType));
+                    ? await api.PostAsync<MediaSession>(path, new PlaybackRequest(channel.Id, start, end, StreamType: streamType, ConsumerId: ConsumerId))
+                    : await api.PostAsync<MediaSession>(path, new LiveRequest(channel.Id, streamType, ConsumerId: ConsumerId));
             }
             catch (Exception ex) when (!playback && (
                 ex is TaskCanceledException ||
@@ -174,7 +178,7 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
                 ClientFiles.Log($"通道 {channel.Name} 实时流连接遇到排队或网络波动，等待 1.2s 后自动重试：{ex.Message}");
                 await Task.Delay(1200);
                 if (generation != _generation) return;
-                response = await api.PostAsync<MediaSession>(path, new LiveRequest(channel.Id, streamType));
+                response = await api.PostAsync<MediaSession>(path, new LiveRequest(channel.Id, streamType, ConsumerId: ConsumerId));
             }
 
             if (generation != _generation)
@@ -309,7 +313,7 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
                 {
                     try
                     {
-                        var refreshed = await api.PostAsync<MediaSession>(SessionPath, new LiveRequest(ch.Id, StreamType));
+                        var refreshed = await api.PostAsync<MediaSession>(SessionPath, new LiveRequest(ch.Id, StreamType, ConsumerId: ConsumerId));
                         if (generation == _generation)
                         {
                             _session = refreshed;
@@ -346,7 +350,7 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
             if (!IsPlayback || _session is null || generation != _generation) return;
             await api.SendAsync(HttpMethod.Post, $"playback-sessions/{_session.Id}/control", control);
             if (generation != _generation) return;
-            if (control.Action is "pause" or "resume") _player?.Pause(control.Action == "pause");
+            if (control.Action is "pause" or "resume") { _paused = control.Action == "pause"; _player?.Pause(_paused); }
             if (control.Action == "speed" && control.Speed is { } speed) Speed = speed;
             if (control.Action == "seek")
             {
@@ -399,6 +403,7 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
         CurrentTime = session.CurrentTime;
         Segments = session.Segments ?? [];
         Speed = session.Speed;
+        _paused = session.State == "paused";
         ActualResolution = session.ResolutionLabel;
         ActualBitrate = session.BitrateLabel;
         StateLabel = session.State switch
@@ -419,6 +424,7 @@ public sealed partial class VideoTileViewModel(int index, IPlatformApi api, IPla
         Segments = [];
         StateLabel = "空闲";
         IsPlaying = false;
+        _paused = false;
         ResetStreamPreference();
         await ReleasePlayerAsync();
         if (session is not null) await DeleteSessionAsync(path, session.Id);

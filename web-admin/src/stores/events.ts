@@ -26,7 +26,7 @@ export const useEvents = defineStore('events', () => {
     if (!stopped) return
     stopped = false
     connection = new HubConnectionBuilder().withUrl(`${apiBase}/hubs/v2/events`, { withCredentials: true }).withAutomaticReconnect([0, 2000, 5000, 10000, 30000]).configureLogging(LogLevel.None).build()
-    const kinds: EventKind[] = ['alarm.changed', 'device.changed', 'media.changed', 'export.changed', 'access.changed']
+    const kinds: EventKind[] = ['alarm.changed', 'device.changed', 'asset.changed', 'media.changed', 'export.changed', 'access.changed']
     for (const kind of kinds) connection.on(kind, (event: ResourceEvent) => {
       const key = `${kind}:${event.id}`
       if (versions.has(key) && versions.get(key)! >= event.version) return
@@ -40,5 +40,5 @@ export const useEvents = defineStore('events', () => {
     await connect()
   }
   async function stop() { stopped = true; clearTimeout(retryTimer); const old = connection; connection = null; await old?.stop(); versions.clear(); state.value = 'disconnected' }
-  return { state, start, stop, subscribe }
+  return { state, start, stop, subscribe, emit }
 })

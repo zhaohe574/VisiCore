@@ -24,6 +24,7 @@ public sealed partial class ShellViewModel : ViewModelBase
     private DateTimeOffset _lastSync;
     private ClientSettings _settings;
     public WorkspaceViewModel Workspace { get; }
+    public WorkspaceRegistry Workspaces { get; }
     public AlarmsViewModel Alarms { get; }
     public ExportsViewModel Exports { get; }
     public string VersionLabel => $"{UpdateService.CurrentVersion.ToString(3)} · Windows x64";
@@ -59,14 +60,19 @@ public sealed partial class ShellViewModel : ViewModelBase
     [ObservableProperty] private string _snapshotPath = "";
     [ObservableProperty] private string _exportPath = "";
     [ObservableProperty] private string _snapshotFormat = "PNG";
+    [ObservableProperty] private string _sourceAddress = "";
+    [ObservableProperty] private string _sourceHostPrefix = "";
 
     public string DiagnosticsLabel => $"会话 {SessionCount} · 解码 {DecoderCount}{DecodedFramesLabel}";
 
     public ShellViewModel(SessionService session, IPlatformApi api, EventService events, UpdateService updates,
-        WorkspaceViewModel workspace, AlarmsViewModel alarms, ExportsViewModel exports, IUiDispatcher dispatcher, IUserInteraction dialogs)
+        WorkspaceViewModel workspace, AlarmsViewModel alarms, ExportsViewModel exports, IUiDispatcher dispatcher, IUserInteraction dialogs, WorkspaceRegistry? workspaces = null)
     {
         _session = session; _api = api; _events = events; _updates = updates; Workspace = workspace; Alarms = alarms; Exports = exports; _dispatcher = dispatcher; _dialogs = dialogs;
+        Workspaces = workspaces ?? new WorkspaceRegistry(workspace);
         _settings = ClientFiles.LoadSettings(); Server = _settings.Server;
+        _sourceAddress = _settings.SourceAddress ?? "";
+        _sourceHostPrefix = _settings.SourceHostPrefix ?? "";
         PreferRtsp = _settings.PreferRtsp;
         ShowDiagnostics = _settings.ShowDiagnostics;
         _hardwareDecoding = _settings.HardwareDecoding;
@@ -84,6 +90,7 @@ public sealed partial class ShellViewModel : ViewModelBase
         _events.StateChanged += value => _ = _dispatcher.InvokeAsync(() => { ConnectionState = value; return Task.CompletedTask; });
         _session.Invalidated += () => _ = _dispatcher.InvokeAsync(async () => { Status = "登录已失效，请重新登录。"; await LogoutCoreAsync(); });
         Workspace.ExportCreated += async () => { Module = "exports"; await Exports.RefreshAsync(); };
+        Workspaces.Created += value => value.ExportCreated += async () => { Module = "exports"; await Exports.RefreshAsync(); };
         Alarms.VideoRequested += (alarm, mode) => _ = _dispatcher.InvokeAsync(async () => await OpenAlarmVideoAsync(alarm, mode));
         Clock = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         UpdateModuleLabel();
@@ -106,9 +113,9 @@ public sealed partial class ShellViewModel : ViewModelBase
 
     partial void OnPreferSubStreamInGridChanged(bool value)
     {
-        Workspace.PreferSubStreamInGrid = value;
+        foreach (var workspace in Workspaces.Items) workspace.PreferSubStreamInGrid = value;
         ClientFiles.SaveSettings(_settings = _settings with { PreferSubStreamInGrid = value });
-        _ = Workspace.ApplyLayoutTiersAsync();
+        _ = Task.WhenAll(Workspaces.Items.Select(workspace => workspace.ApplyLayoutTiersAsync()));
         PushPreferences();
     }
 
@@ -127,6 +134,15 @@ public sealed partial class ShellViewModel : ViewModelBase
     }
 
     private PlayerOptions PlayerOptions() => new(HardwareDecoding, NetworkCachingMs);
+
+    [RelayCommand]
+    private void SaveSourceBinding()
+    {
+        if (!string.IsNullOrWhiteSpace(SourceAddress) && !System.Net.IPAddress.TryParse(SourceAddress.Trim(), out _))
+        { Status = "请输入有效的本机 IP 地址。"; return; }
+        ClientFiles.SaveSettings(_settings = _settings with { SourceAddress = SourceAddress.Trim(), SourceHostPrefix = SourceHostPrefix.Trim() });
+        Status = "源地址绑定策略已保存，重新启动客户端后生效。";
+    }
 
     /// <summary>正在套用平台偏好时抑制回写，避免「读取 → 触发变更 → 立即回写」的无谓往返。</summary>
     private bool _applyingPreferences;
@@ -189,7 +205,7 @@ public sealed partial class ShellViewModel : ViewModelBase
     /// <summary>状态栏诊断只统计可见分屏中的媒体会话与原生解码器数量，供真机性能核对。</summary>
     public void RefreshDiagnostics()
     {
-        var tiles = Workspace.Tiles;
+        var tiles = Workspaces.Items.SelectMany(workspace => workspace.Tiles).ToArray();
         SessionCount = tiles.Count(tile => tile.SessionId is not null);
         DecoderCount = tiles.Count(tile => tile.IsDecoding);
         var positions = tiles.Select(tile => tile.PlaybackPositionMs).Where(value => value is not null).Select(value => value!.Value).ToArray();
@@ -252,7 +268,7 @@ public sealed partial class ShellViewModel : ViewModelBase
 
     partial void OnPreferRtspChanged(bool value)
     {
-        foreach (var tile in Workspace.Tiles) tile.PreferRtsp = value;
+        foreach (var tile in Workspaces.Items.SelectMany(workspace => workspace.Tiles)) tile.PreferRtsp = value;
         ClientFiles.SaveSettings(_settings = _settings with { PreferRtsp = value });
     }
     public Task InitializeAsync() => RunAsync(async () =>
@@ -305,6 +321,8 @@ public sealed partial class ShellViewModel : ViewModelBase
         await ApplyPreferencesAsync();
         try { await Workspace.PurgeOrphanSessionsAsync(); }
         catch { }
+        if (_session.CurrentUser is { } user) await Workspaces.RestoreConfigurationAsync(_session.Server, user);
+        Module = Workspace.IsPlayback ? "playback" : "live";
         try { await _events.StartAsync(_lifetime.Token); }
         catch (Exception ex) { ConnectionState = "事件连接不可用"; Status = $"事件连接失败，将定期同步数据：{ex.Message}"; }
     }
@@ -312,11 +330,11 @@ public sealed partial class ShellViewModel : ViewModelBase
     {
         var user = _session.CurrentUser;
         UserLabel = user?.Label ?? "未登录"; DisplayName = user?.DisplayName ?? ""; Phone = user?.Phone ?? "";
-        await Workspace.SetAccessAsync(user); Alarms.SetAccess(user); Exports.SetAccess(user);
+        await Workspaces.SetAccessAsync(user); Alarms.SetAccess(user); Exports.SetAccess(user);
     }
     private async Task RefreshDataAsync()
     {
-        await Workspace.RefreshAsync();
+        await Workspaces.RefreshAsync();
         await Alarms.RefreshAsync();
         await Exports.RefreshAsync();
         _lastSync = DateTimeOffset.UtcNow;
@@ -327,18 +345,36 @@ public sealed partial class ShellViewModel : ViewModelBase
     private async Task OnEventAsync(string kind)
     {
         if (!IsAuthenticated || _closing) return;
+        if (kind is "asset.changed" or "device.changed") { ScheduleAssetRefresh(); return; }
         await RunAsync(async () =>
         {
             if (kind is "access.changed" or "reconnected") await RefreshAccessAsync();
-            else if (kind == "device.changed") await Workspace.RefreshAsync();
             else if (kind == "alarm.changed") await Alarms.RefreshAsync();
             else if (kind == "export.changed") await Exports.RefreshAsync();
-            else if (kind == "media.changed") await Workspace.TickAsync();
+            else if (kind == "media.changed") await Task.WhenAll(Workspaces.Items.Select(workspace => workspace.TickAsync()));
         });
+    }
+    private CancellationTokenSource? _assetRefresh;
+    private void ScheduleAssetRefresh()
+    {
+        // 同一批资产同步只补取一次目录，避免逐条事件重复查询所有窗口。
+        if (_assetRefresh is not null) return;
+        _assetRefresh = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _ = RefreshAssetsLaterAsync(_assetRefresh);
+    }
+    private async Task RefreshAssetsLaterAsync(CancellationTokenSource lifetime)
+    {
+        try
+        {
+            await Task.Delay(300, lifetime.Token);
+            await _dispatcher.InvokeAsync(async () => { if (IsAuthenticated && !_closing) await RunAsync(Workspaces.RefreshAsync); });
+        }
+        catch (OperationCanceledException) { }
+        finally { _assetRefresh = null; lifetime.Dispose(); }
     }
     private async Task RefreshAccessAsync()
     {
-        await Workspace.SuspendAccessAsync();
+        foreach (var workspace in Workspaces.Items) await workspace.SuspendAccessAsync();
         Alarms.Clear(); Exports.Clear();
         await _accessGate.WaitAsync();
         try
@@ -368,7 +404,7 @@ public sealed partial class ShellViewModel : ViewModelBase
                     try
                     {
                         await _session.GetTokenAsync();
-                        await Workspace.TickAsync();
+                        await Task.WhenAll(Workspaces.Items.Select(workspace => workspace.TickAsync()));
                         RefreshDiagnostics();
                         if (DateTimeOffset.UtcNow - _lastSync > TimeSpan.FromSeconds(60))
                         {
@@ -403,6 +439,14 @@ public sealed partial class ShellViewModel : ViewModelBase
         if (module == "alarms") await Alarms.RefreshAsync();
         if (module == "exports") await Exports.RefreshAsync();
     });
+    [RelayCommand] private Task OpenWorkspaceAsync(string? mode) => RunAsync(async () =>
+    {
+        if (!IsAuthenticated || !CanUseWorkspace || _session.CurrentUser is not { } user) return;
+        var playback = mode == "playback";
+        if (!user.Can(playback ? "playback.view" : "live.view")) throw new InvalidOperationException("当前账号没有该工作区的使用权限。");
+        await Workspaces.OpenAsync(user, playback);
+        Workspaces.SaveConfiguration();
+    });
     [RelayCommand] private Task CloseSettingsAsync() => RunAsync(() =>
     {
         Module = _previousModule;
@@ -425,10 +469,10 @@ public sealed partial class ShellViewModel : ViewModelBase
                 var start = occurred.AddMinutes(-1);
                 var end = occurred.AddMinutes(1) > DateTimeOffset.Now ? DateTimeOffset.Now : occurred.AddMinutes(1);
                 if (end <= start) end = start.AddSeconds(30);
+                await Workspace.SetModeAsync(true);
                 Workspace.RecordingDate = start.Date;
                 Workspace.StartTime = start.ToString("HH:mm:ss");
                 Workspace.EndTime = end.ToString("HH:mm:ss");
-                await Workspace.SetModeAsync(true);
                 Module = "playback";
             }
             else
@@ -450,10 +494,11 @@ public sealed partial class ShellViewModel : ViewModelBase
         await _logoutGate.WaitAsync();
         try
         {
+            Workspaces.SaveConfiguration();
             CanUseWorkspace = false; IsAuthenticated = false;
             _previousModule = "live"; Module = "live";
             Alarms.SetAccess(null); Exports.SetAccess(null);
-            await Workspace.ClearAsync();
+            await Workspaces.ClearAsync(save: false);
             await _events.StopAsync();
             await _session.LogoutAsync();
             UserLabel = "未登录"; DisplayName = Phone = ""; ConnectionState = "未连接";
@@ -486,7 +531,7 @@ public sealed partial class ShellViewModel : ViewModelBase
                 ClientFiles.SaveSettings(_settings);
             }
             UpdateStatus = UpdateAvailable ? $"发现版本 {_release!.Version}{(UpdateRequired ? "，需要更新" : "")}" : "当前为最新版本或暂无已发布版本";
-            if (UpdateRequired) { CanUseWorkspace = false; await Workspace.StopAllCoreAsync(); }
+            if (UpdateRequired) { CanUseWorkspace = false; foreach (var workspace in Workspaces.Items) await workspace.StopAllCoreAsync(); }
         }
         catch (Exception ex) { UpdateStatus = $"检查更新失败：{ex.Message}"; }
     }
@@ -504,7 +549,7 @@ public sealed partial class ShellViewModel : ViewModelBase
         _closing = true; _lifetime.Cancel();
         try
         {
-            var clearTask = Workspace.ClearAsync();
+            var clearTask = Workspaces.ClearAsync();
             var eventsTask = _events.StopAsync();
             await Task.WhenAll(clearTask, eventsTask).WaitAsync(TimeSpan.FromSeconds(2));
         }
