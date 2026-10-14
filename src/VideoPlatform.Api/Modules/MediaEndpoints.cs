@@ -7,6 +7,7 @@ using VideoPlatform.Application;
 using VideoPlatform.Contracts;
 using VideoPlatform.Domain;
 using VideoPlatform.Infrastructure;
+using VideoPlatform.Infrastructure.Adapter;
 
 namespace VideoPlatform.Api.Modules;
 
@@ -34,11 +35,14 @@ public static class MediaEndpoints
                 return Results.NoContent();
             }).WithName($"StopActive{kind}Sessions");
         }
-        group.MapPost("/recordings/search", async (RecordingRequest request, HttpContext context, AccessService access, IDeviceAdapter adapter) =>
+        group.MapPost("/recordings/search", async (RecordingRequest request, HttpContext context, AccessService access, ICameraAdapter camera) =>
         {
             Rules.TimeRange(request.Start, request.End, 7);
             var channel = await access.ChannelAsync(ApiSupport.Actor(context), request.ChannelId, "playback.view", context.RequestAborted);
-            return Results.Ok(await adapter.SendAsync(HttpMethod.Post, $"/internal/devices/{channel.Id("deviceId")}/recordings/search", new { channel = (int)channel.Id("deviceChannel"), request.Start, request.End }, context.RequestAborted));
+            // 返回类型化录像清单：ApiContractCatalog 早已声明本操作返回 RecordingDto[]，
+            // 而此前是直接透传适配器原始 JSON、从不校验。RecordingDto 与适配器
+            // RecordingSummary 的字段逐字段相同，故线上形状不变。
+            return Results.Ok(await camera.SearchRecordingsAsync(channel.Id("deviceId"), (int)channel.Id("deviceChannel"), request.Start, request.End, context.RequestAborted));
         }).WithName("SearchRecordings");
         group.MapPost("/playback-sessions/{id:guid}/control", async (Guid id, PlaybackControlRequest request, HttpContext context, MediaService media) => Results.Ok(await media.ControlAsync(ApiSupport.Actor(context), id, request, context.RequestAborted))).WithName("ControlPlayback");
         group.MapPost("/channels/{id:long}/ptz", async (long id, PtzRequest request, HttpContext context, MediaService media) =>
@@ -51,7 +55,7 @@ public static class MediaEndpoints
             await media.StopPtzAsync(ApiSupport.Actor(context), id, context.RequestAborted);
             return Results.NoContent();
         }).WithName("StopPtz");
-        group.MapPost("/channels/{id:long}/ptz/presets/{preset:int}", async (long id, int preset, HttpContext context, AccessService access, Database db, IDeviceAdapter adapter, AuditStore audit) =>
+        group.MapPost("/channels/{id:long}/ptz/presets/{preset:int}", async (long id, int preset, HttpContext context, AccessService access, Database db, ICameraAdapter camera, AuditStore audit) =>
         {
             Rules.Require(preset is >= 1 and <= 300, "预置位编号必须为 1～300");
             var actor = ApiSupport.Actor(context);
@@ -62,7 +66,7 @@ public static class MediaEndpoints
                 await tx.ExecuteAsync("select pg_advisory_xact_lock(@id)", new { id });
                 var lease = await tx.OneAsync("select auth_session_id from ptz_leases where channel_id=@id and expires_at>now()", new { id });
                 Rules.Require(lease is null || lease.Text("authSessionId") == actor.SessionId.ToString(), "其他值班员正在控制云台", "ptz.busy", 409);
-                await adapter.SendAsync(HttpMethod.Post, $"/internal/devices/{channel.Id("deviceId")}/ptz/preset", new { channel = (int)channel.Id("deviceChannel"), preset });
+                await camera.PresetAsync(channel.Id("deviceId"), (int)channel.Id("deviceChannel"), (uint)preset, context.RequestAborted);
                 return true;
             });
             await audit.WriteAsync(actor.UserId, "ptz.preset", id.ToString(), $"调用预置位：{preset}", ApiSupport.Ip(context));

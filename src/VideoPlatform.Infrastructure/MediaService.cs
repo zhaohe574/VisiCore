@@ -4,10 +4,20 @@ using Microsoft.Extensions.Logging;
 using VideoPlatform.Application;
 using VideoPlatform.Contracts;
 using VideoPlatform.Domain;
+using VideoPlatform.Infrastructure.Adapter;
 
 namespace VideoPlatform.Infrastructure;
 
-public sealed class MediaService(Database db, AccessService access, IDeviceAdapter adapter, ISettingsStore settingsStore,
+/// <remarks>
+/// 本类同时依赖两个适配器抽象：
+///  <c>camera</c>（<see cref="ICameraAdapter"/>）—— 类型化端口，用于云台、停止会话、取消导出。
+///  <c>adapter</c>（<see cref="IDeviceAdapter"/>）—— 低层透传，仅用于 StartAsync/GetAsync/ControlAsync：
+///    这三处把适配器返回的**完整状态对象**交给 <see cref="Grant"/> 组装客户端契约
+///    （LiveSessionDto/PlaybackSessionDto 的字段覆盖与 <c>??=</c> 默认值语义），
+///    属于"契约组装"而非"字段拾取"，改为强类型反而会危及已声明的客户端契约且不减少样板，
+///    故暂留透传。待 Grant 类型化后可移除对透传的依赖。
+/// </remarks>
+public sealed class MediaService(Database db, AccessService access, IDeviceAdapter adapter, ICameraAdapter camera, ISettingsStore settingsStore,
     SecretStore secrets, PlatformOptions options, IHttpClientFactory clients, AuditStore audit, ILogger<MediaService> logger)
 {
     public async Task<JsonObject> StartAsync(Actor actor, long channelId, string kind, int streamType, string profile,
@@ -154,7 +164,14 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
             }
             catch (Exception ex) when (ex is HttpRequestException or PlatformException or TaskCanceledException) { logger.LogWarning("播放连接 {ConnectionId} 关闭失败，将重试", viewer.Text("connectionId")); failed = true; }
         }
-        try { await adapter.SendAsync(HttpMethod.Delete, $"/internal/devices/{row.Id("deviceId")}/{row.Text("kind")}/{id}", ct: ct); }
+        try
+        {
+            // 会话种类只可能是 live/playback（由 StartAsync 写入）；按种类分派到类型化停止方法。
+            Task stop = row.Text("kind") == "playback"
+                ? camera.StopPlaybackAsync(row.Id("deviceId"), id, ct: ct)
+                : camera.StopLiveAsync(row.Id("deviceId"), id, ct: ct);
+            await stop;
+        }
         catch (PlatformException ex) when (ex.Status == 404) { }
         catch (Exception ex) when (ex is PlatformException or TaskCanceledException) { logger.LogWarning("媒体会话 {SessionId} 清理失败，将重试：{Reason}", id, ex.Message); failed = true; }
         if (!failed) await db.ExecuteAsync("update media_sessions set state='stopped' where id=@id", new { id }, ct);
@@ -241,7 +258,7 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
         var jobs = await db.QueryAsync("update export_jobs set state='cancelled',error='账号权限或会话已变化' where user_id=@userId and state in('queued','running') and (@sessionId::uuid is null or auth_session_id=@sessionId) returning id,device_id", new { userId, sessionId }, ct);
         foreach (var job in jobs)
         {
-            try { await adapter.SendAsync(HttpMethod.Delete, $"/internal/devices/{job.Id("deviceId")}/exports/{job.Text("id")}", ct: ct); }
+            try { await camera.CancelExportAsync(job.Id("deviceId"), Guid.Parse(job.Text("id")), ct); }
             catch (PlatformException ex) { logger.LogWarning("撤销导出 {JobId} 时适配器不可用：{Reason}", job.Text("id"), ex.Message); }
         }
         await audit.NotifyAsync("access.changed", userId.ToString(), userId, ct: ct);
@@ -264,7 +281,7 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
             await tx.ExecuteAsync("select pg_advisory_xact_lock(@channelId)", new { channelId }, ct);
             var lease = await tx.OneAsync("select * from ptz_leases where channel_id=@channelId for update", new { channelId }, ct);
             Rules.Require(lease is null || lease.Time("expiresAt") <= DateTimeOffset.UtcNow || lease.Text("authSessionId") == actor.SessionId.ToString(), "其他值班员正在控制此云台", "ptz.busy", 409);
-            await adapter.SendAsync(HttpMethod.Post, $"/internal/devices/{channel.Id("deviceId")}/ptz", new { channel = (int)channel.Id("deviceChannel"), command = request.Command, speed = request.Speed, stop = false }, ct);
+            await camera.PtzAsync(channel.Id("deviceId"), (int)channel.Id("deviceChannel"), request.Command, (uint)request.Speed, false, ct);
             await tx.ExecuteAsync("insert into ptz_leases(channel_id,user_id,auth_session_id,command,speed,expires_at) values(@channelId,@userId,@authId,@command,@speed,now()+interval '10 seconds') on conflict(channel_id) do update set user_id=excluded.user_id,auth_session_id=excluded.auth_session_id,command=excluded.command,speed=excluded.speed,expires_at=excluded.expires_at", new { channelId, actor.UserId, authId = actor.SessionId, request.Command, request.Speed }, ct);
             if (lease is null || lease.Text("command") != request.Command)
                 await tx.ExecuteAsync("insert into audit_logs(user_id,action,resource,summary) values(@userId,'ptz.start',@resource,@summary)", new { actor.UserId, resource = channelId.ToString(), summary = $"云台命令：{request.Command}，速度：{request.Speed}" }, ct);
@@ -288,7 +305,7 @@ public sealed class MediaService(Database db, AccessService access, IDeviceAdapt
             var lease = await tx.OneAsync("select p.*,c.device_id,c.device_channel from ptz_leases p join channels c on c.id=p.channel_id where p.channel_id=@channelId for update of p", new { channelId }, ct);
             if (lease is null) return true;
             if (expectedExpiry is { } expected && lease.Time("expiresAt") > expected) return true;
-            await adapter.SendAsync(HttpMethod.Post, $"/internal/devices/{lease.Id("deviceId")}/ptz", new { channel = (int)lease.Id("deviceChannel"), command = lease.Text("command"), speed = (int)lease.Id("speed"), stop = true }, ct);
+            await camera.PtzAsync(lease.Id("deviceId"), (int)lease.Id("deviceChannel"), lease.Text("command"), (uint)lease.Id("speed"), true, ct);
             await tx.ExecuteAsync("delete from ptz_leases where channel_id=@channelId", new { channelId }, ct);
             await tx.ExecuteAsync("insert into audit_logs(user_id,action,resource,summary) values(@userId,'ptz.stop',@resource,'云台停止')", new { userId = lease.Id("userId"), resource = channelId.ToString() }, ct);
             return true;
