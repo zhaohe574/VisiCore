@@ -16,6 +16,8 @@ HCNetSDK*/
 .wix/
 tools/wix/
 tools/wix6/
+# deploy/bin/ 下的 EasyTier 组网二进制约 26 MB，由上面的 **/bin/ 规则覆盖。
+# 此处不重复写规则，仅作提示：该目录体积大且与源码无关，不要强行提交。
 # 专有 SDK 与现场 CAD 资料只保留在内网工作区，不进入源码提交。
 JovisionClentSDK.zip
 docs/cad/

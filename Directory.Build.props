@@ -6,4 +6,32 @@
     <RepositoryType>git</RepositoryType>
     <Authors>VisiCore 开发者</Authors>
   </PropertyGroup>
+
+  <!--
+    质量门禁：把编译器与分析器告警升级为错误，让"0 警告"成为可机械维持的约束，
+    而不是依赖人工纪律。启用前已实测：本解决方案在该配置下为 0 警告 0 错误
+    （干净重建验证，非增量缓存）。
+
+    紧急情况下可对单次构建临时放宽（不要提交这类改动）：
+      dotnet build VisiCore.slnx -c Release -p:TreatWarningsAsErrors=false
+
+    关于分析器级别（实测数据，供后续提升参考）：
+      - AnalysisLevel=latest（当前设置）  → 0 警告
+      - AnalysisMode=Recommended          → 326 警告
+        主要分布：CA1305 格式提供程序 86、CA1848 高性能日志 86、
+                  CA1068 CancellationToken 应位于末位 66、CA1310 StringComparison 24、
+                  CA1873 昂贵日志调用 18、CA2016 转发 CancellationToken 12
+      其中 CA1068 / CA1310 / CA1305 / CA2016 属于真实的正确性问题，值得后续专项收敛；
+      但一次性引入会产生 326 个错误、需先批量整改，故本次**不启用** Recommended 模式。
+      收敛完成后再改为 AnalysisMode=Recommended。
+  -->
+  <PropertyGroup>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!--
+      刻意不设 EnforceCodeStyleInBuild：.editorconfig 中的 IDE 风格规则只在编辑器生效，
+      避免因风格偏好（而非缺陷）导致构建失败与大面积重排。
+    -->
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+  </PropertyGroup>
 </Project>
