@@ -180,12 +180,67 @@ ListOnusAsync(search, status, ...)  ListOnusAsync(neDn:, ponPort:)
 > 或全部用具名调用，否则会静默改变现有调用方的位置参数含义。
 > 当前仓库里的调用点需要一并检查。
 
-### 路径 B：暂时移除该 WIP 测试（最快恢复绿灯）
+### 路径 B：暂时移除该 WIP 测试（最快恢复绿灯）—— ✅ 已采用
 
-把这 2 个未跟踪测试文件移到仓库外（例如 `.wip/`，加入 `.gitignore`），
-构建即可恢复。适合"PON 改造要延后"的情况。
-**但要注意**：`PonFaultClassifier.cs` 与 `docs/光网诊断规则与回归矩阵.md` 也属于同一批 WIP，
-是否一并移出需要与该功能作者确认，避免把已完成的成果丢掉。
+把编译不了的测试移出编译路径即可恢复构建。**2026-10-14 已按此路径执行**，
+实际移出范围比最初设想多一个文件，原因见下。
+
+#### 实际移出清单（`.wip/pon-service-timeprovider/`，`.wip/` 已 gitignore）
+
+| 文件 | 移出理由 |
+| :--- | :--- |
+| `tools/VideoPlatform.Worker.Tests/PonDatabaseTests.cs` | 3 个 `CS1739`，直接导致构建失败 |
+| `database/v2/031_pon_evidence_debounce.sql` | **未跟踪却会被执行**（见下） |
+
+#### 保留在编译路径内的同批 WIP
+
+| 文件 | 状态 |
+| :--- | :--- |
+| `src/VideoPlatform.Infrastructure/Pon/PonFaultClassifier.cs` | ✅ 纯函数，编译通过，保留原位 |
+| `tools/VideoPlatform.Worker.Tests/PonRuleTests.cs` | ✅ 14 个 `[Fact]/[Theory]`，**仍在测试中运行** |
+| `docs/光网诊断规则与回归矩阵.md` | ✅ 文档 |
+
+> **关键点**：只移走"编译不了的"与"会被误执行的"两个文件，
+> 已完成且可验证的成果（分类器与其规则测试）全部保留 —— 测试数维持 **35 通过**，
+> 与基线一致，未丢任何覆盖。
+
+#### 为什么 031 迁移也必须移出
+
+`031_pon_evidence_debounce.sql` 是**未跟踪**文件（`??`），但
+`Infrastructure.csproj` 用通配符把它嵌入了程序集：
+
+```xml
+<EmbeddedResource Include="../../database/v2/*.sql" Link="Migrations/%(Filename)%(Extension)" />
+```
+
+**已实测**：移出前编译产物 `VideoPlatform.Infrastructure.dll` 中确实嵌入了 031
+（共 30 个迁移）；移出后重新编译为 **29 个，最后一个是 `030`**，
+与已跟踪集合（30 个）完全一致。
+
+它的危险性在于：`Database.MigrateAsync` 会在**下次启动时执行它**，并写入
+`schema_migrations` 记为已应用；而本项目迁移是**前向-only、不可回退**。
+脚本会**改写生产数据**：
+
+- 把 `jitter_buffering` 的历史状态回填为 `healthy`；
+- 按 `ne_dn` 重挂历史错挂的 `olt_id`（解析不到则置为未关联）。
+
+即：一次**未经版本控制、未经评审**的生产数据变更会随部署自动发生。
+
+**移出前已确认它与其他代码零耦合**（因此可安全移出）：
+`stable_health_status` / `pending_health_status` / `pending_health_since`
+在 `src/`、`tools/` 及两个 PON 测试文件中**均无引用** ——
+它纯粹是为尚未落地的 `PonService` 接线所做的预备变更。
+
+⚠️ **上线前必查**：若生产机此前已用带 031 的构建启动过，该迁移很可能已经生效，
+仅把文件移走**并不能撤销**数据库中的变更。请查询：
+
+```sql
+select version, applied_at from schema_migrations where version like '%031%';
+```
+
+若已有记录，则须把它当"已发布迁移"对待：放回 `database/v2/` 并纳入版本控制，
+且**不得修改文件内容**（否则 SHA-256 不匹配会导致启动失败）。
+详见 `.wip/README.md` 的恢复步骤。
 
 ### 路径 C：保持现状（不推荐）
 
