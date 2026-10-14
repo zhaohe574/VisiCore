@@ -33,7 +33,9 @@ def main():
             sock = s
         except Exception:
             sock = None
-    ssh_password = args.password or os.environ.get("VIDEO_PLATFORM_SSH_PASSWORD"))
+    ssh_password = args.password or os.environ.get("VIDEO_PLATFORM_SSH_PASSWORD")
+    if not ssh_password:
+        raise RuntimeError("缺少 SSH 口令：请通过 --password 或环境变量 VIDEO_PLATFORM_SSH_PASSWORD 提供，源码中不保留默认口令。")
     client.connect("10.37.200.74",username="liteware",password=ssh_password,sock=sock,timeout=15,look_for_keys=False,allow_agent=False)
     remote = "/opt/video-platform-v2/releases/" + release
     def sudo(command):

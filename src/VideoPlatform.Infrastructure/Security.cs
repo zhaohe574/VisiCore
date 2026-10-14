@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Logging;
 using VideoPlatform.Application;
 using VideoPlatform.Contracts;
 using VideoPlatform.Domain;
@@ -34,15 +35,42 @@ public static class Passwords
     public static string TokenHash(string token) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 }
 
-public sealed class SecretStore(IDataProtectionProvider provider)
+public sealed class SecretStore(IDataProtectionProvider provider, ILogger<SecretStore>? logger = null)
 {
     private readonly IDataProtector _protector = provider.CreateProtector("VideoPlatform.v2.secrets");
+
+    // DataProtection 载荷以固定 magic 前缀开头（"CfDJ8" 的 Base64URL 形式），据此区分
+    // "历史明文"（旧版本未加密写入）与"确实无法解密的密文"。
+    private const string PayloadPrefix = "CfDJ8";
+
+    private int _legacyPlaintextWarnings;
+    private int _failureWarnings;
+
     public string Protect(string? text) => _protector.Protect(text ?? "");
+
+    /// <summary>
+    /// 解密凭据。历史遗留的明文（不含 DataProtection 载荷前缀）按明文返回并告警一次，
+    /// 以兼容升级前写入的数据；真正的密文解密失败必须抛错，绝不把密文当口令使用。
+    /// </summary>
     public string Unprotect(string? text)
     {
         if (string.IsNullOrEmpty(text)) return "";
         try { return _protector.Unprotect(text); }
-        catch { return text; }
+        catch (CryptographicException ex)
+        {
+            if (!text.StartsWith(PayloadPrefix, StringComparison.Ordinal))
+            {
+                // 历史明文：可继续使用，但提示运维尽快重新录入以完成加密迁移。
+                if (Interlocked.Increment(ref _legacyPlaintextWarnings) is 1 or 100 or 1000)
+                    logger?.LogWarning("检测到未加密的历史明文凭据，已按明文使用；请重新录入该记录以完成加密迁移。");
+                return text;
+            }
+
+            if (Interlocked.Increment(ref _failureWarnings) is 1 or 100 or 1000)
+                logger?.LogError(ex, "凭据解密失败：密钥环可能已丢失、被替换或轮换。受影响的功能将返回明确错误。");
+            throw new PlatformException(500, "secret.unprotect_failed",
+                "设备凭据解密失败：加密密钥环可能已丢失或被轮换。请检查密钥环目录，并重新录入受影响设备的口令。");
+        }
     }
 }
 

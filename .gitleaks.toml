@@ -1,0 +1,57 @@
+# gitleaks 配置：防止凭据再次进入版本库。
+#
+# 本地使用：gitleaks detect --config .gitleaks.toml --redact -v
+# CI 使用见 .github/workflows/secret-scan.yml
+#
+# 设计取向：宁可多报（人工确认），不可漏报。若某规则确实误报，
+# 请针对具体路径加入 allowlist，而不要整体关闭规则。
+
+title = "VisiCore（视枢）凭据扫描规则"
+
+[extend]
+# 继承 gitleaks 内置规则集（AWS/GCP/Slack/私钥/JWT 等常见模式）。
+useDefault = true
+
+[[rules]]
+id = "visicore-hardcoded-password-default"
+description = "环境变量口令带有真实默认值（os.environ.get(..., '真实口令')）"
+# 只匹配"默认值"形态，且排除明显的占位符，降低误报。
+regex = '''(?i)(password|passwd|pwd|secret|token|apikey|api_key)\s*[=:]\s*os\.environ\.get\(\s*["'][A-Z0-9_]+["']\s*,\s*["'][^"']{3,}["']\s*\)'''
+keywords = ["password", "pwd", "secret", "token"]
+
+[[rules]]
+id = "visicore-plaintext-password-assignment"
+description = "源码/脚本中直接赋值的明文口令"
+regex = '''(?i)(ssh_password|admin_password|ipc_password|nvr_password|device_password|db_password)\s*[=:]\s*["'][^"'$<{][^"']{5,}["']'''
+keywords = ["ssh_password", "admin_password", "ipc_password", "nvr_password", "device_password"]
+
+[[rules]]
+id = "visicore-doc-credential-line"
+description = "文档中形如 '密码：xxx' 的明文口令"
+regex = '''密码\s*[:：]\s*[`'"']?[^\s`'"'，。）]{4,}'''
+keywords = ["密码"]
+
+[[rules]]
+id = "visicore-connection-string-password"
+description = "连接串中内联的真实口令"
+regex = '''(?i)(Host|Server)\s*=\s*[^;]+;[^"'\n]*(Password|Pwd)\s*=\s*(?!<|\$\{|%|请|REPLACE|placeholder)[^;"'\s]{4,}'''
+keywords = ["Password=", "Pwd="]
+
+[allowlist]
+description = "确认无凭据的示例、模板与生成物"
+paths = [
+  # 示例/模板文件按设计只含占位符。
+  '''platform-api\.env\.example$''',
+  '''凭据模板\.example\.txt$''',
+  '''HANDOFF\.example\.md$''',
+  '''config\.ini\.example$''',
+  # 解析器的字段名/正则本身会命中字符串模式。
+  '''\.gitleaks\.toml$''',
+  # 生成客户端体积大且不含凭据。
+  '''VideoPlatformClient\.g\.cs$''',
+  '''schema\.d\.ts$''',
+]
+regexes = [
+  # 明确占位符。
+  '''(?i)(<[^>]+>|REPLACE_WITH[A-Z_]*|请替换|\$\{[A-Z_]+\}|xxx+|changeme|placeholder|首次启动后立即修改)''',
+]

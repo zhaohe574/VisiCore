@@ -20,16 +20,17 @@ public sealed class EsightPonClient : IAsyncDisposable
     private string _password = "";
     private string? _authToken;
 
-    public EsightPonClient(ILogger<EsightPonClient>? logger = null)
+    public EsightPonClient(PlatformOptions? options = null, ILogger<EsightPonClient>? logger = null)
     {
         _logger = logger;
+        var ssl = new System.Net.Security.SslClientAuthenticationOptions();
+        // 默认使用系统信任链；仅当运维登记了证书指纹时才启用固定指纹放行。
+        var pinned = TlsTrust.PinnedCallback(options?.TrustedCertificateThumbprints ?? []);
+        if (pinned is not null) ssl.RemoteCertificateValidationCallback = pinned;
         var handler = new SocketsHttpHandler
         {
             UseCookies = false,
-            SslOptions = new System.Net.Security.SslClientAuthenticationOptions
-            {
-                RemoteCertificateValidationCallback = delegate { return true; }
-            },
+            SslOptions = ssl,
             PooledConnectionLifetime = TimeSpan.FromMinutes(15)
         };
         _http = new HttpClient(handler)

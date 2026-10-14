@@ -1,0 +1,61 @@
+# ZLMediaKit 配置模板（仅供参考，生产以 v2-install.py 生成为准）
+#
+# ⚠️ 本文件不是生产配置。正式部署由 deploy/v2-install.py 生成
+#    /var/lib/video-platform/v2/zlm/config.ini（权限 0600），其内容与本模板的
+#    关键差异见下方标注。切勿把本文件直接拷到生产环境。
+#
+# 与 v2-install.py 生成结果的差异（务必注意）：
+#   * hook 端口为 5082（本模板曾误写 5080，该端口无人监听）
+#   * hook 必须携带 ?key=<adapterKey>，否则平台 /internal/zlm/* 一律返回 code:-1
+#     鉴权失败，播放鉴权被静默绕过
+#   * secret 必须替换为随机值，不能保留占位符
+
+[api]
+apiDebug=0
+# 生产由 v2-install.py 写入随机密钥；此处占位符不可直接使用。
+secret=REPLACE_WITH_RANDOM_SECRET
+snapRoot=./www/snap
+defaultSnap=./www/logo.png
+downloadRoot=./www
+
+[http]
+# 生产实际使用 18082，并限制 allow_ip_range=127.0.0.1。
+port=18082
+sslport=0
+rootPath=./www
+dirMenu=0
+allow_ip_range=127.0.0.1
+
+[rtsp]
+# 生产实际使用 18555。
+port=18555
+sslport=0
+
+[rtmp]
+port=11936
+sslport=0
+
+[rtc]
+port=0
+tcpPort=0
+
+[srt]
+port=0
+
+[rtp_proxy]
+port=0
+
+[shell]
+port=0
+
+[protocol]
+enable_hls=0
+enable_mp4=0
+enable_ts=1
+
+[hook]
+enable=1
+# 端口必须与 PLATFORM_API_URL 一致（默认 5082）；key 必须与 HIK_ADAPTER_INTERNAL_KEY 一致。
+# 缺少 key 会导致播放鉴权回调被平台拒绝，从而无法建立播放。
+on_play=http://127.0.0.1:5082/internal/zlm/on-play?key=REPLACE_WITH_ADAPTER_KEY
+on_stream_changed=http://127.0.0.1:5082/internal/zlm/on-stream-changed?key=REPLACE_WITH_ADAPTER_KEY

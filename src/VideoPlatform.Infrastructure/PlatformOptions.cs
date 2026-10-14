@@ -14,6 +14,18 @@ public sealed class PlatformOptions(IConfiguration configuration)
     public string ZlmUrl { get; } = configuration["ZLM_API_URL"] ?? "http://127.0.0.1:18080";
     public string ZlmSecret { get; } = configuration["ZLM_API_SECRET"] ?? "";
 
+    /// <summary>
+    /// 受信任的自签名证书 SHA-256 指纹白名单（分号或逗号分隔，可含冒号与空格）。
+    /// 内网设备（网管、录像机）常使用自签名证书；启用 TLS 校验后，运维通过此配置
+    /// 显式信任已知证书，替代过去"无条件跳过校验"的做法。为空表示完全依赖系统信任链。
+    /// </summary>
+    public IReadOnlyList<string> TrustedCertificateThumbprints { get; } =
+        (configuration["PLATFORM_TRUSTED_CERT_SHA256"] ?? "")
+            .Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(value => TlsTrust.Normalize(value))
+            .Where(value => value.Length > 0)
+            .ToArray();
+
     public string PublicBase
     {
         get => _publicBase;

@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-import re
 import shlex
 import socket
 import subprocess
@@ -13,12 +12,23 @@ import paramiko
 
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = "/home/liteware/.config/video-platform/v2-production.json"
+# 本机未跟踪的凭据文件；不含任何口令的模板见 docs/凭据模板.example.txt
+LOCAL_CREDENTIALS = ROOT / ".secrets" / "deploy-credentials.txt"
 
 
 def connect():
     password = os.environ.get("VIDEO_PLATFORM_SSH_PASSWORD")
+    if not password and LOCAL_CREDENTIALS.exists():
+        # 文件格式：每行 KEY=VALUE，仅取 VIDEO_PLATFORM_SSH_PASSWORD
+        for line in LOCAL_CREDENTIALS.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("VIDEO_PLATFORM_SSH_PASSWORD="):
+                password = line.split("=", 1)[1].strip()
+                break
     if not password:
-        password = re.search(r"SSH 用户.*?密码：[ `]*([^`，）\s]+)", (ROOT / "HANDOFF.md").read_text(encoding="utf-8")).group(1)
+        raise RuntimeError(
+            "缺少 SSH 口令：请设置环境变量 VIDEO_PLATFORM_SSH_PASSWORD，"
+            f"或在 {LOCAL_CREDENTIALS} 中配置（该文件已加入 .gitignore，不得提交）。"
+        )
     client = paramiko.SSHClient()
     client.load_system_host_keys()
     client.set_missing_host_key_policy(paramiko.RejectPolicy())

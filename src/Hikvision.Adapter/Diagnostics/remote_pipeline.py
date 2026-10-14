@@ -260,7 +260,9 @@ def main():
             sock = s
         except Exception:
             sock = None
-    password = os.environ.get('VIDEO_PLATFORM_SSH_PASSWORD', 'liteware')
+    password = os.environ.get('VIDEO_PLATFORM_SSH_PASSWORD')
+    if not password:
+        raise SystemExit('缺少 SSH 口令：请设置环境变量 VIDEO_PLATFORM_SSH_PASSWORD，源码中不保留默认口令。')
     try:
         client.connect('10.37.200.74', username='liteware', password=password, sock=sock, timeout=15, look_for_keys=False, allow_agent=False)
         command = "sudo -S -p '' python3 -u -c \"import base64,sys;sys.excepthook=lambda t,v,b: print('诊断失败：'+str(v),file=sys.stderr);exec(base64.b64decode('" + encoded + "'))\""

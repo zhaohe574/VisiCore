@@ -16,12 +16,24 @@ import argparse
 import paramiko
 import socket
 
+def _required(name):
+    """凭据一律取自环境变量，不提供默认值，避免真实口令进入源码与 Git 历史。"""
+    value = os.environ.get(name)
+    if not value:
+        raise SystemExit(f"缺少必需的环境变量：{name}（请勿把真实口令写入源码或脚本）")
+    return value
+
 SERVER_IP = os.environ.get("VIDEO_PLATFORM_SERVER_IP", "10.37.200.74")
 LOCAL_IP = os.environ.get("VIDEO_PLATFORM_BIND_IP", "10.37.6.210")
 SSH_USER = os.environ.get("VIDEO_PLATFORM_SSH_USER", "liteware")
-SSH_PASSWORD = os.environ.get("VIDEO_PLATFORM_SSH_PASSWORD"))
+SSH_PASSWORD = _required("VIDEO_PLATFORM_SSH_PASSWORD")
 ADMIN_USER = os.environ.get("VIDEO_PLATFORM_ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.environ.get("VIDEO_PLATFORM_ADMIN_PASSWORD", "***REMOVED-CREDENTIAL***")
+ADMIN_PASSWORD = _required("VIDEO_PLATFORM_ADMIN_PASSWORD")
+# 摄像机口令按品牌从环境变量读取，缺省留空并要求显式提供。
+IPC_PASSWORDS = {
+    "jovision": os.environ.get("VIDEO_PLATFORM_IPC_PASSWORD_JOVISION", ""),
+    "hikvision": os.environ.get("VIDEO_PLATFORM_IPC_PASSWORD_HIKVISION", ""),
+}
 API_BASE = f"https://{SERVER_IP}/api/v2"
 
 def get_db_state():
@@ -180,22 +192,27 @@ def main():
         dev_name = (r.get('dev_name') or '').strip()
         alias = dev_name if dev_name else f"IPC-{ip}"
         
-        # 协议与凭据
+        # 协议与凭据（口令来自环境变量，源码中不保留任何真实口令）
         if "中维" in brand:
             proto = "ONVIF"
             port = 80
             user = "admin"
-            pwd = "***REMOVED-CREDENTIAL***"
+            pwd = IPC_PASSWORDS["jovision"]
         elif "海康" in brand:
             proto = "HIKVISION"
             port = 8000
             user = "admin"
-            pwd = "***REMOVED-CREDENTIAL***"
+            pwd = IPC_PASSWORDS["hikvision"]
         else:
             proto = "ONVIF"
             port = 80
             user = "admin"
-            pwd = "***REMOVED-CREDENTIAL***"
+            pwd = IPC_PASSWORDS["jovision"]
+
+        if not pwd:
+            print(f"[{idx}/{len(pending)}] ✗ 跳过 {ip} ({alias}): 未配置该品牌的摄像机口令环境变量")
+            fail_list.append({'ip': ip, 'alias': alias, 'error': "IPC password not configured for brand"})
+            continue
 
         # 匹配 ONU
         onu = match_onu(r.get('sn', ''), onus_dict)

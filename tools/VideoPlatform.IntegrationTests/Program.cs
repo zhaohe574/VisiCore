@@ -10,6 +10,36 @@ using VideoPlatform.Infrastructure;
 
 var apiBase = Environment.GetEnvironmentVariable("TEST_API_URL") ?? "http://127.0.0.1:5082";
 var stamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString();
+
+// 环境预检：本套件需要独立的 PostgreSQL 与运行中的 API。
+// 缺少环境时明确输出 SKIP 并以 0 退出，避免把"环境缺失"误报成"测试失败"
+// （未处理异常会污染 CI 结论）。跳过的用例不计作通过。
+static int Skip(string reason)
+{
+    Console.WriteLine("SKIP：集成回归未执行 —— " + reason);
+    Console.WriteLine("提示：本套件需要 PLATFORM_DATABASE_URL 指向隔离测试库，" +
+                      "且 TEST_API_URL（默认 " +
+                      (Environment.GetEnvironmentVariable("TEST_API_URL") ?? "http://127.0.0.1:5082") +
+                      "）上有运行中的平台 API。");
+    return 0;
+}
+
+if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("PLATFORM_DATABASE_URL")))
+    return Skip("未设置 PLATFORM_DATABASE_URL。");
+
+try
+{
+    using var probe = new HttpClient { BaseAddress = new Uri(apiBase), Timeout = TimeSpan.FromSeconds(5) };
+    using var probeResponse = await probe.GetAsync("/health");
+}
+catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or UriFormatException)
+{
+    return Skip($"无法连接 API {apiBase}（{ex.GetType().Name}）。");
+}
+
+if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("PLATFORM_ADMIN_PASSWORD")))
+    return Skip("未设置 PLATFORM_ADMIN_PASSWORD（用于测试账号登录）。");
+
 var client = new HttpClient { BaseAddress = new Uri(apiBase), Timeout = TimeSpan.FromSeconds(30) };
 var passed = 0;
 void Check(bool condition, string name)
@@ -257,3 +287,5 @@ try
     Console.WriteLine($"集成测试完成，共 {passed} 项通过。测试设备使用模拟适配器，数据库及 API 为真实实现。");
 }
 finally { await adapter.StopAsync(); }
+
+return 0;

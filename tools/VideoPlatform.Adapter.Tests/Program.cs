@@ -241,8 +241,13 @@ static async Task PlaybackBehavior()
     Check.True(session.Summary().State != "failed");
     await session.ControlAsync(new("seek", start.AddSeconds(90))); Check.Equal("gap", session.Summary().State);
     await session.ControlAsync(new("resume")); Check.Equal(start.AddMinutes(2), device.OpenedAt);
+    // 溢出场景：BoundedMediaBuffer 默认字节上限为 64 MB，必须真正超过该上限才会失败。
+    // 注意两点：
+    //   1) 不能只分配 1 字节却声称 17 MB —— Marshal.Copy 按声称的大小读取，
+    //      会造成原生访问违例（0xC0000005）而非可捕获的托管异常；
+    //   2) 声称的大小必须大于 64 MB，否则会被正常接收，测试无法走到失败分支。
     var pointer = Marshal.AllocHGlobal(1);
-    try { device.Receive!(2, pointer, 17 * 1024 * 1024); }
+    try { device.Receive!(2, pointer, 65u * 1024 * 1024); }
     finally { Marshal.FreeHGlobal(pointer); }
     await Check.Eventually(() => session.Summary().State == "failed");
     Check.True(session.Summary().Error!.Contains("溢出"));

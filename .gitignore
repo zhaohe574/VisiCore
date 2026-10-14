@@ -51,3 +51,10 @@ tools/VideoPlatform.Desktop.Tests/安装包产物一致性.md
 docs/VisiCore-账号凭据-20260908-165426.md
 docs/VisiCore-开发进度与环境交接-20260908.md
 *.zip
+
+# 交接文档与凭据：真实口令与现场拓扑只保留在内网工作区，不进入版本控制。
+# 可提交的模板见 docs/HANDOFF.example.md 与 docs/凭据模板.example.txt。
+HANDOFF.md
+.secrets/
+.p0-backup/
+docs/凭据轮换记录-*.md

@@ -1,0 +1,33 @@
+# 本机凭据模板（不含任何真实口令，可安全提交）
+
+将本文件复制为仓库根目录下的 `.secrets/deploy-credentials.txt`，填入真实值。
+`.secrets/` 已加入 `.gitignore`，**不得提交**。
+
+真实口令一律通过环境变量或该未跟踪文件提供；源码、脚本、文档与 Git 历史中
+不应出现任何生产口令。
+
+## 部署与运维口令
+
+    VIDEO_PLATFORM_SSH_PASSWORD=
+    VIDEO_PLATFORM_ADMIN_PASSWORD=
+    VIDEO_PLATFORM_IPC_PASSWORD_JOVISION=
+    VIDEO_PLATFORM_IPC_PASSWORD_HIKVISION=
+
+## 非敏感的连接目标（可选覆盖）
+
+    VIDEO_PLATFORM_SERVER_IP=10.37.200.74
+    VIDEO_PLATFORM_BIND_IP=10.37.6.210
+    VIDEO_PLATFORM_SSH_USER=liteware
+    VIDEO_PLATFORM_ADMIN_USER=admin
+
+## 网管（NeoSight）北向 OpenAPI
+
+口令在网管侧与数据库 `devices.password_cipher`（经 DataProtection 加密）中维护，
+不要写入任何文档或脚本：
+
+    VIDEO_PLATFORM_ESIGHT_PASSWORD=
+
+## 使用示例（PowerShell）
+
+    $env:VIDEO_PLATFORM_SSH_PASSWORD = Read-Host -AsSecureString | ConvertFrom-SecureString -AsPlainText
+    python tools/v2-deploy.py --bind-ip 10.37.6.210 --switch

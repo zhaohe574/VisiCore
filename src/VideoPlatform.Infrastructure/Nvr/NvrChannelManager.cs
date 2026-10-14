@@ -242,8 +242,7 @@ public sealed class NvrChannelManager(Database db, SecretStore secrets, IDeviceA
         using var handler = new HttpClientHandler
         {
             Credentials = new NetworkCredential(nvrUser, nvrPwd),
-            PreAuthenticate = true,
-            ServerCertificateCustomValidationCallback = delegate { return true; }
+            PreAuthenticate = true
         };
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
         var putUrl = $"http://{nvrHost}/ISAPI/ContentMgmt/InputProxy/channels/{channelId}";
@@ -369,8 +368,7 @@ public sealed class NvrChannelManager(Database db, SecretStore secrets, IDeviceA
         using var handler = new HttpClientHandler
         {
             Credentials = new NetworkCredential(nvrUser, nvrPwd),
-            PreAuthenticate = true,
-            ServerCertificateCustomValidationCallback = delegate { return true; }
+            PreAuthenticate = true
         };
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
 

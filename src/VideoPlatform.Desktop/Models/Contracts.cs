@@ -17,7 +17,7 @@ public sealed record SavedSession(string Server, string AccessToken, DateTimeOff
 public sealed record ClientSettings(string Server = "", string? RequiredVersion = null, bool PreferRtsp = false,
     string Theme = "light", bool PreferSubStreamInGrid = true, bool HardwareDecoding = true, int NetworkCachingMs = 800, bool ShowDiagnostics = false,
     string? SnapshotPath = null, string? ExportPath = null, string SnapshotFormat = "PNG",
-    string? SourceAddress = null, string? SourceHostPrefix = null)
+    string? SourceAddress = null, string? SourceHostPrefix = null, string? TrustedCertificateThumbprints = null)
 {
     /// <summary>把本机设置转换成平台偏好，用于登录后回写。</summary>
     public Preferences ToPreferences() => new(Theme, PreferSubStreamInGrid, HardwareDecoding, NetworkCachingMs, ShowDiagnostics);

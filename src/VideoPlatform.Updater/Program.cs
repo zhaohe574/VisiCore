@@ -4,6 +4,7 @@ using System.Net.NetworkInformation;
 using System.Net.Security;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Windows.Forms;
 
@@ -49,11 +50,38 @@ internal static class Program
                 throw;
             }
         },
-        SslOptions = new SslClientAuthenticationOptions
-        {
-            RemoteCertificateValidationCallback = (_, _, _, _) => true
-        }
+        // 默认使用系统信任链；仅当运维登记了证书指纹（PLATFORM_TRUSTED_CERT_SHA256）时，
+        // 才对匹配指纹的自签名证书放行。安装包另有 SHA-256 校验兜底。
+        SslOptions = CreateSslOptions()
     }) { Timeout = TimeSpan.FromMinutes(30) };
+
+    private static SslClientAuthenticationOptions CreateSslOptions()
+    {
+        var ssl = new SslClientAuthenticationOptions();
+        var configured = Environment.GetEnvironmentVariable("PLATFORM_TRUSTED_CERT_SHA256");
+        if (string.IsNullOrWhiteSpace(configured)) return ssl;
+
+        var allowed = new HashSet<string>(
+            configured.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(value => value.Replace(":", "", StringComparison.Ordinal).Replace(" ", "", StringComparison.Ordinal).ToUpperInvariant())
+                .Where(value => value.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
+        if (allowed.Count == 0) return ssl;
+
+        ssl.RemoteCertificateValidationCallback = (_, certificate, _, errors) =>
+        {
+            if (errors == SslPolicyErrors.None) return true;
+            if (certificate is null) return false;
+            try
+            {
+                var actual = X509CertificateLoader.LoadCertificate(certificate.GetRawCertData()).Thumbprint
+                    .Replace(":", "", StringComparison.Ordinal).ToUpperInvariant();
+                return allowed.Contains(actual);
+            }
+            catch (CryptographicException) { return false; }
+        };
+        return ssl;
+    }
 
     [STAThread]
     private static async Task<int> Main(string[] args)

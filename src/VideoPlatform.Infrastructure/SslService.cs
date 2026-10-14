@@ -2,13 +2,14 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Logging;
 using VideoPlatform.Application;
 using VideoPlatform.Contracts;
 using VideoPlatform.Domain;
 
 namespace VideoPlatform.Infrastructure;
 
-public sealed class SslService(Database db, IAccessService access, PlatformOptions options, AuditStore audit)
+public sealed class SslService(Database db, IAccessService access, PlatformOptions options, AuditStore audit, ILogger<SslService>? logger = null)
 {
     public async Task<SslOverviewDto> OverviewAsync(Actor actor, CancellationToken ct = default)
     {
@@ -483,6 +484,7 @@ public sealed class SslService(Database db, IAccessService access, PlatformOptio
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
             await File.WriteAllTextAsync(options.SslCertFile, certPem.Trim() + "\n", Encoding.UTF8, ct);
             await File.WriteAllTextAsync(options.SslKeyFile, keyPem.Trim() + "\n", Encoding.UTF8, ct);
+            RestrictKeyFile(options.SslKeyFile);
         }
         catch (Exception ex)
         {
@@ -491,13 +493,32 @@ public sealed class SslService(Database db, IAccessService access, PlatformOptio
             {
                 var fallbackDir = Path.Combine(options.DataPath, "ssl");
                 if (!Directory.Exists(fallbackDir)) Directory.CreateDirectory(fallbackDir);
+                var fallbackKey = Path.Combine(fallbackDir, "video-platform.key");
                 await File.WriteAllTextAsync(Path.Combine(fallbackDir, "video-platform.crt"), certPem.Trim() + "\n", Encoding.UTF8, ct);
-                await File.WriteAllTextAsync(Path.Combine(fallbackDir, "video-platform.key"), keyPem.Trim() + "\n", Encoding.UTF8, ct);
+                await File.WriteAllTextAsync(fallbackKey, keyPem.Trim() + "\n", Encoding.UTF8, ct);
+                RestrictKeyFile(fallbackKey);
             }
             catch
             {
                 throw new PlatformException(500, "ssl.disk_sync_failed", $"证书已激活，但同步至磁盘文件失败：{ex.Message}");
             }
+        }
+    }
+
+    /// <summary>
+    /// 将私钥文件权限收敛为仅属主可读写（0600）。Windows 与不支持 Unix 权限的文件系统上静默跳过；
+    /// 权限收紧失败不阻断证书激活，但会记录告警以便运维发现。
+    /// </summary>
+    private void RestrictKeyFile(string path)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        try
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            logger?.LogWarning("未能将 SSL 私钥 {Path} 权限收紧为 0600：{Error}", path, ex.Message);
         }
     }
 

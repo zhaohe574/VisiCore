@@ -6,11 +6,21 @@ namespace VideoPlatform.Desktop.Services;
 
 public static class TransportPolicy
 {
-    public static SocketsHttpHandler CreateHandler(string? sourceAddress = null, string? hostPrefix = null)
+    public static SocketsHttpHandler CreateHandler(string? sourceAddress = null, string? hostPrefix = null, string? trustedThumbprints = null)
     {
         var settings = ClientFiles.LoadSettings();
         sourceAddress ??= settings.SourceAddress;
         hostPrefix ??= settings.SourceHostPrefix;
+        trustedThumbprints ??= settings.TrustedCertificateThumbprints
+            ?? Environment.GetEnvironmentVariable("PLATFORM_TRUSTED_CERT_SHA256");
+
+        // 默认使用系统信任链（证书需已导入"受信任的根证书颁发机构"，见
+        // tools/install-platform-certificate.ps1）。仅当登记了证书指纹时才对自签名证书放行，
+        // 不再无条件跳过 TLS 校验。
+        var ssl = new System.Net.Security.SslClientAuthenticationOptions();
+        var pinned = BuildPinnedCallback(trustedThumbprints);
+        if (pinned is not null) ssl.RemoteCertificateValidationCallback = pinned;
+
         var handler = new SocketsHttpHandler
         {
             UseProxy = false,
@@ -19,10 +29,7 @@ public static class TransportPolicy
             AllowAutoRedirect = false,
             EnableMultipleHttp2Connections = true,
             MaxConnectionsPerServer = 100,
-            SslOptions = new System.Net.Security.SslClientAuthenticationOptions
-            {
-                RemoteCertificateValidationCallback = (_, _, _, _) => true
-            }
+            SslOptions = ssl
         };
 
         IPAddress? address = null;
@@ -65,5 +72,33 @@ public static class TransportPolicy
             catch { socket.Dispose(); throw; }
         };
         return handler;
+    }
+
+    /// <summary>
+    /// 依据已登记的证书指纹构造校验回调；未登记指纹时返回 null，沿用系统默认校验。
+    /// 仅接受指纹精确匹配的证书，其余（链错误、名称不匹配、未知证书）一律拒绝。
+    /// </summary>
+    private static System.Net.Security.RemoteCertificateValidationCallback? BuildPinnedCallback(string? configured)
+    {
+        if (string.IsNullOrWhiteSpace(configured)) return null;
+        var allowed = new HashSet<string>(
+            configured.Split(new[] { ';', ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(value => value.Replace(":", "", StringComparison.Ordinal).Replace(" ", "", StringComparison.Ordinal).ToUpperInvariant())
+                .Where(value => value.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
+        if (allowed.Count == 0) return null;
+        return (_, certificate, _, errors) =>
+        {
+            if (errors == System.Net.Security.SslPolicyErrors.None) return true;
+            if (certificate is null) return false;
+            try
+            {
+                var actual = System.Security.Cryptography.X509Certificates.X509CertificateLoader
+                    .LoadCertificate(certificate.GetRawCertData()).Thumbprint
+                    .Replace(":", "", StringComparison.Ordinal).ToUpperInvariant();
+                return allowed.Contains(actual);
+            }
+            catch (System.Security.Cryptography.CryptographicException) { return false; }
+        };
     }
 }
