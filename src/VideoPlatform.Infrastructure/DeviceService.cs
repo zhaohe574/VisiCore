@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using VideoPlatform.Application;
 using VideoPlatform.Domain;
+using VideoPlatform.Infrastructure.Adapter;
 
 namespace VideoPlatform.Infrastructure;
 
@@ -242,6 +243,7 @@ public sealed class DeviceAdapter(HttpClient client, PlatformOptions options, Da
 public sealed class DeviceService(
     Database db,
     IDeviceAdapter adapter,
+    ICameraAdapter camera,
     SecretStore secrets,
     AuditStore audit,
     ILogger<DeviceService> logger,
@@ -266,11 +268,12 @@ public sealed class DeviceService(
             return;
         }
 
-        await adapter.SendAsync(HttpMethod.Put, $"/internal/devices/{id}", new
-        {
-            host = device.Text("host"), port = (int)device.Id("port"), username = device.Text("username"),
-            password = secrets.Unprotect(device.Text("passwordCipher")), enabled = device.Flag("enabled")
-        }, ct);
+        await camera.RegisterAsync(id, new AdapterDeviceSpec(
+            device.Text("host"),
+            (int)device.Id("port"),
+            device.Text("username"),
+            secrets.Unprotect(device.Text("passwordCipher")),
+            device.Flag("enabled")), ct);
     }
 
     public async Task<JsonObject> SyncAsync(long id, CancellationToken ct = default)
@@ -352,21 +355,24 @@ public sealed class DeviceService(
         try
         {
             await RegisterAsync(id, ct);
-            var snapshot = await adapter.SendAsync(HttpMethod.Post, $"/internal/devices/{id}/sync", ct: ct) as JsonObject
+            var raw = await adapter.SendAsync(HttpMethod.Post, $"/internal/devices/{id}/sync", ct: ct) as JsonObject
                 ?? throw new PlatformException(502, "device.snapshot", "设备未返回有效通道快照");
-            Rules.Require(snapshot["channels"] is JsonArray, "设备返回的通道快照格式无效", "device.snapshot", 502);
-            var channels = (JsonArray)snapshot["channels"]!;
+            // raw 原样返回给客户端（保持响应形状不变）；snapshot 是同一响应的类型化视图，
+            // 仅供落库使用。Parse 在 channels 非数组时抛既有的 502/device.snapshot，
+            // 与原先的 Rules.Require 完全等效。
+            var snapshot = DeviceSnapshot.Parse(raw);
             await db.TransactionAsync(async tx =>
             {
                 var previous = await tx.OneAsync("select status,model,serial_number from devices where id=@id for update", new { id }, ct);
                 var previousChannels = await tx.QueryAsync("select device_channel,name,model,status,ptz_capable,codec from channels where device_id=@id order by device_channel", new { id }, ct);
                 var seen = new List<int>();
-                foreach (var channel in channels.OfType<JsonObject>())
+                foreach (var channel in snapshot.Channels)
                 {
-                    var number = (int)channel.Id("channel");
+                    var number = channel.Channel;
                     if (number <= 0) continue;
                     seen.Add(number);
-                    var ip = channel.Text("ip");
+                    // 沿用 Text("ip") 的空串语义：缺失时为 ""，不得变成 null 而改变落库值。
+                    var ip = channel.Ip ?? "";
                     await tx.ExecuteAsync("""
                         insert into channels(device_id,device_channel,name,model,status,ptz_capable,codec,ip)
                         values(@id,@number,@name,@model,@status,@ptz,@codec,@ip)
@@ -378,10 +384,10 @@ public sealed class DeviceService(
                             codec=coalesce(nullif(excluded.codec, ''), channels.codec),
                             ip=coalesce(nullif(excluded.ip, ''), channels.ip),
                             updated_at=now()
-                        """, new { id, number, name = channel.Text("name", $"通道 {number}"), model = channel["model"]?.ToString(), status = channel.Flag("online") ? "online" : "offline", ptz = channel.Flag("ptzCapable"), codec = channel["codec"]?.ToString(), ip }, ct);
+                        """, new { id, number, name = channel.Name ?? $"通道 {number}", model = channel.Model, status = channel.Online ? "online" : "offline", ptz = channel.PtzCapable, codec = channel.Codec, ip }, ct);
                 }
                 await tx.ExecuteAsync("update channels set status='disabled',updated_at=now() where device_id=@id and not(device_channel=any(@seen))", new { id, seen = seen.ToArray() }, ct);
-                await tx.ExecuteAsync("update devices set status='online',last_seen_at=now(),sync_error=null,model=@model,serial_number=@serial where id=@id", new { id, model = snapshot["device"]?["model"]?.ToString(), serial = snapshot["device"]?["serialNumber"]?.ToString() }, ct);
+                await tx.ExecuteAsync("update devices set status='online',last_seen_at=now(),sync_error=null,model=@model,serial_number=@serial where id=@id", new { id, model = snapshot.Device.Model, serial = snapshot.Device.SerialNumber }, ct);
                 var currentChannels = await tx.QueryAsync("select device_channel,name,model,status,ptz_capable,codec from channels where device_id=@id order by device_channel", new { id }, ct);
 
                 // 记录摄像头离线与恢复变迁历史
@@ -433,7 +439,7 @@ public sealed class DeviceService(
                     await tx.ExecuteAsync("insert into outbox(kind,resource_id,device_id) values('device.changed',@resource,@id)", new { resource = id.ToString(), id }, ct);
                 return true;
             }, ct);
-            return snapshot;
+            return raw;
         }
         catch (Exception ex) when (ex is PlatformException or JsonException)
         {

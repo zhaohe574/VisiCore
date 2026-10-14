@@ -3,6 +3,7 @@ using VideoPlatform.Application;
 using VideoPlatform.Contracts;
 using VideoPlatform.Domain;
 using VideoPlatform.Infrastructure;
+using VideoPlatform.Infrastructure.Adapter;
 
 namespace VideoPlatform.Api.Modules;
 
@@ -49,7 +50,7 @@ public static class DeviceEndpoints
 
             return Results.Created($"/api/v2/devices/{row.Id()}", row);
         }).WithName("CreateDevice");
-        group.MapPut("/devices/{id:long}", async (long id, DeviceRequest request, HttpContext context, Database db, AccessService access, SecretStore secrets, MediaService media, DeviceService devices, IDeviceAdapter adapter, AuditStore audit) =>
+        group.MapPut("/devices/{id:long}", async (long id, DeviceRequest request, HttpContext context, Database db, AccessService access, SecretStore secrets, MediaService media, DeviceService devices, ICameraAdapter camera, AuditStore audit) =>
         {
             await access.DemandAsync(ApiSupport.Actor(context), "device.manage");
             Validate(request, false);
@@ -62,7 +63,7 @@ public static class DeviceEndpoints
             var passwordCipher = request.Password is null ? existing.Text("passwordCipher") : secrets.Protect(request.Password);
             await db.ExecuteAsync("update devices set name=@name,host=@host,port=@port,username=@username,password_cipher=@password,enabled=@enabled,plugin_id=@pluginId,status='unknown',terminal_box_id=@terminalBoxId,onu_device_id=@onuDeviceId,port_number=@portNumber,is_switch_port=@isSwitchPort,port_label=@portLabel where id=@id", new { id, name = request.Name.Trim(), host = request.Host.Trim(), request.Port, username = request.Username.Trim(), password = passwordCipher, request.Enabled, pluginId, request.TerminalBoxId, request.OnuDeviceId, request.PortNumber, isSwitchPort = request.IsSwitchPort ?? false, portLabel = request.PortLabel?.Trim() });
             DeviceAdapter.InvalidateRouteCache(id);
-            try { await adapter.SendAsync(HttpMethod.Delete, $"/internal/devices/{id}"); } catch (PlatformException ex) when (ex.Status == 404) { }
+            try { await camera.DeregisterAsync(id); } catch (PlatformException ex) when (ex.Status == 404) { }
             if (!request.Enabled) await db.ExecuteAsync("update channels set status='disabled' where device_id=@id", new { id });
             if (request.Enabled)
             {
@@ -72,7 +73,7 @@ public static class DeviceEndpoints
             await audit.WriteAsync(ApiSupport.Actor(context).UserId, "device.update", id.ToString(), $"修改设备：{request.Name}", ApiSupport.Ip(context));
             return Results.NoContent();
         }).WithName("UpdateDevice");
-        group.MapDelete("/devices/{id:long}", async (long id, HttpContext context, Database db, AccessService access, MediaService media, IDeviceAdapter adapter, AuditStore audit) =>
+        group.MapDelete("/devices/{id:long}", async (long id, HttpContext context, Database db, AccessService access, MediaService media, ICameraAdapter camera, AuditStore audit) =>
         {
             var actor = ApiSupport.Actor(context);
             await access.DemandAsync(actor, "device.manage");
@@ -93,7 +94,7 @@ public static class DeviceEndpoints
             }
 
             // 2. 通知适配器解绑与释放内部资源（在数据库删除前，以便能解析插件路由）
-            try { await adapter.SendAsync(HttpMethod.Delete, $"/internal/devices/{id}"); } catch (PlatformException ex) when (ex.Status == 404) { }
+            try { await camera.DeregisterAsync(id); } catch (PlatformException ex) when (ex.Status == 404) { }
             DeviceAdapter.InvalidateRouteCache(id);
 
             // 3. 事务级级联彻底删除关联数据及设备本体
@@ -164,20 +165,22 @@ public static class DeviceEndpoints
         }).Produces<ChannelDto>().WithName("UpdateChannel");
         // 通道码流档位能力探测（B1）：由适配器直接探测设备该档位是否存在并缓存结果。
         // 客户端据此避免「先请求子码流 → 失败 → 回退主码流」的试错，每格可省约 1.2 秒与一次设备通道占用。
-        group.MapPost("/channels/{id:long}/streams/probe", async (long id, StreamProbeRequest request, HttpContext context, AccessService access, IDeviceAdapter adapter) =>
+        group.MapPost("/channels/{id:long}/streams/probe", async (long id, StreamProbeRequest request, HttpContext context, AccessService access, ICameraAdapter camera) =>
         {
             Rules.Require(request.StreamType is 1 or 2, "码流类型只能是 1（主码流）或 2（子码流）");
             var channel = await access.ChannelAsync(ApiSupport.Actor(context), id, "live.view", context.RequestAborted);
-            var payload = new { channel = (int)channel.Id("deviceChannel"), streamType = request.StreamType };
-            var result = await adapter.SendAsync(HttpMethod.Post, $"/internal/devices/{channel.Id("deviceId")}/streams/probe", payload, context.RequestAborted) as JsonObject;
+            var result = await camera.ProbeStreamAsync(channel.Id("deviceId"), (int)channel.Id("deviceChannel"), request.StreamType, context.RequestAborted);
+            // 语义与原先的手写字段拾取逐一对应：
+            //  - 缺失/空响应 → Available=false 且 Error="适配器未返回探测结果"（由 StreamCapability.Parse 承担）
+            //  - 分辨率/码率仅在 >0 时下传，0 或负数按"未知"处理
             return Results.Ok(new StreamCapabilityDto(
                 request.StreamType,
-                result?.Flag("available") ?? false,
-                result?.Text("codec") is { Length: > 0 } codec ? codec : null,
-                result?.Id("width") is > 0 and var width ? (int)width : null,
-                result?.Id("height") is > 0 and var height ? (int)height : null,
-                result?.Id("bitrateKbps") is > 0 and var bitrate ? (int)bitrate : null,
-                result?.Text("error") is { Length: > 0 } error ? error : (result is null ? "适配器未返回探测结果" : null)));
+                result.Available,
+                result.Codec is { Length: > 0 } codec ? codec : null,
+                result.Width is > 0 ? result.Width : null,
+                result.Height is > 0 ? result.Height : null,
+                result.BitrateKbps is > 0 ? result.BitrateKbps : null,
+                result.Error is { Length: > 0 } error ? error : null));
         }).Produces<StreamCapabilityDto>().WithName("ProbeChannelStream");
 
         group.MapGet("/nvr/available-channels", async (HttpContext context, AccessService access, VideoPlatform.Infrastructure.Nvr.INvrChannelManager nvrManager) =>

@@ -97,7 +97,13 @@ public sealed record ExportSpec(Guid JobId, int Channel, DateTimeOffset Start, D
 // 响应模型与解析
 // ════════════════════════════════════════════════════════════════════════
 
-public sealed record AdapterChannelInfo(int Channel, string? Name = null, string? Model = null, bool Online = false, bool PtzCapable = false, string? Codec = null);
+/// <remarks>
+/// <c>Ip</c> 只在适配器的 Jovision 侧记录中声明（Hikvision 侧无此字段），
+/// 且经核实目前**没有任何代码路径写入它** —— 所有 ChannelInfo 构造都未传 Ip，
+/// 因此服务端读到的 ip 恒为空串。此处保留该字段以便将来适配器填充时自然生效，
+/// 但调用方必须沿用 <c>?? ""</c> 语义，避免把"缺失"由空串变成 null 而改变落库值。
+/// </remarks>
+public sealed record AdapterChannelInfo(int Channel, string? Name = null, string? Model = null, bool Online = false, bool PtzCapable = false, string? Codec = null, string? Ip = null);
 
 public sealed record AdapterDeviceSummary(
     string? SerialNumber = null, int AnalogChannels = 0, int DigitalChannels = 0, int DigitalStartChannel = 0,

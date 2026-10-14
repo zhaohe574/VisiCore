@@ -2,6 +2,7 @@ using VideoPlatform.Application;
 using VideoPlatform.Contracts;
 using VideoPlatform.Domain;
 using VideoPlatform.Infrastructure;
+using VideoPlatform.Infrastructure.Adapter;
 
 namespace VideoPlatform.Api.Modules;
 
@@ -44,14 +45,14 @@ public static class ExportEndpoints
             await audit.WriteAsync(actor.UserId, "export.create", id.ToString(), $"通道 {request.ChannelId}，时间 {request.Start:O} 至 {request.End:O}", ApiSupport.Ip(context));
             return Results.Accepted($"/api/v2/exports/{id}", new { id, state = "queued", progress = 0 });
         }).WithName("CreateExport");
-        group.MapPost("/{id:guid}/cancel", async (Guid id, HttpContext context, Database db, AccessService access, IDeviceAdapter adapter, AuditStore audit) =>
+        group.MapPost("/{id:guid}/cancel", async (Guid id, HttpContext context, Database db, AccessService access, ICameraAdapter camera, AuditStore audit) =>
         {
             var actor = ApiSupport.Actor(context);
             var job = await OwnedAsync(id, actor, db, access);
             var changed = await db.ExecuteAsync("update export_jobs set state='cancelled',error='用户取消' where id=@id and state in('queued','running')", new { id });
             if (changed > 0)
             {
-                try { await adapter.SendAsync(HttpMethod.Delete, $"/internal/devices/{job.Id("deviceId")}/exports/{id}"); } catch (PlatformException) { }
+                try { await camera.CancelExportAsync(job.Id("deviceId"), id); } catch (PlatformException) { }
                 await audit.NotifyAsync("export.changed", id.ToString(), job.Id("userId"), job.Id("channelId"));
             }
             return Results.NoContent();
