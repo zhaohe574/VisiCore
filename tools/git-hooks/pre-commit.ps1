@@ -9,10 +9,14 @@ if (-not $root) { exit 0 }
 Set-Location $root
 
 # 1) 禁止提交受保护的敏感文件（无论是否被 .gitignore 覆盖）。
+#    只看"新增/修改"（A/M），删除（D）是去敏动作本身，必须放行。
 $forbidden = @('HANDOFF.md', '.secrets/', '.p0-backup/')
-$staged = & git diff --cached --name-only
+$stagedChanges = & git diff --cached --name-status
 foreach ($pattern in $forbidden) {
-    $hit = @($staged | Where-Object { $_ -like "$pattern*" })
+    $hit = @($stagedChanges | Where-Object {
+        $parts = $_ -split "`t"
+        $parts.Count -ge 2 -and $parts[0] -ne 'D' -and $parts[1] -like "$pattern*"
+    } | ForEach-Object { ($_ -split "`t")[1] })
     if ($hit.Count -gt 0) {
         Write-Host "拒绝提交：检测到受保护的敏感文件：$($hit -join ', ')" -ForegroundColor Red
         Write-Host '这些文件仅保存在内网工作区，不得进入版本控制。' -ForegroundColor Red
