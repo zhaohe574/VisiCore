@@ -8,6 +8,22 @@ import stat
 import paramiko
 
 ROOT = Path(__file__).resolve().parent.parent
+# 本机未跟踪的凭据文件；不含任何口令的模板见 docs/凭据模板.example.txt。
+# 与 tools/v2-refactor-verify.py 使用同一文件，避免口令出现在命令行或环境变量里。
+LOCAL_CREDENTIALS = ROOT / ".secrets" / "deploy-credentials.txt"
+
+
+def read_local_credential(name):
+    """从 .secrets/deploy-credentials.txt 读取 KEY=VALUE（该文件已加入 .gitignore）。"""
+    if not LOCAL_CREDENTIALS.exists():
+        return None
+    for line in LOCAL_CREDENTIALS.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith(name + "="):
+            value = line.split("=", 1)[1].strip()
+            if value:
+                return value
+    return None
 
 
 def main():
@@ -33,9 +49,14 @@ def main():
             sock = s
         except Exception:
             sock = None
-    ssh_password = args.password or os.environ.get("VIDEO_PLATFORM_SSH_PASSWORD")
+    ssh_password = args.password or os.environ.get("VIDEO_PLATFORM_SSH_PASSWORD") or read_local_credential("VIDEO_PLATFORM_SSH_PASSWORD")
     if not ssh_password:
-        raise RuntimeError("缺少 SSH 口令：请通过 --password 或环境变量 VIDEO_PLATFORM_SSH_PASSWORD 提供，源码中不保留默认口令。")
+        raise RuntimeError(
+            "缺少 SSH 口令。请任选一种方式提供（源码中不保留默认口令）：\n"
+            f"  1) 在 {LOCAL_CREDENTIALS} 中写入 VIDEO_PLATFORM_SSH_PASSWORD=<口令>（该文件已被 .gitignore 忽略）\n"
+            "  2) 设置环境变量 VIDEO_PLATFORM_SSH_PASSWORD\n"
+            "  3) 传入 --password <口令>（会出现在命令行历史中，不推荐）"
+        )
     client.connect("10.37.200.74",username="liteware",password=ssh_password,sock=sock,timeout=15,look_for_keys=False,allow_agent=False)
     remote = "/opt/video-platform-v2/releases/" + release
     def sudo(command):
