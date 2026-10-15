@@ -93,9 +93,9 @@ public static class TransportPolicy
             if (certificate is null) return false;
             try
             {
-                var actual = System.Security.Cryptography.X509Certificates.X509CertificateLoader
-                    .LoadCertificate(certificate.GetRawCertData()).Thumbprint
-                    .Replace(":", "", StringComparison.Ordinal).ToUpperInvariant();
+                // 必须按 SHA-256 计算：X509Certificate2.Thumbprint 返回的是 SHA-1，
+                // 与设置名（SHA256）及运维用 openssl -sha256 取得的指纹不一致，会导致永不匹配。
+                var actual = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(certificate.GetRawCertData()));
                 return allowed.Contains(actual);
             }
             catch (System.Security.Cryptography.CryptographicException) { return false; }
