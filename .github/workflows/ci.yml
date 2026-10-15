@@ -46,7 +46,7 @@ jobs:
       # 区间说明：以下各套件的期望值来自本地实测基线（2026-10-14）。
       # 数字写进注释便于快速判断"是回归还是环境差异"。
 
-      - name: Worker 单元测试（35 通过 / 30 跳过，跳过项为需数据库的集成测试）
+      - name: Worker 单元测试（51 通过 / 30 跳过，跳过项为需数据库的集成测试）
         run: dotnet test tools/VideoPlatform.Worker.Tests/VideoPlatform.Worker.Tests.csproj -c Release --no-build --nologo
 
       # 排除 VisualSmokeTests：该用例通过 RenderTargetBitmap 离屏渲染并断言
