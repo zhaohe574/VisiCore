@@ -12,13 +12,13 @@ public sealed class NvrChannelManager(Database db, SecretStore secrets, IDeviceA
 {
     public async Task<IReadOnlyList<NvrAvailableChannelDto>> GetAvailableChannelsAsync(CancellationToken ct = default)
     {
-        var devices = await db.QueryAsync(@"
+        var devices = await db.QueryAsync($@"
             select 
                 d.id, d.name, d.model, d.host, d.port, coalesce(d.plugin_id, 'hikvision') as plugin_id,
                 coalesce((d.extra_config->>'max_channels')::int, 0) as configured_channels,
                 (select count(*) from channels where device_id = d.id and status <> 'disabled') as used_channels
             from devices d
-            where d.enabled and d.status <> 'disabled' and d.plugin_id <> 'esight_pon'
+            where d.enabled and d.status <> 'disabled' and d.plugin_id <> '{PluginIds.EsightPon}'
             order by d.name", ct: ct);
 
         var result = new List<NvrAvailableChannelDto>();

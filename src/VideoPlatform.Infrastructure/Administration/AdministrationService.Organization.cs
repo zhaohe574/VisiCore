@@ -191,7 +191,7 @@ public sealed partial class AdministrationService
                 var deviceId = before.Id("deviceId");
                 var deviceChan = (int)before.Id("deviceChannel");
                 var dev = await tx.OneAsync("select id, host, port, username, password_cipher, coalesce(plugin_id, 'hikvision') as plugin_id, enabled from devices where id = @deviceId", new { deviceId }, ct);
-                if (dev != null && dev.Flag("enabled") && dev.Text("pluginId") != "esight_pon")
+                if (dev != null && dev.Flag("enabled") && !PluginIds.IsInProcess(dev.Text("pluginId")))
                 {
                     // 强制严格模式：向物理录像机下发成功才允许保存平台，失败立即阻断报错！
                     await effectiveNvrManager.UpdateIpcChannelAsync(

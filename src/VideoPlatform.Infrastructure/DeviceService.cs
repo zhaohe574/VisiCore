@@ -29,7 +29,7 @@ public sealed class DeviceAdapter(HttpClient client, PlatformOptions options, Da
             var route = await ResolveRouteAsync(deviceId, ct);
             if (route is not null)
             {
-                if (route.PluginId == "esight_pon")
+                if (PluginIds.IsInProcess(route.PluginId))
                 {
                     if (path.Contains("/events"))
                     {
@@ -96,7 +96,7 @@ public sealed class DeviceAdapter(HttpClient client, PlatformOptions options, Da
         var endpoints = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            var plugins = await db!.QueryAsync("select endpoint_url from device_plugins where status = 'active' and id <> 'esight_pon'", ct: ct);
+            var plugins = await db!.QueryAsync($"select endpoint_url from device_plugins where status = 'active' and id <> '{PluginIds.EsightPon}'", ct: ct);
             foreach (var p in plugins)
             {
                 var url = p.Text("endpointUrl");
@@ -255,7 +255,7 @@ public sealed class DeviceService(
         var device = await db.OneAsync("select * from devices where id=@id", new { id }, ct)
             ?? throw new PlatformException(404, "device.missing", "设备不存在");
 
-        if (device.Text("pluginId", device.Text("plugin_id")) == "esight_pon")
+        if (PluginIds.IsInProcess(device.Text("pluginId", device.Text("plugin_id"))))
         {
             if (ponClient is not null)
             {
@@ -282,7 +282,7 @@ public sealed class DeviceService(
             ?? throw new PlatformException(404, "device.missing", "设备不存在");
 
         var pluginId = device.Text("pluginId", device.Text("plugin_id"));
-        if (pluginId == "esight_pon")
+        if (PluginIds.IsInProcess(pluginId))
         {
             try
             {

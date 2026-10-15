@@ -102,7 +102,7 @@ public static class Bootstrap
         var ponClient = provider.GetService<Pon.EsightPonClient>();
         if (ponClient is not null)
         {
-            var ponDevice = await db.OneAsync("select host,port,username,password_cipher from devices where plugin_id='esight_pon' and enabled order by id limit 1", ct: ct);
+            var ponDevice = await db.OneAsync($"select host,port,username,password_cipher from devices where plugin_id='{PluginIds.EsightPon}' and enabled order by id limit 1", ct: ct);
             if (ponDevice is not null)
             {
                 var secrets = provider.GetRequiredService<SecretStore>();
